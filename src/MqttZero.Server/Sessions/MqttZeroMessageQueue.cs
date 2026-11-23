@@ -4,6 +4,7 @@ internal sealed class MqttZeroMessageQueue
 {
     private readonly MqttZeroQueuedMessage[] _items;
     private int _count;
+    private int _expiringCount;
     private int _head;
 
     public MqttZeroMessageQueue(int capacity)
@@ -17,6 +18,14 @@ internal sealed class MqttZeroMessageQueue
         get
         {
             return _count;
+        }
+    }
+
+    public bool HasExpiringMessages
+    {
+        get
+        {
+            return _expiringCount > 0;
         }
     }
 
@@ -40,6 +49,10 @@ internal sealed class MqttZeroMessageQueue
 
         _items[(_head + _count) % _items.Length] = message;
         _count++;
+        if (message.ExpiresAt.HasValue)
+        {
+            _expiringCount++;
+        }
     }
 
     public MqttZeroQueuedMessage Peek()
@@ -58,6 +71,10 @@ internal sealed class MqttZeroMessageQueue
         _items[_head] = null!;
         _head = (_head + 1) % _items.Length;
         _count--;
+        if (message.ExpiresAt.HasValue)
+        {
+            _expiringCount--;
+        }
         return message;
     }
 
@@ -84,6 +101,11 @@ internal sealed class MqttZeroMessageQueue
                 _items[(_head + current + 1) % _items.Length];
         }
 
+        if (_items[(_head + index) % _items.Length].ExpiresAt.HasValue)
+        {
+            _expiringCount--;
+        }
+
         _items[(_head + _count - 1) % _items.Length] = null!;
         _count--;
     }
@@ -93,6 +115,25 @@ internal sealed class MqttZeroMessageQueue
         Array.Clear(_items);
         _head = 0;
         _count = 0;
+        _expiringCount = 0;
+    }
+
+    public void RemoveExpired(DateTimeOffset now)
+    {
+        if (_expiringCount == 0)
+        {
+            return;
+        }
+
+        for (int index = _count - 1; index >= 0; index--)
+        {
+            if (index < _count && this[index].IsExpired(now))
+            {
+                MqttZeroQueuedMessage message = this[index];
+                RemoveAt(index);
+                message.Release();
+            }
+        }
     }
 
     public Enumerator GetEnumerator()

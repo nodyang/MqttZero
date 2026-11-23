@@ -36,8 +36,7 @@ public sealed partial class MqttZeroBroker
                 await RoutePublishAsync(session, publishPacket, cancellationToken).ConfigureAwait(false);
                 break;
             case MqttPingReqPacket:
-                await connection.SendAsync(new MqttPingRespPacket(), cancellationToken)
-                    .ConfigureAwait(false);
+                await connection.SendPingRespAsync(cancellationToken).ConfigureAwait(false);
                 break;
             case MqttPubAckPacket pubAckPacket:
                 lock (session.SyncRoot)

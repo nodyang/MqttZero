@@ -222,6 +222,23 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
         }
     }
 
+    public async ValueTask SendPingRespAsync(CancellationToken cancellationToken)
+    {
+        await _writeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            Span<byte> header = _writer.GetSpan(2);
+            header[0] = 0xD0;
+            header[1] = 0;
+            _writer.Advance(2);
+            _ = await _writer.FlushAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _writeLock.Release();
+        }
+    }
+
     public async ValueTask CloseAsync(
         MqttReasonCode reasonCode,
         CancellationToken cancellationToken)
