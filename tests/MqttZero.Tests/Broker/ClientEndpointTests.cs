@@ -1,5 +1,6 @@
 using MqttZero.Tests.Support;
 using System.Net;
+using System.Net.Sockets;
 
 namespace MqttZero.Tests.Broker
 {
@@ -13,6 +14,20 @@ namespace MqttZero.Tests.Broker
             MqttZeroClientSnapshot snapshot = new()
             {
                 ClientId = "typed-client",
+                RemoteEndPoint = remoteEndPoint
+            };
+
+            Assert.Same(remoteEndPoint, snapshot.RemoteEndPoint);
+        }
+
+        [Fact]
+        public void ClientSnapshotPreservesUnixDomainSocketEndPoint()
+        {
+            UnixDomainSocketEndPoint remoteEndPoint = new("mqttzero.sock");
+
+            MqttZeroClientSnapshot snapshot = new()
+            {
+                ClientId = "unix-client",
                 RemoteEndPoint = remoteEndPoint
             };
 
