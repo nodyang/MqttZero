@@ -69,12 +69,18 @@ namespace MqttZero.Dashboard.Tests
             using HttpResponseMessage publishResponse = await client.SendAsync(
                 publishRequest,
                 cancellationToken);
+            using HttpResponseMessage sessionsResponse = await client.GetAsync(
+                $"http://127.0.0.1:{port}/mqttzero/api/v1/sessions",
+                cancellationToken);
+            string sessions = await sessionsResponse.Content.ReadAsStringAsync(cancellationToken);
 
             Assert.Equal(HttpStatusCode.OK, overviewResponse.StatusCode);
             Assert.Contains("\"connectedClients\":0", overview, StringComparison.Ordinal);
             Assert.Equal(HttpStatusCode.OK, indexResponse.StatusCode);
             Assert.Contains("<div id=\"app\"></div>", index, StringComparison.Ordinal);
             Assert.Equal(HttpStatusCode.NoContent, publishResponse.StatusCode);
+            Assert.Equal(HttpStatusCode.OK, sessionsResponse.StatusCode);
+            Assert.Equal("[]", sessions);
 
             await app.StopAsync(cancellationToken);
         }

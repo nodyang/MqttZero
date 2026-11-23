@@ -20,6 +20,9 @@ public enum MqttReasonCode : byte
     /// <summary>The operation is not authorized.</summary>
     NotAuthorized = 0x87,
 
+    /// <summary>No matching subscription existed.</summary>
+    NoSubscriptionExisted = 0x11,
+
     /// <summary>The client is not connected.</summary>
     NotConnected = 0x90,
 

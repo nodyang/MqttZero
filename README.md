@@ -5,8 +5,10 @@ MQTTZero 是一个面向 ASP.NET Core Kestrel 的独立 MQTT 5 Broker。生产�
 ## 当前能力
 
 - Kestrel 原始 TCP、TLS 和 MQTT over WebSocket。
-- MQTT 5 CONNECT、PUBLISH、QoS 0/1、SUBSCRIBE、SUBACK、PUBACK、PING 和 DISCONNECT。
-- UTF-8 Topic 通配符匹配、共享 Broker 路由、Retained 消息回放和内存 PayloadOwner。
+- MQTT 5 CONNECT、PUBLISH、QoS 0/1、SUBSCRIBE、UNSUBSCRIBE、ACK、PING 和 DISCONNECT。
+- 持久 Session、Session Expiry、Session Present、客户端 ID 接管和离线 QoS 1 队列。
+- QoS 1 Inflight `DUP` 重发、KeepAlive 超时、Will/Will Delay 和 Message Expiry。
+- UTF-8 Topic 通配符、Topic Alias、共享订阅轮询、Retained 回放和内存 PayloadOwner。
 - DI 发布拦截器、Broker 生命周期、客户端快照和健康检查。
 - 可选 Vue 3 + Element Plus 管理面板，构建资源内嵌在 NuGet 程序集中。
 
@@ -54,7 +56,7 @@ await app.RunAsync();
 dotnet run -c Release --project benchmarks/MqttZero.Benchmarks
 ```
 
-当前版本优先建立端到端功能与分配测试基线。20 万消息/秒和完整零分配回归门禁还需要在目标硬件上逐步补齐，不应把开发机单次结果当作容量承诺。
+当前版本优先建立端到端协议正确性基线。20 万消息/秒和严格零分配回归门禁仍需在目标硬件上补齐，不应把开发机单次结果当作容量承诺。
 
 ## 构建与测试
 
@@ -83,4 +85,4 @@ npm run build
 
 ## 限制
 
-当前不包含 QoS 2、Enhanced Authentication、MQTT 3.1.1、跨进程持久化、集群、桥接和客户端 SDK。QoS 1 断线恢复、完整 MQTT 5 属性语义、完整运维面板和严格性能门禁仍在后续实现范围内。
+当前不包含 QoS 2、Enhanced Authentication、MQTT 3.1.1、跨进程持久化、集群、桥接和客户端 SDK。MQTT 5 会话、Will、KeepAlive、Topic Alias、共享订阅和 QoS 1 恢复已实现；完整 MQTT 5 属性语义、Dashboard Live Events 和严格性能门禁仍在后续范围内。

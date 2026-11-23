@@ -66,6 +66,26 @@ public sealed class MqttZeroOptions
     public TimeSpan IncompletePacketTimeout { get; set; } = TimeSpan.FromSeconds(30);
 
     /// <summary>
+    /// Gets or sets the maximum session expiry interval accepted from clients.
+    /// </summary>
+    public TimeSpan MaxSessionExpiryInterval { get; set; } = TimeSpan.FromHours(24);
+
+    /// <summary>
+    /// Gets or sets the interval used for keep-alive and session maintenance.
+    /// </summary>
+    public TimeSpan KeepAliveCheckInterval { get; set; } = TimeSpan.FromMilliseconds(500);
+
+    /// <summary>
+    /// Gets or sets a value indicating whether clients reading a payload may exceed keep-alive.
+    /// </summary>
+    public bool DisconnectClientWhenReadingPayload { get; set; }
+
+    /// <summary>
+    /// Gets or sets the maximum topic alias advertised to clients.
+    /// </summary>
+    public ushort TopicAliasMaximum { get; set; } = 32;
+
+    /// <summary>
     /// Gets or sets a value indicating whether new connections are accepted.
     /// </summary>
     public bool AcceptNewConnections { get; set; } = true;
