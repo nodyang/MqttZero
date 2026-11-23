@@ -67,10 +67,10 @@ public sealed partial class MqttZeroBroker
                 StoreRetainedMessage(lease);
             }
 
-            MqttZeroRouteEntry[] routeEntries =
+            MqttZeroSubscriptionRouteSnapshot routeSnapshot =
                 Volatile.Read(ref _subscriptionRouteSnapshot);
             using MqttZeroRouteScope deliveries = MqttZeroRouteSelector.Select(
-                routeEntries,
+                routeSnapshot,
                 lease.Topic.Span,
                 sender,
                 _sharedSubscriptionCursors,
@@ -220,10 +220,10 @@ public sealed partial class MqttZeroBroker
                 StoreRetainedMessage(effectiveLease);
             }
 
-            MqttZeroRouteEntry[] routeEntries =
+            MqttZeroSubscriptionRouteSnapshot routeSnapshot =
                 Volatile.Read(ref _subscriptionRouteSnapshot);
             using MqttZeroRouteScope deliveries = MqttZeroRouteSelector.Select(
-                routeEntries,
+                routeSnapshot,
                 effectiveLease.Topic.Span,
                 sender,
                 _sharedSubscriptionCursors,
@@ -293,7 +293,9 @@ public sealed partial class MqttZeroBroker
 
     private void RebuildSubscriptionRouteSnapshot()
     {
-        List<MqttZeroRouteEntry> entries = [];
+        Dictionary<string, List<MqttZeroRouteEntry>> regularGroups =
+            new(StringComparer.Ordinal);
+        List<MqttZeroRouteEntry> sharedEntries = [];
         lock (_sessionGate)
         {
             foreach (MqttZeroSessionState session in _sessions.Values)
@@ -302,13 +304,38 @@ public sealed partial class MqttZeroBroker
                 {
                     foreach (MqttZeroSubscription subscription in session.Subscriptions)
                     {
-                        entries.Add(new MqttZeroRouteEntry(session, subscription));
+                        MqttZeroRouteEntry entry = new(session, subscription);
+                        if (subscription.IsShared)
+                        {
+                            sharedEntries.Add(entry);
+                            continue;
+                        }
+
+                        string key = Encoding.UTF8.GetString(subscription.MatchFilter);
+                        if (!regularGroups.TryGetValue(key, out List<MqttZeroRouteEntry>? entries))
+                        {
+                            entries = [];
+                            regularGroups[key] = entries;
+                        }
+
+                        entries.Add(entry);
                     }
                 }
             }
         }
 
-        Volatile.Write(ref _subscriptionRouteSnapshot, entries.ToArray());
+        MqttZeroRouteFilterGroup[] groups = new MqttZeroRouteFilterGroup[regularGroups.Count];
+        int groupIndex = 0;
+        foreach (List<MqttZeroRouteEntry> entries in regularGroups.Values)
+        {
+            groups[groupIndex++] = new MqttZeroRouteFilterGroup(
+                entries[0].Subscription.MatchFilter,
+                entries.ToArray());
+        }
+
+        Volatile.Write(
+            ref _subscriptionRouteSnapshot,
+            new MqttZeroSubscriptionRouteSnapshot(groups, sharedEntries.ToArray()));
     }
 
 }

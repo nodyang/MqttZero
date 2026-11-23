@@ -7,6 +7,49 @@ namespace MqttZero.Routing;
 internal static class MqttZeroRouteSelector
 {
     public static MqttZeroRouteScope Select(
+        MqttZeroSubscriptionRouteSnapshot snapshot,
+        ReadOnlySpan<byte> topic,
+        MqttZeroSessionState? sender,
+        ConcurrentDictionary<string, int> sharedCursors,
+        MqttZeroRouteScopePool scopePool)
+    {
+        MqttZeroRouteScope route = scopePool.Rent();
+        for (int groupIndex = 0; groupIndex < snapshot.RegularGroups.Length; groupIndex++)
+        {
+            MqttZeroRouteFilterGroup group = snapshot.RegularGroups[groupIndex];
+            if (!MqttZeroTopicMatcher.Matches(group.Filter, topic))
+            {
+                continue;
+            }
+
+            for (int entryIndex = 0; entryIndex < group.Entries.Length; entryIndex++)
+            {
+                MqttZeroRouteEntry entry = group.Entries[entryIndex];
+                if (!entry.Subscription.NoLocal || !ReferenceEquals(entry.Session, sender))
+                {
+                    route.AddRegular(entry.Session, entry.Subscription);
+                }
+            }
+        }
+
+        for (int index = 0; index < snapshot.SharedEntries.Length; index++)
+        {
+            MqttZeroRouteEntry entry = snapshot.SharedEntries[index];
+            if ((!entry.Subscription.NoLocal || !ReferenceEquals(entry.Session, sender)) &&
+                MqttZeroTopicMatcher.Matches(entry.Subscription.MatchFilter, topic))
+            {
+                route.AddShared(
+                    entry.Session,
+                    entry.Subscription,
+                    entry.Subscription.SharedGroup!);
+            }
+        }
+
+        route.SelectSharedGroups(sharedCursors);
+        return route;
+    }
+
+    public static MqttZeroRouteScope Select(
         MqttZeroRouteEntry[] entries,
         ReadOnlySpan<byte> topic,
         MqttZeroSessionState? sender,

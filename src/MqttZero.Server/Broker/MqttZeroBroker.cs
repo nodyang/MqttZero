@@ -22,7 +22,8 @@ public sealed partial class MqttZeroBroker : IAsyncDisposable
         new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, MqttZeroSessionState> _sessions =
         new(StringComparer.Ordinal);
-    private MqttZeroRouteEntry[] _subscriptionRouteSnapshot = [];
+    private MqttZeroSubscriptionRouteSnapshot _subscriptionRouteSnapshot =
+        MqttZeroSubscriptionRouteSnapshot.Empty;
     private readonly MqttZeroRouteScopePool _routeScopes = new();
     private readonly List<MqttZeroClientConnection> _keepAliveExpired = [];
     private readonly List<MqttZeroWillMessage> _dueWills = [];

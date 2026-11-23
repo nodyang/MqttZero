@@ -19,6 +19,7 @@ public class RoutingBenchmarks : IDisposable
     private readonly MqttZeroRouteScopePool _scopePool = new();
 
     private MqttZeroRouteEntry[] _entries = null!;
+    private MqttZeroSubscriptionRouteSnapshot _snapshot = null!;
     private List<MqttZeroSessionState> _sessions = null!;
 
     /// <summary>
@@ -49,6 +50,10 @@ public class RoutingBenchmarks : IDisposable
             _sessions.Add(session);
             _entries[index] = new MqttZeroRouteEntry(session, subscription);
         }
+
+        _snapshot = new MqttZeroSubscriptionRouteSnapshot(
+            [new MqttZeroRouteFilterGroup("route/#"u8.ToArray(), _entries)],
+            []);
     }
 
     /// <summary>
@@ -59,7 +64,7 @@ public class RoutingBenchmarks : IDisposable
     public int RouteMqttZero()
     {
         using MqttZeroRouteScope route = MqttZeroRouteSelector.Select(
-            _entries,
+            _snapshot,
             Topic,
             null,
             _sharedCursors,

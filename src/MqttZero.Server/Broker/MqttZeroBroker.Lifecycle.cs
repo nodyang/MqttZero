@@ -99,7 +99,7 @@ public sealed partial class MqttZeroBroker
         }
 
         _sessions.Clear();
-        _subscriptionRouteSnapshot = [];
+        _subscriptionRouteSnapshot = MqttZeroSubscriptionRouteSnapshot.Empty;
         Volatile.Write(ref _connectionCount, 0);
         Volatile.Write(ref _state, (int)MqttZeroBrokerState.Stopped);
     }
