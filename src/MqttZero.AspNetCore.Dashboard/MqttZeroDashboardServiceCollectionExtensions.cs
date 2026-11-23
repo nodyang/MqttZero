@@ -1,3 +1,5 @@
+using MqttZero.Broker;
+using MqttZero.Protocol;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace MqttZero.AspNetCore.Dashboard;

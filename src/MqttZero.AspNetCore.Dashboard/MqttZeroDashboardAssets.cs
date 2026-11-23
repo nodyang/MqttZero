@@ -1,3 +1,5 @@
+using MqttZero.Broker;
+using MqttZero.Protocol;
 using System.Reflection;
 
 namespace MqttZero.AspNetCore.Dashboard;

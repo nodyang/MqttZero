@@ -1,3 +1,9 @@
+using MqttZero.Broker;
+using MqttZero.Interceptors;
+using MqttZero.Memory;
+using MqttZero.Protocol;
+using MqttZero.Routing;
+using MqttZero.Sessions;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -6,6 +12,20 @@ namespace MqttZero.Tests
 {
     public sealed class SourceConventionTests
     {
+        private static readonly HashSet<string> AllowedServerRootSources =
+            new(StringComparer.OrdinalIgnoreCase)
+            {
+                "MqttZeroOptions.cs",
+                "MqttZeroClientSnapshot.cs",
+                "MqttZeroSessionSnapshot.cs",
+                "MqttZeroRetainedMessageSnapshot.cs",
+                "MqttZeroPayloadOwner.cs",
+                "MqttZeroPayloadOwnerFactory.cs",
+                "MqttZeroClientConnection.cs",
+                "MqttZeroPooledTopicAlias.cs",
+                "MqttZeroRetainedMessage.cs"
+            };
+
         [Fact]
         public void SourceFilesFollowTeamConventions()
         {
@@ -44,6 +64,29 @@ namespace MqttZero.Tests
             Assert.True(
                 violations.Count == 0,
                 string.Join(Environment.NewLine, violations));
+        }
+
+        [Fact]
+        public void ServerProjectRootContainsOnlyApprovedSmallTypes()
+        {
+            string repositoryRoot = FindRepositoryRoot();
+            string serverProject = Path.Combine(
+                repositoryRoot,
+                "src",
+                "MqttZero.Server");
+            string[] unexpected = Directory
+                .EnumerateFiles(serverProject, "*.cs", SearchOption.TopDirectoryOnly)
+                .Select(Path.GetFileName)
+                .Where(static name =>
+                    name != null &&
+                    !AllowedServerRootSources.Contains(name))
+                .Order(StringComparer.Ordinal)
+                .ToArray()!;
+
+            Assert.True(
+                unexpected.Length == 0,
+                "Move these sources into responsibility folders: " +
+                string.Join(", ", unexpected));
         }
 
         private static void CheckLineEndings(string path, string text, List<string> violations)

@@ -1,3 +1,5 @@
+using MqttZero.Memory;
+using MqttZero.Protocol;
 namespace MqttZero;
 
 internal sealed class MqttZeroRetainedMessage

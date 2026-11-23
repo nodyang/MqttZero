@@ -1,0 +1,132 @@
+using MqttZero.Interceptors;
+using MqttZero.Memory;
+using MqttZero.Protocol;
+using MqttZero.Routing;
+using MqttZero.Sessions;
+using System.Buffers;
+using System.Collections.Concurrent;
+using System.IO.Pipelines;
+using System.Text;
+
+namespace MqttZero.Broker;
+
+/// <summary>
+/// Provides the in-memory MQTT 5 broker pipeline.
+/// </summary>
+public sealed partial class MqttZeroBroker : IAsyncDisposable
+{
+    private readonly object _sessionGate = new();
+    private readonly MqttZeroBufferPool _bufferPool;
+    private readonly IMqttZeroPublishInterceptor[] _publishInterceptors;
+    private readonly ConcurrentDictionary<string, MqttZeroRetainedMessage> _retainedMessages =
+        new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, MqttZeroSessionState> _sessions =
+        new(StringComparer.Ordinal);
+    private MqttZeroRouteEntry[] _subscriptionRouteSnapshot = [];
+    private readonly MqttZeroRouteScopePool _routeScopes = new();
+    private readonly ConcurrentDictionary<string, int> _sharedSubscriptionCursors =
+        new(StringComparer.Ordinal);
+    private readonly MqttZeroOptions _options;
+    private readonly TimeProvider _timeProvider;
+    private CancellationTokenSource? _maintenanceCancellation;
+    private Task? _maintenanceTask;
+    private int _connectionCount;
+    private int _disposed;
+    private long _publishedWillCount;
+    private long _retainedBytes;
+    private int _stopping;
+    private int _state;
+
+    /// <summary>
+    /// Initializes a new broker.
+    /// </summary>
+    /// <param name="options">The broker options.</param>
+    /// <param name="timeProvider">The time provider used for broker timings.</param>
+    public MqttZeroBroker(MqttZeroOptions options, TimeProvider timeProvider)
+        : this(options, timeProvider, [])
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new broker with publish interceptors.
+    /// </summary>
+    /// <param name="options">The broker options.</param>
+    /// <param name="timeProvider">The time provider used for broker timings.</param>
+    /// <param name="publishInterceptors">The ordered publish interceptors.</param>
+    public MqttZeroBroker(
+        MqttZeroOptions options,
+        TimeProvider timeProvider,
+        IEnumerable<IMqttZeroPublishInterceptor> publishInterceptors)
+    {
+        _options = options ?? throw new ArgumentNullException(nameof(options));
+        _timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
+        ArgumentNullException.ThrowIfNull(publishInterceptors);
+        _bufferPool = new MqttZeroBufferPool(options.MaxBufferedBytes);
+        _publishInterceptors = publishInterceptors
+            .OrderBy(static interceptor =>
+                interceptor is MqttZeroOrderedPublishInterceptor ordered
+                    ? ordered.Order
+                    : 0)
+            .ToArray();
+    }
+
+    /// <summary>
+    /// Gets the current broker lifecycle state.
+    /// </summary>
+    public MqttZeroBrokerState State
+    {
+        get
+        {
+            return (MqttZeroBrokerState)Volatile.Read(ref _state);
+        }
+    }
+
+    /// <summary>
+    /// Gets the current connected client count.
+    /// </summary>
+    public int ConnectedClientCount
+    {
+        get
+        {
+            return Volatile.Read(ref _connectionCount);
+        }
+    }
+
+    /// <summary>
+    /// Gets the number of will messages published since broker creation.
+    /// </summary>
+    public long PublishedWillCount
+    {
+        get
+        {
+            return Volatile.Read(ref _publishedWillCount);
+        }
+    }
+
+    /// <summary>
+    /// Gets the time provider used by the broker.
+    /// </summary>
+    public TimeProvider TimeProvider
+    {
+        get
+        {
+            return _timeProvider;
+        }
+    }
+
+    /// <summary>
+    /// Stops the broker and releases pooled resources.
+    /// </summary>
+    /// <returns>A task representing disposal.</returns>
+    public async ValueTask DisposeAsync()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
+        await StopAsync().ConfigureAwait(false);
+        _routeScopes.Dispose();
+        _bufferPool.Dispose();
+    }
+}
