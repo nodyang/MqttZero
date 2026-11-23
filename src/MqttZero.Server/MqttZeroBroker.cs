@@ -50,6 +50,66 @@ public sealed class MqttZeroBroker
     }
 
     /// <summary>
+    /// Gets a point-in-time snapshot of connected clients.
+    /// </summary>
+    /// <returns>The connected client snapshots.</returns>
+    public IReadOnlyList<MqttZeroClientSnapshot> GetClients()
+    {
+        List<MqttZeroClientSnapshot> clients = [];
+        foreach (MqttZeroClientSession session in _sessions.Values)
+        {
+            int subscriptionCount;
+            lock (session.SubscriptionLock)
+            {
+                subscriptionCount = session.Subscriptions.Count;
+            }
+
+            clients.Add(new MqttZeroClientSnapshot
+            {
+                ClientId = session.ClientId,
+                RemoteEndPoint = session.RemoteEndPoint,
+                IsSecure = session.IsSecure,
+                IsWebSocket = session.IsWebSocket,
+                SubscriptionCount = subscriptionCount
+            });
+        }
+
+        return clients;
+    }
+
+    /// <summary>
+    /// Publishes a server-originated message to matching subscribers.
+    /// </summary>
+    /// <param name="topic">The UTF-8 topic name.</param>
+    /// <param name="payload">The message payload bytes.</param>
+    /// <param name="qualityOfServiceLevel">The requested quality of service.</param>
+    /// <param name="retain">Whether the message should be retained.</param>
+    /// <param name="cancellationToken">A token that cancels the operation.</param>
+    /// <returns>A task representing the publish operation.</returns>
+    public async ValueTask PublishAsync(
+        string topic,
+        ReadOnlyMemory<byte> payload,
+        MqttQualityOfServiceLevel qualityOfServiceLevel,
+        bool retain,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(topic);
+        if (State != MqttZeroBrokerState.Running)
+        {
+            throw new InvalidOperationException("The MQTTZero broker is not running.");
+        }
+
+        MqttPublishPacket packet = new()
+        {
+            TopicName = new ReadOnlySequence<byte>(Encoding.UTF8.GetBytes(topic)),
+            Payload = new ReadOnlySequence<byte>(payload),
+            QualityOfServiceLevel = qualityOfServiceLevel,
+            Retain = retain
+        };
+        await RoutePublishAsync(null, packet, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// Gets the time provider used by the broker.
     /// </summary>
     public TimeProvider TimeProvider
@@ -311,7 +371,7 @@ public sealed class MqttZeroBroker
     }
 
     private async ValueTask RoutePublishAsync(
-        MqttZeroClientSession sender,
+        MqttZeroClientSession? sender,
         MqttPublishPacket packet,
         CancellationToken cancellationToken)
     {
@@ -360,7 +420,8 @@ public sealed class MqttZeroBroker
             await receiver.SendAsync(outgoing, cancellationToken).ConfigureAwait(false);
         }
 
-        if (packet.QualityOfServiceLevel == MqttQualityOfServiceLevel.AtLeastOnce)
+        if (sender != null &&
+            packet.QualityOfServiceLevel == MqttQualityOfServiceLevel.AtLeastOnce)
         {
             await sender.SendAsync(
                 new MqttPubAckPacket

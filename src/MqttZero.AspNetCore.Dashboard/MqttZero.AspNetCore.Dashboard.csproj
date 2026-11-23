@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+  <PropertyGroup>
+    <RootNamespace>MqttZero.AspNetCore.Dashboard</RootNamespace>
+    <AssemblyName>MqttZero.AspNetCore.Dashboard</AssemblyName>
+    <Description>Optional MQTTZero management dashboard.</Description>
+    <PackageId>MqttZero.AspNetCore.Dashboard</PackageId>
+    <IsPackable>true</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <ProjectReference Include="..\MqttZero.AspNetCore\MqttZero.AspNetCore.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="wwwroot\**\*">
+      <LogicalName>MqttZeroDashboard/%(RecursiveDir)%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+</Project>

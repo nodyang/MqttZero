@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\MqttZero.AspNetCore\MqttZero.AspNetCore.csproj" />
+    <ProjectReference Include="..\..\src\MqttZero.AspNetCore.Dashboard\MqttZero.AspNetCore.Dashboard.csproj" />
   </ItemGroup>
 
   <PropertyGroup>
