@@ -161,10 +161,12 @@ public static partial class MqttPacketCodec
 
     private static void EncodeDisconnect(MqttDisconnectPacket packet, IBufferWriter<byte> writer)
     {
-        ReadOnlySequence<byte> properties = Mqtt5PropertyWriter.BuildDisconnectProperties(packet);
-        bool includeDetail = packet.ReasonCode != MqttReasonCode.Success || !properties.IsEmpty;
+        int propertiesLength = Mqtt5PropertyWriter.GetDisconnectPropertiesLength(packet);
+        bool includeDetail =
+            packet.ReasonCode != MqttReasonCode.Success ||
+            propertiesLength > 0;
         int bodyLength = includeDetail
-            ? 1 + GetVariableByteIntegerSize(properties.Length) + (int)properties.Length
+            ? 1 + GetVariableByteIntegerSize(propertiesLength) + propertiesLength
             : 0;
 
         Span<byte> fixedHeader = writer.GetSpan(1 + 4);
@@ -175,7 +177,7 @@ public static partial class MqttPacketCodec
         if (includeDetail)
         {
             WriteByte(writer, (byte)packet.ReasonCode);
-            WriteProperties(writer, properties);
+            Mqtt5PropertyWriter.WriteDisconnectProperties(packet, writer);
         }
     }
 

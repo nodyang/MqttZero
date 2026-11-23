@@ -97,20 +97,21 @@ public static partial class MqttPacketCodec
 
     private static void EncodeConnect(MqttConnectPacket packet, IBufferWriter<byte> writer)
     {
-        ReadOnlySequence<byte> connectProperties = Mqtt5PropertyWriter.BuildConnectProperties(packet);
-        ReadOnlySequence<byte> willProperties = packet.HasWill
-            ? Mqtt5PropertyWriter.BuildWillProperties(packet)
-            : ReadOnlySequence<byte>.Empty;
+        int connectPropertiesLength =
+            Mqtt5PropertyWriter.GetConnectPropertiesLength(packet);
+        int willPropertiesLength = packet.HasWill
+            ? Mqtt5PropertyWriter.GetWillPropertiesLength(packet)
+            : 0;
         int bodyLength = 10 +
-            GetVariableByteIntegerSize(connectProperties.Length) +
-            (int)connectProperties.Length +
+            GetVariableByteIntegerSize(connectPropertiesLength) +
+            connectPropertiesLength +
             2 +
             (int)packet.ClientId.Length;
 
         if (packet.HasWill)
         {
-            bodyLength += GetVariableByteIntegerSize(willProperties.Length) +
-                (int)willProperties.Length +
+            bodyLength += GetVariableByteIntegerSize(willPropertiesLength) +
+                willPropertiesLength +
                 2 +
                 (int)packet.WillTopic.Length +
                 2 +
@@ -136,12 +137,12 @@ public static partial class MqttPacketCodec
         WriteByte(writer, packet.ProtocolVersion);
         WriteByte(writer, BuildConnectFlags(packet));
         WriteUInt16(writer, packet.KeepAliveSeconds);
-        WriteProperties(writer, connectProperties);
+        Mqtt5PropertyWriter.WriteConnectProperties(packet, writer);
         WriteUtf8(writer, packet.ClientId.IsEmpty ? ReadOnlySpan<byte>.Empty : packet.ClientId.FirstSpan);
 
         if (packet.HasWill)
         {
-            WriteProperties(writer, willProperties);
+            Mqtt5PropertyWriter.WriteWillProperties(packet, writer);
             WriteUtf8(writer, packet.WillTopic.IsEmpty ? ReadOnlySpan<byte>.Empty : packet.WillTopic.FirstSpan);
             WriteBinary(writer, packet.WillPayload);
         }
@@ -159,11 +160,11 @@ public static partial class MqttPacketCodec
 
     private static void EncodeConnAck(MqttConnAckPacket packet, IBufferWriter<byte> writer)
     {
-        ReadOnlySequence<byte> properties = Mqtt5PropertyWriter.BuildConnAckProperties(packet);
+        int propertiesLength = Mqtt5PropertyWriter.GetConnAckPropertiesLength(packet);
         int bodyLength =
             2 +
-            GetVariableByteIntegerSize(properties.Length) +
-            (int)properties.Length;
+            GetVariableByteIntegerSize(propertiesLength) +
+            propertiesLength;
 
         Span<byte> fixedHeader = writer.GetSpan(1 + 4);
         fixedHeader[0] = 0x20;
@@ -171,7 +172,7 @@ public static partial class MqttPacketCodec
         writer.Advance(1 + lengthBytes);
         WriteByte(writer, packet.SessionPresent ? (byte)1 : (byte)0);
         WriteByte(writer, (byte)packet.ReasonCode);
-        WriteProperties(writer, properties);
+        Mqtt5PropertyWriter.WriteConnAckProperties(packet, writer);
     }
 
     private static byte BuildConnectFlags(MqttConnectPacket packet)
