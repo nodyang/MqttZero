@@ -477,6 +477,7 @@ public sealed class MqttZeroBroker : IAsyncDisposable
             connectPacket.MaximumPacketSize,
             _timeProvider);
         MqttZeroClientConnection? oldConnection = null;
+        MqttZeroWillMessage? takeoverWill = null;
         MqttZeroSessionState session;
         bool sessionPresent;
 
@@ -490,6 +491,13 @@ public sealed class MqttZeroBroker : IAsyncDisposable
                 lock (existing.SyncRoot)
                 {
                     oldConnection = existing.Connection;
+                    if (oldConnection != null &&
+                        existing.WillMessage != null &&
+                        existing.WillMessage.DelayInterval == 0)
+                    {
+                        takeoverWill = existing.WillMessage;
+                    }
+
                     existing.Connection = null;
                 }
 
@@ -515,7 +523,17 @@ public sealed class MqttZeroBroker : IAsyncDisposable
 
             lock (session.SyncRoot)
             {
-                oldConnection = session.Connection;
+                MqttZeroClientConnection? currentConnection = session.Connection;
+                if (currentConnection != null)
+                {
+                    oldConnection = currentConnection;
+                    if (session.WillMessage != null &&
+                        session.WillMessage.DelayInterval == 0)
+                    {
+                        takeoverWill = session.WillMessage;
+                    }
+                }
+
                 session.Connection = newConnection;
                 session.CleanStart = connectPacket.CleanStart;
                 session.ExpiryInterval = effectiveExpiry;
@@ -550,6 +568,13 @@ public sealed class MqttZeroBroker : IAsyncDisposable
                 SessionExpiryInterval = effectiveExpiry
             },
             CancellationToken.None).ConfigureAwait(false);
+        if (takeoverWill != null)
+        {
+            await RoutePublishAsync(null, takeoverWill.CreatePacket(), CancellationToken.None)
+                .ConfigureAwait(false);
+            Interlocked.Increment(ref _publishedWillCount);
+        }
+
         return new ConnectionAttachment(session, newConnection);
     }
 

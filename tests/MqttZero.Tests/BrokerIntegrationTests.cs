@@ -241,6 +241,7 @@ namespace MqttZero.Tests
             int port = GetFreePort();
             await using WebApplication app = await StartTcpBrokerAsync(port);
             CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+            MqttZeroBroker broker = app.Services.GetRequiredService<MqttZeroBroker>();
             MqttClientFactory factory = new();
 
             using (IMqttClient initial = factory.CreateMqttClient())
@@ -292,6 +293,7 @@ namespace MqttZero.Tests
             int port = GetFreePort();
             await using WebApplication app = await StartTcpBrokerAsync(port);
             CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+            MqttZeroBroker broker = app.Services.GetRequiredService<MqttZeroBroker>();
             MqttClientFactory factory = new();
 
             using (IMqttClient initial = factory.CreateMqttClient())
@@ -306,6 +308,7 @@ namespace MqttZero.Tests
                     cancellationToken);
                 await initial.DisconnectAsync(cancellationToken: cancellationToken);
             }
+            await WaitForSessionDisconnectedAsync(broker, "offline-client", cancellationToken);
 
             using IMqttClient publisher = factory.CreateMqttClient();
             await publisher.ConnectAsync(CreateClientOptions(port, "offline-publisher"), cancellationToken);
@@ -642,6 +645,61 @@ namespace MqttZero.Tests
                 await firstDisconnected.Task.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken));
 
             await second.DisconnectAsync(cancellationToken: cancellationToken);
+            await app.StopAsync(cancellationToken);
+        }
+
+        [Fact(Timeout = 15_000)]
+        public async Task PublishesWillWhenClientIdIsTakenOver()
+        {
+            int port = GetFreePort();
+            await using WebApplication app = await StartTcpBrokerAsync(port);
+            CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+            MqttClientFactory factory = new();
+            using IMqttClient watcher = factory.CreateMqttClient();
+            TaskCompletionSource<string> willReceived = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            watcher.ApplicationMessageReceivedAsync += eventArgs =>
+            {
+                willReceived.TrySetResult(eventArgs.ApplicationMessage.ConvertPayloadToString());
+                return Task.CompletedTask;
+            };
+            await watcher.ConnectAsync(CreateClientOptions(port, "takeover-will-watcher"), cancellationToken);
+            await watcher.SubscribeAsync(
+                new MqttClientSubscribeOptionsBuilder()
+                    .WithTopicFilter(
+                        "will/takeover",
+                        MQTTnet.Protocol.MqttQualityOfServiceLevel.AtLeastOnce)
+                    .Build(),
+                cancellationToken);
+
+            using TcpClient first = new();
+            await first.ConnectAsync(IPAddress.Loopback, port, cancellationToken);
+            NetworkStream stream = first.GetStream();
+            await SendPacketAsync(
+                stream,
+                new MqttConnectPacket
+                {
+                    ClientId = new ReadOnlySequence<byte>("takeover-will-client"u8.ToArray()),
+                    CleanStart = false,
+                    KeepAliveSeconds = 30,
+                    SessionExpiryInterval = 60,
+                    HasWill = true,
+                    WillTopic = new ReadOnlySequence<byte>("will/takeover"u8.ToArray()),
+                    WillPayload = new ReadOnlySequence<byte>("replaced"u8.ToArray())
+                },
+                cancellationToken);
+            _ = Assert.IsType<MqttConnAckPacket>(await ReadPacketAsync(stream, cancellationToken));
+
+            using IMqttClient second = factory.CreateMqttClient();
+            _ = await second.ConnectAsync(
+                CreatePersistentClientOptions(port, "takeover-will-client"),
+                cancellationToken);
+
+            Assert.Equal(
+                "replaced",
+                await willReceived.Task.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken));
+
+            await second.DisconnectAsync(cancellationToken: cancellationToken);
+            await watcher.DisconnectAsync(cancellationToken: cancellationToken);
             await app.StopAsync(cancellationToken);
         }
 
@@ -1223,6 +1281,7 @@ namespace MqttZero.Tests
                     cancellationToken);
                 await initial.DisconnectAsync(cancellationToken: cancellationToken);
             }
+            await WaitForSessionDisconnectedAsync(broker, "queue-client", cancellationToken);
 
             for (int index = 1; index <= 3; index++)
             {
@@ -1399,6 +1458,26 @@ namespace MqttZero.Tests
             }
 
             throw new InvalidOperationException("MQTT packet exceeded the test buffer.");
+        }
+
+        private static async Task WaitForSessionDisconnectedAsync(
+            MqttZeroBroker broker,
+            string clientId,
+            CancellationToken cancellationToken)
+        {
+            for (int attempt = 0; attempt < 40; attempt++)
+            {
+                MqttZeroSessionSnapshot? session = broker.GetSessions()
+                    .SingleOrDefault(item => item.ClientId == clientId);
+                if (session != null && !session.IsConnected)
+                {
+                    return;
+                }
+
+                await Task.Delay(TimeSpan.FromMilliseconds(50), cancellationToken);
+            }
+
+            throw new TimeoutException($"Session '{clientId}' did not disconnect.");
         }
 
         private static int GetFreePort()
