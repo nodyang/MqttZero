@@ -10,6 +10,7 @@ internal sealed class MqttZeroRouteScope : IDisposable
 {
     private MqttZeroDeliveryCandidate[] _deliveries = [];
     private int[] _bestDeliveryIndexes = [];
+    private int _bestCapacity;
     private int[] _bestEpochs = [];
     private MqttZeroSessionState?[] _bestSessions = [];
     private int _bestCount;
@@ -65,7 +66,7 @@ internal sealed class MqttZeroRouteScope : IDisposable
         MqttZeroSubscription subscription)
     {
         EnsureBestCapacity();
-        int mask = _bestSessions.Length - 1;
+        int mask = _bestCapacity - 1;
         int slot = RuntimeHelpers.GetHashCode(session) & mask;
         while (true)
         {
@@ -286,6 +287,7 @@ internal sealed class MqttZeroRouteScope : IDisposable
     {
         if (_bestSessions.Length == 0)
         {
+            _bestCapacity = 16;
             _bestSessions = ArrayPool<MqttZeroSessionState?>.Shared.Rent(16);
             _bestDeliveryIndexes = ArrayPool<int>.Shared.Rent(16);
             _bestEpochs = ArrayPool<int>.Shared.Rent(16);
@@ -296,7 +298,7 @@ internal sealed class MqttZeroRouteScope : IDisposable
 
     private void GrowBestTable()
     {
-        int capacity = _bestSessions.Length * 2;
+        int capacity = _bestCapacity * 2;
         MqttZeroSessionState?[] sessions =
             ArrayPool<MqttZeroSessionState?>.Shared.Rent(capacity);
         int[] deliveryIndexes = ArrayPool<int>.Shared.Rent(capacity);
@@ -312,7 +314,7 @@ internal sealed class MqttZeroRouteScope : IDisposable
         }
 
         int mask = capacity - 1;
-        for (int source = 0; source < _bestSessions.Length; source++)
+        for (int source = 0; source < _bestCapacity; source++)
         {
             MqttZeroSessionState? session = _bestSessions[source];
             if (session == null || _bestEpochs[source] != epoch)
@@ -335,6 +337,7 @@ internal sealed class MqttZeroRouteScope : IDisposable
         _bestSessions = sessions;
         _bestDeliveryIndexes = deliveryIndexes;
         _bestEpochs = epochs;
+        _bestCapacity = capacity;
     }
 
     private void ReturnBestArrays()
@@ -347,6 +350,7 @@ internal sealed class MqttZeroRouteScope : IDisposable
             _bestSessions = [];
             _bestDeliveryIndexes = [];
             _bestEpochs = [];
+            _bestCapacity = 0;
         }
     }
 }

@@ -95,13 +95,15 @@ internal sealed class MqttZeroMessageQueue
     {
         ArgumentOutOfRangeException.ThrowIfNegative(index);
         ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(index, _count);
+        MqttZeroQueuedMessage removed =
+            _items[(_head + index) % _items.Length];
         for (int current = index; current < _count - 1; current++)
         {
             _items[(_head + current) % _items.Length] =
                 _items[(_head + current + 1) % _items.Length];
         }
 
-        if (_items[(_head + index) % _items.Length].ExpiresAt.HasValue)
+        if (removed.ExpiresAt.HasValue)
         {
             _expiringCount--;
         }
