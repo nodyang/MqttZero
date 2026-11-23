@@ -13,6 +13,8 @@ public sealed class MqttZeroBroker
     private readonly MqttZeroOptions _options;
     private readonly IMqttZeroPublishInterceptor[] _publishInterceptors;
     private readonly ConcurrentDictionary<string, MqttZeroClientSession> _sessions = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, MqttZeroRetainedMessage> _retainedMessages =
+        new(StringComparer.Ordinal);
     private readonly TimeProvider _timeProvider;
     private int _connectionCount;
     private int _state;
@@ -92,6 +94,26 @@ public sealed class MqttZeroBroker
         }
 
         return clients;
+    }
+
+    /// <summary>
+    /// Gets retained message metadata snapshots.
+    /// </summary>
+    /// <returns>The retained message snapshots.</returns>
+    public IReadOnlyList<MqttZeroRetainedMessageSnapshot> GetRetainedMessages()
+    {
+        List<MqttZeroRetainedMessageSnapshot> messages = [];
+        foreach (MqttZeroRetainedMessage message in _retainedMessages.Values)
+        {
+            messages.Add(new MqttZeroRetainedMessageSnapshot
+            {
+                Topic = Encoding.UTF8.GetString(message.Topic),
+                PayloadLength = message.Payload.Length,
+                QualityOfServiceLevel = message.QualityOfServiceLevel
+            });
+        }
+
+        return messages;
     }
 
     /// <summary>
@@ -385,6 +407,39 @@ public sealed class MqttZeroBroker
                 ReasonCodes = reasonCodes
             },
             cancellationToken).ConfigureAwait(false);
+
+        foreach (MqttSubscriptionRequest request in packet.Subscriptions)
+        {
+            if (request.RetainHandling == 2)
+            {
+                continue;
+            }
+
+            byte[] filter = request.TopicFilter.ToArray();
+            foreach (MqttZeroRetainedMessage retainedMessage in _retainedMessages.Values)
+            {
+                if (!MqttZeroTopicMatcher.Matches(filter, retainedMessage.Topic))
+                {
+                    continue;
+                }
+
+                MqttQualityOfServiceLevel qos = (MqttQualityOfServiceLevel)Math.Min(
+                    (byte)retainedMessage.QualityOfServiceLevel,
+                    (byte)request.QualityOfServiceLevel);
+                await session.SendAsync(
+                    new MqttPublishPacket
+                    {
+                        TopicName = new ReadOnlySequence<byte>(retainedMessage.Topic),
+                        Payload = new ReadOnlySequence<byte>(retainedMessage.Payload),
+                        QualityOfServiceLevel = qos,
+                        PacketIdentifier = qos == MqttQualityOfServiceLevel.AtLeastOnce
+                            ? session.GetNextPacketIdentifier()
+                            : (ushort)0,
+                        Retain = true
+                    },
+                    cancellationToken).ConfigureAwait(false);
+            }
+        }
     }
 
     private async ValueTask RoutePublishAsync(
@@ -423,6 +478,27 @@ public sealed class MqttZeroBroker
         packet.Retain = context.Retain;
 
         byte[] topic = packet.TopicName.ToArray();
+        string topicKey = Encoding.UTF8.GetString(topic);
+        if (packet.Retain)
+        {
+            if (packet.Payload.IsEmpty)
+            {
+                _retainedMessages.TryRemove(topicKey, out _);
+            }
+            else
+            {
+                if (_retainedMessages.Count >= _options.MaxRetainedMessages)
+                {
+                    throw new InvalidOperationException("The retained message count limit was reached.");
+                }
+
+                _retainedMessages[topicKey] = new MqttZeroRetainedMessage(
+                    topic,
+                    packet.Payload.ToArray(),
+                    packet.QualityOfServiceLevel);
+            }
+        }
+
         foreach (KeyValuePair<string, MqttZeroClientSession> pair in _sessions)
         {
             MqttZeroClientSession receiver = pair.Value;

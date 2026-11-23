@@ -183,6 +183,56 @@ namespace MqttZero.Tests
             await app.StopAsync(cancellationToken);
         }
 
+        [Fact(Timeout = 15_000)]
+        public async Task ReplaysRetainedMessageToNewSubscriber()
+        {
+            int port = GetFreePort();
+            WebApplicationBuilder builder = WebApplication.CreateBuilder();
+            builder.Logging.ClearProviders();
+            builder.WebHost.ConfigureKestrel(kestrel =>
+            {
+                kestrel.Listen(IPAddress.Loopback, port, listen => listen.UseMqttZero());
+            });
+            builder.Services.AddMqttZero();
+
+            await using WebApplication app = builder.Build();
+            CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+            await app.StartAsync(cancellationToken);
+
+            MqttClientFactory factory = new();
+            using IMqttClient publisher = factory.CreateMqttClient();
+            using IMqttClient subscriber = factory.CreateMqttClient();
+            TaskCompletionSource<string> received = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            subscriber.ApplicationMessageReceivedAsync += eventArgs =>
+            {
+                received.TrySetResult(eventArgs.ApplicationMessage.ConvertPayloadToString());
+                return Task.CompletedTask;
+            };
+
+            await publisher.ConnectAsync(CreateClientOptions(port, "retained-publisher"), cancellationToken);
+            await publisher.PublishStringAsync(
+                "retained/value",
+                "saved",
+                MQTTnet.Protocol.MqttQualityOfServiceLevel.AtMostOnce,
+                retain: true,
+                cancellationToken: cancellationToken);
+
+            await subscriber.ConnectAsync(CreateClientOptions(port, "retained-subscriber"), cancellationToken);
+            await subscriber.SubscribeAsync(
+                new MqttClientSubscribeOptionsBuilder()
+                    .WithTopicFilter(
+                        "retained/#",
+                        MQTTnet.Protocol.MqttQualityOfServiceLevel.AtLeastOnce)
+                    .Build(),
+                cancellationToken);
+
+            Assert.Equal("saved", await received.Task.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken));
+
+            await subscriber.DisconnectAsync(cancellationToken: cancellationToken);
+            await publisher.DisconnectAsync(cancellationToken: cancellationToken);
+            await app.StopAsync(cancellationToken);
+        }
+
         private static MQTTnet.MqttClientOptions CreateClientOptions(int port, string clientId)
         {
             return new MqttClientOptionsBuilder()
