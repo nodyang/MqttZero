@@ -1,0 +1,39 @@
+{
+  "runtimeTarget": {
+    "name": ".NETCoreApp,Version=v10.0",
+    "signature": ""
+  },
+  "compilationOptions": {},
+  "targets": {
+    ".NETCoreApp,Version=v10.0": {
+      "MqttZero.AspNetCore/1.0.0": {
+        "dependencies": {
+          "MqttZero.Server": "1.0.0.0"
+        },
+        "runtime": {
+          "MqttZero.AspNetCore.dll": {}
+        }
+      },
+      "MqttZero.Server/1.0.0.0": {
+        "runtime": {
+          "MqttZero.Server.dll": {
+            "assemblyVersion": "1.0.0.0",
+            "fileVersion": "1.0.0.0"
+          }
+        }
+      }
+    }
+  },
+  "libraries": {
+    "MqttZero.AspNetCore/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "MqttZero.Server/1.0.0.0": {
+      "type": "reference",
+      "serviceable": false,
+      "sha512": ""
+    }
+  }
+}

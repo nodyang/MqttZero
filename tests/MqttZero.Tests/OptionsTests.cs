@@ -1,0 +1,24 @@
+namespace MqttZero.Tests
+{
+    public sealed class OptionsTests
+    {
+        [Fact]
+        public void DefaultsMatchDocumentedCapacity()
+        {
+            MqttZeroOptions options = new();
+
+            Assert.Equal(20_000, options.MaxConnections);
+            Assert.Equal(20_000, options.MaxSessions);
+            Assert.Equal(1_000, options.MaxSubscriptionsPerSession);
+            Assert.Equal(32, options.MaxInflight);
+            Assert.Equal(1_000, options.MaxMessageQueueLength);
+            Assert.True(options.StoreQos0InQueue);
+            Assert.Equal(1024 * 1024, options.MaxPacketSize);
+            Assert.Equal(512L * 1024 * 1024, options.MaxBufferedBytes);
+            Assert.Equal(100_000, options.MaxRetainedMessages);
+            Assert.Equal(256L * 1024 * 1024, options.MaxRetainedBytes);
+            Assert.Equal(TimeSpan.FromSeconds(10), options.ConnectTimeout);
+            Assert.Equal(TimeSpan.FromSeconds(30), options.IncompletePacketTimeout);
+        }
+    }
+}

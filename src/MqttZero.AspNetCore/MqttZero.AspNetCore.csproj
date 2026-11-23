@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>MqttZero.AspNetCore</RootNamespace>
+    <AssemblyName>MqttZero.AspNetCore</AssemblyName>
+    <Description>ASP.NET Core Kestrel hosting for MQTTZero.</Description>
+    <PackageId>MqttZero.AspNetCore</PackageId>
+    <IsPackable>true</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <ProjectReference Include="..\MqttZero.Server\MqttZero.Server.csproj" />
+  </ItemGroup>
+</Project>

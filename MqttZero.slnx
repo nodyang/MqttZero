@@ -1,0 +1,15 @@
+<Solution>
+  <Folder Name="/benchmarks/">
+    <Project Path="benchmarks/MqttZero.Benchmarks/MqttZero.Benchmarks.csproj" />
+  </Folder>
+  <Folder Name="/samples/">
+    <Project Path="samples/MqttZero.Sample/MqttZero.Sample.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/MqttZero.AspNetCore/MqttZero.AspNetCore.csproj" />
+    <Project Path="src/MqttZero.Server/MqttZero.Server.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/MqttZero.Tests/MqttZero.Tests.csproj" />
+  </Folder>
+</Solution>
