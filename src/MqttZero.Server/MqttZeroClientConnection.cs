@@ -261,6 +261,95 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
             cancellationToken).ConfigureAwait(false);
     }
 
+    public async ValueTask SendConnAckAsync(
+        MqttConnAckPacket packet,
+        CancellationToken cancellationToken)
+    {
+        int propertiesLength = Mqtt5PropertyWriter.GetConnAckPropertiesLength(packet);
+        int bodyLength =
+            2 +
+            GetVariableByteIntegerSize(propertiesLength) +
+            propertiesLength;
+        long encodedLength =
+            1 +
+            GetVariableByteIntegerSize(bodyLength) +
+            bodyLength;
+        if (encodedLength > MaximumPacketSize)
+        {
+            throw new InvalidOperationException(
+                "The outbound MQTT packet exceeds the client maximum packet size.");
+        }
+
+        await _writeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            Span<byte> fixedHeader = _writer.GetSpan(5);
+            fixedHeader[0] = 0x20;
+            int lengthBytes = MqttZeroPacketWriter.WriteVariableByteInteger(
+                fixedHeader[1..],
+                (uint)bodyLength);
+            _writer.Advance(1 + lengthBytes);
+            Span<byte> acknowledgeHeader = _writer.GetSpan(2);
+            acknowledgeHeader[0] = packet.SessionPresent ? (byte)1 : (byte)0;
+            acknowledgeHeader[1] = (byte)packet.ReasonCode;
+            _writer.Advance(2);
+            Mqtt5PropertyWriter.WriteConnAckProperties(packet, _writer);
+            _ = await _writer.FlushAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _writeLock.Release();
+        }
+    }
+
+    public async ValueTask SendDisconnectAsync(
+        MqttDisconnectPacket packet,
+        CancellationToken cancellationToken)
+    {
+        int propertiesLength =
+            Mqtt5PropertyWriter.GetDisconnectPropertiesLength(packet);
+        bool includeDetail =
+            packet.ReasonCode != MqttReasonCode.Success ||
+            propertiesLength > 0;
+        int bodyLength = includeDetail
+            ? 1 +
+                GetVariableByteIntegerSize(propertiesLength) +
+                propertiesLength
+            : 0;
+        long encodedLength =
+            1 +
+            GetVariableByteIntegerSize(bodyLength) +
+            bodyLength;
+        if (encodedLength > MaximumPacketSize)
+        {
+            throw new InvalidOperationException(
+                "The outbound MQTT packet exceeds the client maximum packet size.");
+        }
+
+        await _writeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            Span<byte> fixedHeader = _writer.GetSpan(5);
+            fixedHeader[0] = 0xE0;
+            int lengthBytes = MqttZeroPacketWriter.WriteVariableByteInteger(
+                fixedHeader[1..],
+                (uint)bodyLength);
+            _writer.Advance(1 + lengthBytes);
+            if (includeDetail)
+            {
+                _writer.GetSpan(1)[0] = (byte)packet.ReasonCode;
+                _writer.Advance(1);
+                Mqtt5PropertyWriter.WriteDisconnectProperties(packet, _writer);
+            }
+
+            _ = await _writer.FlushAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _writeLock.Release();
+        }
+    }
+
     private async ValueTask SendControlPacketDirectAsync(
         MqttPacket packet,
         long bodyLength,
@@ -275,7 +364,7 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
                     ? 3
                     : 4;
         bodyLength += propertyLength + propertyLengthSize;
-        int remainingLengthSize = bodyLength < 128 ? 1 : bodyLength < 16_384 ? 2 : 3;
+        int remainingLengthSize = GetVariableByteIntegerSize(bodyLength);
         long encodedLength = 1 + remainingLengthSize + bodyLength;
         if (encodedLength > MaximumPacketSize)
         {
@@ -301,7 +390,7 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
     {
         try
         {
-            await SendAsync(
+            await SendDisconnectAsync(
                 new MqttDisconnectPacket
                 {
                     ReasonCode = reasonCode
@@ -312,6 +401,26 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
         {
             _closed.Cancel();
         }
+    }
+
+    private static int GetVariableByteIntegerSize(long value)
+    {
+        if (value < 128)
+        {
+            return 1;
+        }
+
+        if (value < 16_384)
+        {
+            return 2;
+        }
+
+        if (value < 2_097_152)
+        {
+            return 3;
+        }
+
+        return 4;
     }
 
     public async ValueTask DisposeAsync()

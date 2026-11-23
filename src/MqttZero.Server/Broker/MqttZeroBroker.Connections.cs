@@ -298,7 +298,7 @@ public sealed partial class MqttZeroBroker
             }
         }
 
-        await newConnection.SendAsync(
+        await newConnection.SendConnAckAsync(
             new MqttConnAckPacket
             {
                 SessionPresent = sessionPresent,
