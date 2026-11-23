@@ -6,6 +6,7 @@ using MqttZero.Sessions;
 using System.Buffers;
 using System.Collections.Concurrent;
 using System.IO.Pipelines;
+using System.Net;
 using System.Text;
 
 namespace MqttZero.Broker;
@@ -20,7 +21,7 @@ public sealed partial class MqttZeroBroker
     /// </summary>
     /// <param name="input">The inbound byte pipe.</param>
     /// <param name="output">The outbound byte pipe.</param>
-    /// <param name="remoteEndPoint">The optional remote endpoint description.</param>
+    /// <param name="remoteEndPoint">The optional remote network endpoint.</param>
     /// <param name="isSecure">Whether the connection uses TLS.</param>
     /// <param name="isWebSocket">Whether the connection uses WebSocket.</param>
     /// <param name="cancellationToken">A token that terminates the connection.</param>
@@ -28,7 +29,7 @@ public sealed partial class MqttZeroBroker
     public async ValueTask AcceptConnectionAsync(
         PipeReader input,
         PipeWriter output,
-        string? remoteEndPoint,
+        EndPoint? remoteEndPoint,
         bool isSecure,
         bool isWebSocket,
         CancellationToken cancellationToken)
@@ -190,7 +191,7 @@ public sealed partial class MqttZeroBroker
     private async ValueTask<ConnectionAttachment> ConnectAsync(
         MqttConnectPacket connectPacket,
         PipeWriter output,
-        string? remoteEndPoint,
+        EndPoint? remoteEndPoint,
         bool isSecure,
         bool isWebSocket)
     {

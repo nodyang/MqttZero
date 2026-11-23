@@ -26,7 +26,9 @@ namespace MqttZero.Tests.Protocol
                         TopicFilter = new ReadOnlySequence<byte>("devices/+"u8.ToArray()),
                         QualityOfServiceLevel = MqttQualityOfServiceLevel.AtLeastOnce,
                         NoLocal = true,
-                        RetainAsPublished = true
+                        RetainAsPublished = true,
+                        RetainHandling =
+                            MqttRetainHandling.SendAtSubscribeIfNewSubscriptionOnly
                     }
                 ]
             };
@@ -47,6 +49,9 @@ namespace MqttZero.Tests.Protocol
             Assert.Equal(MqttQualityOfServiceLevel.AtLeastOnce, request.QualityOfServiceLevel);
             Assert.True(request.NoLocal);
             Assert.True(request.RetainAsPublished);
+            Assert.Equal(
+                MqttRetainHandling.SendAtSubscribeIfNewSubscriptionOnly,
+                request.RetainHandling);
         }
         [Fact]
         public void EncodesSubAckReasonCodes()
@@ -133,6 +138,62 @@ namespace MqttZero.Tests.Protocol
             Assert.True(decodedUnsubAck);
             Assert.Equal(unsubAckBytes.Length, consumedUnsubAck);
             Assert.Equal((ushort)21, decodedUnsubAckPacket.PacketIdentifier);
+        }
+
+        [Fact]
+        public void RejectsInvalidRetainHandling()
+        {
+            byte[] bytes =
+            [
+                0x82, 0x07,
+                0x00, 0x01,
+                0x00,
+                0x00, 0x01, (byte)'a',
+                0x30
+            ];
+
+            Assert.False(MqttPacketCodec.TryDecode(
+                new ReadOnlySequence<byte>(bytes),
+                out _,
+                out _));
+        }
+
+        [Fact]
+        public void RoundTripsAllRetainHandlingValues()
+        {
+            MqttRetainHandling[] expected =
+            [
+                MqttRetainHandling.SendAtSubscribe,
+                MqttRetainHandling.SendAtSubscribeIfNewSubscriptionOnly,
+                MqttRetainHandling.DoNotSendOnSubscribe
+            ];
+            MqttSubscribePacket packet = new()
+            {
+                PacketIdentifier = 13
+            };
+            for (int index = 0; index < expected.Length; index++)
+            {
+                packet.Subscriptions.Add(new MqttSubscriptionRequest
+                {
+                    TopicFilter = new ReadOnlySequence<byte>(
+                        Encoding.UTF8.GetBytes($"retain-{index}")),
+                    RetainHandling = expected[index]
+                });
+            }
+
+            byte[] bytes = ProtocolPacketTestHelper.Encode(packet);
+            bool decoded = MqttPacketCodec.TryDecode(
+                new ReadOnlySequence<byte>(bytes),
+                out MqttPacket? result,
+                out _);
+
+            MqttSubscribePacket subscribePacket = Assert.IsType<MqttSubscribePacket>(result);
+            Assert.True(decoded);
+            Assert.Equal(expected.Length, subscribePacket.Subscriptions.Count);
+            for (int index = 0; index < expected.Length; index++)
+            {
+                Assert.Equal(expected[index], subscribePacket.Subscriptions[index].RetainHandling);
+            }
         }
     }
 }

@@ -4,6 +4,7 @@ using MqttZero.Sessions;
 using System.Buffers;
 using System.Buffers.Binary;
 using System.IO.Pipelines;
+using System.Net;
 
 namespace MqttZero;
 
@@ -19,7 +20,7 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
 
     public MqttZeroClientConnection(
         PipeWriter writer,
-        string? remoteEndPoint,
+        EndPoint? remoteEndPoint,
         bool isSecure,
         bool isWebSocket,
         ushort keepAliveSeconds,
@@ -39,7 +40,7 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
         LastPacketReceivedAt = timeProvider.GetUtcNow();
     }
 
-    public string? RemoteEndPoint { get; }
+    public EndPoint? RemoteEndPoint { get; }
 
     public bool IsSecure { get; }
 

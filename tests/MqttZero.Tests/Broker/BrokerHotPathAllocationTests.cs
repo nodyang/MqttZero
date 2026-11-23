@@ -8,6 +8,7 @@ using MqttZero.Sessions;
 using System.Buffers;
 using System.Collections.Concurrent;
 using System.IO.Pipelines;
+using System.Net;
 using System.Reflection;
 
 
@@ -47,7 +48,7 @@ namespace MqttZero.Tests.Broker
             AllocationPipeWriter senderWriter = new(16 * 1024);
             MqttZeroClientConnection senderConnection = new(
                 senderWriter,
-                "sender",
+                new IPEndPoint(IPAddress.Loopback, 0),
                 false,
                 false,
                 0,
@@ -99,7 +100,7 @@ namespace MqttZero.Tests.Broker
             AllocationPipeWriter receiverWriter = new(16 * 1024);
             MqttZeroClientConnection connection = new(
                 receiverWriter,
-                "memory",
+                new IPEndPoint(IPAddress.Loopback, 0),
                 false,
                 false,
                 0,
@@ -151,7 +152,7 @@ namespace MqttZero.Tests.Broker
             AllocationPipeWriter writer = new(1024);
             MqttZeroClientConnection connection = new(
                 writer,
-                "memory",
+                new IPEndPoint(IPAddress.Loopback, 0),
                 false,
                 false,
                 0,
@@ -212,7 +213,7 @@ namespace MqttZero.Tests.Broker
             AllocationPipeWriter receiverWriter = new(16 * 1024);
             MqttZeroClientConnection receiverConnection = new(
                 receiverWriter,
-                "receiver",
+                new IPEndPoint(IPAddress.Loopback, 0),
                 false,
                 false,
                 0,
@@ -234,7 +235,7 @@ namespace MqttZero.Tests.Broker
             AllocationPipeWriter senderWriter = new(16 * 1024);
             MqttZeroClientConnection senderConnection = new(
                 senderWriter,
-                "sender",
+                new IPEndPoint(IPAddress.Loopback, 0),
                 false,
                 false,
                 0,
@@ -364,7 +365,7 @@ namespace MqttZero.Tests.Broker
             AllocationPipeWriter receiverWriter = new(16 * 1024);
             MqttZeroClientConnection receiverConnection = new(
                 receiverWriter,
-                "memory",
+                new IPEndPoint(IPAddress.Loopback, 0),
                 false,
                 false,
                 0,

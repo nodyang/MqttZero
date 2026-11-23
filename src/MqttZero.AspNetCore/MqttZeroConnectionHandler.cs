@@ -48,7 +48,7 @@ public sealed class MqttZeroConnectionHandler : ConnectionHandler
         await _broker.AcceptConnectionAsync(
             connection.Transport.Input,
             connection.Transport.Output,
-            connection.RemoteEndPoint?.ToString(),
+            connection.RemoteEndPoint,
             isSecure,
             isWebSocket,
             cancellation.Token).ConfigureAwait(false);

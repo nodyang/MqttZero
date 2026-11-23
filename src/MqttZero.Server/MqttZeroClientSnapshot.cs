@@ -1,3 +1,5 @@
+using System.Net;
+
 namespace MqttZero;
 
 /// <summary>
@@ -11,9 +13,9 @@ public sealed class MqttZeroClientSnapshot
     public required string ClientId { get; init; }
 
     /// <summary>
-    /// Gets the remote endpoint description.
+    /// Gets the remote network endpoint.
     /// </summary>
-    public string? RemoteEndPoint { get; init; }
+    public EndPoint? RemoteEndPoint { get; init; }
 
     /// <summary>
     /// Gets a value indicating whether the connection uses TLS.

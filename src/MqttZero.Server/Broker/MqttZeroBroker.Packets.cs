@@ -136,8 +136,10 @@ public sealed partial class MqttZeroBroker
         for (int index = 0; index < packet.Subscriptions.Count; index++)
         {
             MqttSubscriptionRequest request = packet.Subscriptions[index];
-            if (request.RetainHandling == 2 ||
-                (request.RetainHandling == 1 && existed[index]) ||
+            if (request.RetainHandling == MqttRetainHandling.DoNotSendOnSubscribe ||
+                (request.RetainHandling ==
+                    MqttRetainHandling.SendAtSubscribeIfNewSubscriptionOnly &&
+                    existed[index]) ||
                 request.TopicFilter.IsEmpty)
             {
                 continue;

@@ -5,13 +5,13 @@
       "mqttzero.aspnetcore": {
         "type": "Project",
         "dependencies": {
-          "MqttZero.Server": "[0.4.1-alpha.1, )"
+          "MqttZero.Server": "[0.5.0-alpha.1, )"
         }
       },
       "mqttzero.aspnetcore.dashboard": {
         "type": "Project",
         "dependencies": {
-          "MqttZero.AspNetCore": "[0.4.1-alpha.1, )"
+          "MqttZero.AspNetCore": "[0.5.0-alpha.1, )"
         }
       },
       "mqttzero.server": {

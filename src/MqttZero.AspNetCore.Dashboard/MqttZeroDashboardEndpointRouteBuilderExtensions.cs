@@ -86,7 +86,7 @@ public static class MqttZeroDashboardEndpointRouteBuilderExtensions
         DashboardClientDto[] clients = broker.GetClients()
             .Select(static client => new DashboardClientDto(
                 client.ClientId,
-                client.RemoteEndPoint,
+                client.RemoteEndPoint?.ToString(),
                 client.IsSecure,
                 client.IsWebSocket,
                 client.SubscriptionCount))

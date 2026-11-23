@@ -35,7 +35,7 @@ namespace MqttZero.Tests.Protocol
             MqttConnectPacket connectPacket = Assert.IsType<MqttConnectPacket>(packet);
             Assert.True(decoded);
             Assert.Equal(bytes.Length, consumed);
-            Assert.Equal(5, connectPacket.ProtocolVersion);
+            Assert.Equal(MqttProtocolVersion.V500, connectPacket.ProtocolVersion);
             Assert.True(connectPacket.CleanStart);
             Assert.Equal(60, connectPacket.KeepAliveSeconds);
             Assert.Equal("abc", Encoding.UTF8.GetString(connectPacket.ClientId.FirstSpan));
@@ -151,6 +151,26 @@ namespace MqttZero.Tests.Protocol
                 0x00, 0x04, (byte)'M', (byte)'Q', (byte)'T', (byte)'T',
                 0x05, 0x02, 0x00, 0x3C,
                 0x03, 0x21, 0x00, 0x00,
+                0x00, 0x01, (byte)'a'
+            ];
+
+            Assert.False(MqttPacketCodec.TryDecode(
+                new ReadOnlySequence<byte>(bytes),
+                out _,
+                out _));
+        }
+
+        [Fact]
+        public void RejectsUnsupportedProtocolVersion()
+        {
+            byte[] bytes =
+            [
+                0x10, 0x0E,
+                0x00, 0x04, (byte)'M', (byte)'Q', (byte)'T', (byte)'T',
+                0x04,
+                0x02,
+                0x00, 0x3C,
+                0x00,
                 0x00, 0x01, (byte)'a'
             ];
 
