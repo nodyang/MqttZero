@@ -9,8 +9,14 @@ internal sealed class MqttZeroSessionState
     private int _nextPacketIdentifier;
 
     public MqttZeroSessionState(string clientId)
+        : this(clientId, 1000)
+    {
+    }
+
+    public MqttZeroSessionState(string clientId, int maxQueueLength)
     {
         ClientId = clientId;
+        PendingMessages = new MqttZeroMessageQueue(maxQueueLength);
     }
 
     public string ClientId { get; }
@@ -21,7 +27,7 @@ internal sealed class MqttZeroSessionState
 
     public List<MqttZeroSubscription> Subscriptions { get; } = [];
 
-    public List<MqttZeroQueuedMessage> PendingMessages { get; } = [];
+    public MqttZeroMessageQueue PendingMessages { get; }
 
     public Dictionary<ushort, MqttZeroQueuedMessage> InflightMessages { get; } = [];
 

@@ -216,7 +216,7 @@ namespace MqttZero.Tests.Memory
             }
 
             long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
-            Assert.Empty(session.PendingMessages);
+            Assert.Equal(0, session.PendingMessages.Count);
             Assert.Empty(session.InflightMessages);
             Assert.Equal(0, allocated);
         }

@@ -78,7 +78,7 @@ namespace MqttZero.Tests.Broker
                 borrowed.Release();
             }
 
-            Assert.Single(receiver.PendingMessages);
+            Assert.Equal(1, receiver.PendingMessages.Count);
             Assert.True(pool.RentedBytes > 0);
             await broker.DisposeAsync();
             Assert.Equal(0, pool.RentedBytes);

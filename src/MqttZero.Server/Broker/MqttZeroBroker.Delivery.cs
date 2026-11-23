@@ -242,8 +242,7 @@ public sealed partial class MqttZeroBroker
                     break;
                 }
 
-                next = session.PendingMessages[0];
-                session.PendingMessages.RemoveAt(0);
+                next = session.PendingMessages.Dequeue();
                 if (next.QualityOfServiceLevel == MqttQualityOfServiceLevel.AtLeastOnce)
                 {
                     next.PacketIdentifier = session.GetNextPacketIdentifier();
