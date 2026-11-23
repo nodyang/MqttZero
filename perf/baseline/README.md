@@ -1,6 +1,6 @@
-# MQTTZero 0.3.0-alpha.1 Baseline
+# MQTTZero Performance Baselines
 
-这些结果是阶段二 `0.3.0-alpha.1` 的短作业 BenchmarkDotNet 基线，不作为跨硬件容量承诺。
+`0.3.0-alpha.1` 与 `0.4.0-alpha.1` 均使用短作业 BenchmarkDotNet 采集，不作为跨硬件容量承诺。0.4 仅进行目录和 namespace 重构，保留 0.3 结果用于对照。
 
 ## 环境
 
@@ -13,10 +13,10 @@
 ## 结论
 
 - `DecodeFast`、`EncodeFast`、`RouteMqttZero` 和内存端到端 `PublishQos0` 均为 `0 B/op`。
-- 8 KiB 单段 fast PUBLISH 解码约 `78.77 ns`；MQTTnet 解码约 `431.91 ns`。
-- 64 KiB 十段 fast PUBLISH 解码约 `107.19 ns`；MQTTnet 解码约 `2900.36 ns`。
-- 8 KiB 内存端到端 QoS 0 路径约 `368.0 ns`，`0 B/op`；同工作负载 MQTTnet decode+match+encode 约 `620.7 ns` 且每次分配约 `8368 B`，当前相对吞吐约 `1.69x`。
-- 1/100/1000 订阅者路由分别约 `32.339 ns`、`1685.367 ns`、`17969.005 ns`，均为 `0 B/op`。
+- 0.4 的 8 KiB 单段 fast PUBLISH 解码约 `67.99 ns`；MQTTnet 解码约 `434.61 ns`。
+- 0.4 的 64 KiB 十段 fast PUBLISH 解码约 `108.54 ns`；MQTTnet 解码约 `3769.45 ns`。
+- 0.4 的 8 KiB 内存端到端 QoS 0 路径约 `372.0 ns`，`0 B/op`；同工作负载 MQTTnet decode+match+encode 约 `536.5 ns` 且每次分配约 `8368 B`，当前相对吞吐约 `1.44x`。
+- 0.4 的 1/100/1000 订阅者路由分别约 `32.977 ns`、`1767.864 ns`、`18331.680 ns`，均为 `0 B/op`。
 
 ## 尚未达成的计划门槛
 
@@ -31,3 +31,6 @@
 - `codec-0.3.0-alpha.1.*`
 - `routing-0.3.0-alpha.1.*`
 - `memory-transport-0.3.0-alpha.1.*`
+- `codec-0.4.0-alpha.1.*`
+- `routing-0.4.0-alpha.1.*`
+- `memory-transport-0.4.0-alpha.1.*`
