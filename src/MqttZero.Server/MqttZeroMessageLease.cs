@@ -10,6 +10,7 @@ internal sealed class MqttZeroMessageLease : IDisposable
     private byte[] _payloadBuffer = [];
     private byte[] _propertiesBuffer = [];
     private byte[] _topicBuffer = [];
+    private MqttZeroBufferPool _bufferPool = MqttZeroBufferPool.Shared;
     private int _referenceCount;
 
     private MqttZeroMessageLease()
@@ -30,6 +31,8 @@ internal sealed class MqttZeroMessageLease : IDisposable
 
     public uint? SubscriptionIdentifier { get; private set; }
 
+    public ushort PacketIdentifier { get; set; }
+
     public static MqttZeroMessageLease CopyFrom(
         ReadOnlySequence<byte> topic,
         ReadOnlySequence<byte> properties,
@@ -37,7 +40,8 @@ internal sealed class MqttZeroMessageLease : IDisposable
         MqttQualityOfServiceLevel qualityOfServiceLevel,
         bool retain,
         uint? messageExpiryInterval,
-        uint? subscriptionIdentifier)
+        uint? subscriptionIdentifier,
+        MqttZeroBufferPool? bufferPool = null)
     {
         if (!LeasePool.TryDequeue(out MqttZeroMessageLease? lease))
         {
@@ -51,7 +55,8 @@ internal sealed class MqttZeroMessageLease : IDisposable
             qualityOfServiceLevel,
             retain,
             messageExpiryInterval,
-            subscriptionIdentifier);
+            subscriptionIdentifier,
+            bufferPool ?? MqttZeroBufferPool.Shared);
         return lease;
     }
 
@@ -70,30 +75,8 @@ internal sealed class MqttZeroMessageLease : IDisposable
 
         ObjectDisposedException.ThrowIf(references < 0, this);
 
-        Topic = ReadOnlyMemory<byte>.Empty;
-        Properties = ReadOnlyMemory<byte>.Empty;
-        Payload = ReadOnlyMemory<byte>.Empty;
-        MessageExpiryInterval = null;
-        SubscriptionIdentifier = null;
-
-        if (_topicBuffer.Length > 0)
-        {
-            ArrayPool<byte>.Shared.Return(_topicBuffer);
-        }
-
-        if (_propertiesBuffer.Length > 0)
-        {
-            ArrayPool<byte>.Shared.Return(_propertiesBuffer);
-        }
-
-        if (_payloadBuffer.Length > 0)
-        {
-            ArrayPool<byte>.Shared.Return(_payloadBuffer);
-        }
-
-        _topicBuffer = [];
-        _propertiesBuffer = [];
-        _payloadBuffer = [];
+        Reset();
+        ReturnBuffers();
         LeasePool.Enqueue(this);
     }
 
@@ -109,22 +92,34 @@ internal sealed class MqttZeroMessageLease : IDisposable
         MqttQualityOfServiceLevel qualityOfServiceLevel,
         bool retain,
         uint? messageExpiryInterval,
-        uint? subscriptionIdentifier)
+        uint? subscriptionIdentifier,
+        MqttZeroBufferPool bufferPool)
     {
-        _topicBuffer = CopyToPooledBuffer(topic, _topicBuffer);
-        _propertiesBuffer = CopyToPooledBuffer(properties, _propertiesBuffer);
-        _payloadBuffer = CopyToPooledBuffer(payload, _payloadBuffer);
-        Topic = _topicBuffer.AsMemory(0, (int)topic.Length);
-        Properties = _propertiesBuffer.AsMemory(0, (int)properties.Length);
-        Payload = _payloadBuffer.AsMemory(0, (int)payload.Length);
-        QualityOfServiceLevel = qualityOfServiceLevel;
-        RetainFlag = retain;
-        MessageExpiryInterval = messageExpiryInterval;
-        SubscriptionIdentifier = subscriptionIdentifier;
-        _referenceCount = 1;
+        _bufferPool = bufferPool;
+        try
+        {
+            _topicBuffer = CopyToPooledBuffer(topic, _topicBuffer);
+            _propertiesBuffer = CopyToPooledBuffer(properties, _propertiesBuffer);
+            _payloadBuffer = CopyToPooledBuffer(payload, _payloadBuffer);
+            Topic = _topicBuffer.AsMemory(0, (int)topic.Length);
+            Properties = _propertiesBuffer.AsMemory(0, (int)properties.Length);
+            Payload = _payloadBuffer.AsMemory(0, (int)payload.Length);
+            QualityOfServiceLevel = qualityOfServiceLevel;
+            RetainFlag = retain;
+            MessageExpiryInterval = messageExpiryInterval;
+            SubscriptionIdentifier = subscriptionIdentifier;
+            PacketIdentifier = 0;
+            _referenceCount = 1;
+        }
+        catch
+        {
+            Reset();
+            ReturnBuffers();
+            throw;
+        }
     }
 
-    private static byte[] CopyToPooledBuffer(ReadOnlySequence<byte> source, byte[] existing)
+    private byte[] CopyToPooledBuffer(ReadOnlySequence<byte> source, byte[] existing)
     {
         int length = (int)source.Length;
         if (length == 0)
@@ -134,8 +129,39 @@ internal sealed class MqttZeroMessageLease : IDisposable
 
         byte[] buffer = existing.Length >= length
             ? existing
-            : ArrayPool<byte>.Shared.Rent(length);
+            : _bufferPool.Rent(length);
         source.CopyTo(buffer);
         return buffer;
+    }
+
+    private void Reset()
+    {
+        Topic = ReadOnlyMemory<byte>.Empty;
+        Properties = ReadOnlyMemory<byte>.Empty;
+        Payload = ReadOnlyMemory<byte>.Empty;
+        MessageExpiryInterval = null;
+        SubscriptionIdentifier = null;
+        PacketIdentifier = 0;
+    }
+
+    private void ReturnBuffers()
+    {
+        if (_topicBuffer.Length > 0)
+        {
+            _bufferPool.Return(_topicBuffer);
+            _topicBuffer = [];
+        }
+
+        if (_propertiesBuffer.Length > 0)
+        {
+            _bufferPool.Return(_propertiesBuffer);
+            _propertiesBuffer = [];
+        }
+
+        if (_payloadBuffer.Length > 0)
+        {
+            _bufferPool.Return(_payloadBuffer);
+            _payloadBuffer = [];
+        }
     }
 }

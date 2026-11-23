@@ -1,42 +1,73 @@
 using System.Buffers;
+using System.Collections.Concurrent;
 
 namespace MqttZero;
 
 internal sealed class MqttZeroQueuedMessage
 {
-    public MqttZeroQueuedMessage(
-        ReadOnlySequence<byte> topic,
-        ReadOnlySequence<byte> payload,
-        ReadOnlySequence<byte> properties,
+    private static readonly ConcurrentQueue<MqttZeroQueuedMessage> MessagePool = new();
+
+    private MqttZeroMessageLease _lease = null!;
+
+    private MqttZeroQueuedMessage()
+    {
+    }
+
+    public ReadOnlyMemory<byte> Topic
+    {
+        get
+        {
+            return _lease.Topic;
+        }
+    }
+
+    public ReadOnlyMemory<byte> Payload
+    {
+        get
+        {
+            return _lease.Payload;
+        }
+    }
+
+    public ReadOnlyMemory<byte> Properties
+    {
+        get
+        {
+            return _lease.Properties;
+        }
+    }
+
+    public MqttQualityOfServiceLevel QualityOfServiceLevel { get; private set; }
+
+    public bool Retain { get; private set; }
+
+    public uint? SubscriptionIdentifier { get; private set; }
+
+    public DateTimeOffset? ExpiresAt { get; private set; }
+
+    public ushort PacketIdentifier { get; set; }
+
+    public static MqttZeroQueuedMessage Rent(
+        MqttZeroMessageLease lease,
         MqttQualityOfServiceLevel qualityOfServiceLevel,
         bool retain,
         uint? subscriptionIdentifier,
         DateTimeOffset? expiresAt)
     {
-        Topic = topic.ToArray();
-        Payload = payload.ToArray();
-        Properties = properties.ToArray();
-        QualityOfServiceLevel = qualityOfServiceLevel;
-        Retain = retain;
-        SubscriptionIdentifier = subscriptionIdentifier;
-        ExpiresAt = expiresAt;
+        if (!MessagePool.TryDequeue(out MqttZeroQueuedMessage? message))
+        {
+            message = new MqttZeroQueuedMessage();
+        }
+
+        lease.Retain();
+        message._lease = lease;
+        message.QualityOfServiceLevel = qualityOfServiceLevel;
+        message.Retain = retain;
+        message.SubscriptionIdentifier = subscriptionIdentifier;
+        message.ExpiresAt = expiresAt;
+        message.PacketIdentifier = 0;
+        return message;
     }
-
-    public byte[] Topic { get; }
-
-    public byte[] Payload { get; }
-
-    public byte[] Properties { get; }
-
-    public MqttQualityOfServiceLevel QualityOfServiceLevel { get; }
-
-    public bool Retain { get; }
-
-    public uint? SubscriptionIdentifier { get; }
-
-    public DateTimeOffset? ExpiresAt { get; }
-
-    public ushort PacketIdentifier { get; set; }
 
     public bool IsExpired(DateTimeOffset now)
     {
@@ -58,5 +89,32 @@ internal sealed class MqttZeroQueuedMessage
             Duplicate = duplicate,
             Retain = Retain
         };
+    }
+
+    public MqttZeroPublishView CreateView(bool duplicate)
+    {
+        return new MqttZeroPublishView(
+            new ReadOnlySequence<byte>(Topic),
+            Properties.Length == 0
+                ? ReadOnlySequence<byte>.Empty
+                : new ReadOnlySequence<byte>(Properties),
+            new ReadOnlySequence<byte>(Payload),
+            QualityOfServiceLevel,
+            PacketIdentifier,
+            duplicate,
+            Retain,
+            _lease.MessageExpiryInterval,
+            SubscriptionIdentifier,
+            null);
+    }
+
+    public void Release()
+    {
+        _lease.Release();
+        _lease = null!;
+        SubscriptionIdentifier = null;
+        ExpiresAt = null;
+        PacketIdentifier = 0;
+        MessagePool.Enqueue(this);
     }
 }
