@@ -1,0 +1,45 @@
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http.Connections;
+using Microsoft.AspNetCore.Routing;
+
+namespace MqttZero.AspNetCore;
+
+/// <summary>
+/// Maps MQTTZero WebSocket endpoints.
+/// </summary>
+public static class MqttZeroEndpointRouteBuilderExtensions
+{
+    /// <summary>
+    /// Maps an MQTT-over-WebSocket endpoint.
+    /// </summary>
+    /// <param name="endpoints">The endpoint route builder.</param>
+    /// <param name="pattern">The endpoint route pattern.</param>
+    /// <returns>The mapped connection endpoint.</returns>
+    public static IEndpointConventionBuilder MapMqttZero(
+        this IEndpointRouteBuilder endpoints,
+        string pattern)
+    {
+        ArgumentNullException.ThrowIfNull(endpoints);
+        ArgumentException.ThrowIfNullOrWhiteSpace(pattern);
+
+        return endpoints.MapConnectionHandler<MqttZeroConnectionHandler>(
+            pattern,
+            static options =>
+            {
+                options.WebSockets.SubProtocolSelector = SelectMqttSubProtocol;
+            });
+    }
+
+    private static string SelectMqttSubProtocol(IList<string> requestedProtocols)
+    {
+        foreach (string protocol in requestedProtocols)
+        {
+            if (protocol.Equals("mqtt", StringComparison.OrdinalIgnoreCase))
+            {
+                return protocol;
+            }
+        }
+
+        return string.Empty;
+    }
+}

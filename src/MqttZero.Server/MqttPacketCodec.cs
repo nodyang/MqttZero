@@ -23,6 +23,11 @@ public static class MqttPacketCodec
         packet = null;
         consumed = 0;
 
+        if (sequence.IsEmpty)
+        {
+            return false;
+        }
+
         SequenceReader<byte> reader = new(sequence);
         if (!reader.TryRead(out byte firstByte))
         {
@@ -45,9 +50,12 @@ public static class MqttPacketCodec
         bool success = packetType switch
         {
             MqttPacketType.Connect => TryDecodeConnect(firstByte, ref bodyReader, out packet),
+            MqttPacketType.ConnAck => TryDecodeConnAck(firstByte, ref bodyReader, out packet),
             MqttPacketType.Publish => TryDecodePublish(firstByte, ref bodyReader, out packet),
             MqttPacketType.PubAck => TryDecodePubAck(firstByte, ref bodyReader, out packet),
             MqttPacketType.Subscribe => TryDecodeSubscribe(firstByte, ref bodyReader, out packet),
+            MqttPacketType.PingReq => TryDecodePingReq(firstByte, ref bodyReader, out packet),
+            MqttPacketType.Disconnect => TryDecodeDisconnect(firstByte, ref bodyReader, out packet),
             _ => false
         };
 
@@ -78,6 +86,9 @@ public static class MqttPacketCodec
             case MqttConnectPacket connectPacket:
                 EncodeConnect(connectPacket, writer);
                 break;
+            case MqttConnAckPacket connAckPacket:
+                EncodeConnAck(connAckPacket, writer);
+                break;
             case MqttPublishPacket publishPacket:
                 EncodePublish(publishPacket, writer);
                 break;
@@ -89,6 +100,15 @@ public static class MqttPacketCodec
                 break;
             case MqttSubAckPacket subAckPacket:
                 EncodeSubAck(subAckPacket, writer);
+                break;
+            case MqttPingReqPacket:
+                EncodeEmptyPacket(MqttPacketType.PingReq, writer);
+                break;
+            case MqttPingRespPacket:
+                EncodeEmptyPacket(MqttPacketType.PingResp, writer);
+                break;
+            case MqttDisconnectPacket disconnectPacket:
+                EncodeDisconnect(disconnectPacket, writer);
                 break;
             default:
                 throw new NotSupportedException($"Packet type '{packet.PacketType}' is not supported.");
@@ -173,6 +193,30 @@ public static class MqttPacketCodec
         };
 
         return reader.Remaining == 0;
+    }
+
+    private static bool TryDecodeConnAck(
+        byte firstByte,
+        ref SequenceReader<byte> reader,
+        out MqttPacket? packet)
+    {
+        packet = null;
+        if ((firstByte & 0x0F) != 0 ||
+            !reader.TryRead(out byte acknowledgeFlags) ||
+            !reader.TryRead(out byte reasonCode) ||
+            !TryReadProperties(ref reader, out ReadOnlySequence<byte> properties) ||
+            reader.Remaining != 0)
+        {
+            return false;
+        }
+
+        packet = new MqttConnAckPacket
+        {
+            SessionPresent = (acknowledgeFlags & 0x01) != 0,
+            ReasonCode = (MqttReasonCode)reasonCode,
+            Properties = properties
+        };
+        return true;
     }
 
     private static bool TryDecodePublish(
@@ -305,6 +349,56 @@ public static class MqttPacketCodec
         return subscriptions.Count > 0;
     }
 
+    private static bool TryDecodePingReq(
+        byte firstByte,
+        ref SequenceReader<byte> reader,
+        out MqttPacket? packet)
+    {
+        packet = null;
+        if ((firstByte & 0x0F) != 0)
+        {
+            return false;
+        }
+
+        packet = new MqttPingReqPacket();
+        return reader.Remaining == 0;
+    }
+
+    private static bool TryDecodeDisconnect(
+        byte firstByte,
+        ref SequenceReader<byte> reader,
+        out MqttPacket? packet)
+    {
+        packet = null;
+        if ((firstByte & 0x0F) != 0)
+        {
+            return false;
+        }
+
+        MqttReasonCode reasonCode = MqttReasonCode.Success;
+        ReadOnlySequence<byte> properties = ReadOnlySequence<byte>.Empty;
+        if (reader.Remaining > 0)
+        {
+            if (!reader.TryRead(out byte encodedReasonCode))
+            {
+                return false;
+            }
+
+            reasonCode = (MqttReasonCode)encodedReasonCode;
+            if (reader.Remaining > 0 && !TryReadProperties(ref reader, out properties))
+            {
+                return false;
+            }
+        }
+
+        packet = new MqttDisconnectPacket
+        {
+            ReasonCode = reasonCode,
+            Properties = properties
+        };
+        return reader.Remaining == 0;
+    }
+
     private static void EncodeConnect(MqttConnectPacket packet, IBufferWriter<byte> writer)
     {
         int bodyLength = 10 +
@@ -361,6 +455,22 @@ public static class MqttPacketCodec
         {
             WriteBinary(writer, packet.Password);
         }
+    }
+
+    private static void EncodeConnAck(MqttConnAckPacket packet, IBufferWriter<byte> writer)
+    {
+        int bodyLength =
+            2 +
+            GetVariableByteIntegerSize(packet.Properties.Length) +
+            (int)packet.Properties.Length;
+
+        Span<byte> fixedHeader = writer.GetSpan(1 + 4);
+        fixedHeader[0] = 0x20;
+        int lengthBytes = WriteVariableByteInteger(fixedHeader[1..], bodyLength);
+        writer.Advance(1 + lengthBytes);
+        WriteByte(writer, packet.SessionPresent ? (byte)1 : (byte)0);
+        WriteByte(writer, (byte)packet.ReasonCode);
+        WriteProperties(writer, packet.Properties);
     }
 
     private static void EncodePublish(MqttPublishPacket packet, IBufferWriter<byte> writer)
@@ -475,6 +585,33 @@ public static class MqttPacketCodec
         Span<byte> reasonCodes = writer.GetSpan(packet.ReasonCodes.Length);
         packet.ReasonCodes.Span.CopyTo(reasonCodes);
         writer.Advance(packet.ReasonCodes.Length);
+    }
+
+    private static void EncodeEmptyPacket(MqttPacketType packetType, IBufferWriter<byte> writer)
+    {
+        Span<byte> destination = writer.GetSpan(2);
+        destination[0] = (byte)((byte)packetType << 4);
+        destination[1] = 0;
+        writer.Advance(2);
+    }
+
+    private static void EncodeDisconnect(MqttDisconnectPacket packet, IBufferWriter<byte> writer)
+    {
+        bool includeDetail = packet.ReasonCode != MqttReasonCode.Success || !packet.Properties.IsEmpty;
+        int bodyLength = includeDetail
+            ? 1 + GetVariableByteIntegerSize(packet.Properties.Length) + (int)packet.Properties.Length
+            : 0;
+
+        Span<byte> fixedHeader = writer.GetSpan(1 + 4);
+        fixedHeader[0] = 0xE0;
+        int lengthBytes = WriteVariableByteInteger(fixedHeader[1..], bodyLength);
+        writer.Advance(1 + lengthBytes);
+
+        if (includeDetail)
+        {
+            WriteByte(writer, (byte)packet.ReasonCode);
+            WriteProperties(writer, packet.Properties);
+        }
     }
 
     private static byte BuildConnectFlags(MqttConnectPacket packet)

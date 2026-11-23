@@ -24,13 +24,14 @@ namespace MqttZero.Tests
                     Memory<byte> first = writer.GetMemory(2);
                     "ab"u8.CopyTo(first.Span);
                     writer.Advance(2);
-                    _ = await writer.FlushAsync().ConfigureAwait(false);
+                    _ = await writer.FlushAsync(TestContext.Current.CancellationToken).ConfigureAwait(false);
 
                     Memory<byte> second = writer.GetMemory(2);
                     "cd"u8.CopyTo(second.Span);
                     writer.Advance(2);
-                    _ = await writer.FlushAsync().ConfigureAwait(false);
-                });
+                    _ = await writer.FlushAsync(TestContext.Current.CancellationToken).ConfigureAwait(false);
+                },
+                TestContext.Current.CancellationToken);
 
             Assert.Equal("abcd", Encoding.UTF8.GetString(owner.Payload.ToArray()));
         }

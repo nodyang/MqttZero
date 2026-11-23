@@ -7,7 +7,7 @@ insert_final_newline = true
 trim_trailing_whitespace = true
 
 [*.cs]
-dotnet_analyzer_diagnostic.category-Style.severity = warning
+dotnet_analyzer_diagnostic.category-Style.severity = none
 dotnet_analyzer_diagnostic.category-CodeQuality.severity = warning
 csharp_prefer_braces = true:error
 csharp_style_expression_bodied_methods = false:error
