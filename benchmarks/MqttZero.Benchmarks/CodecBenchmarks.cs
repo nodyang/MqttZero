@@ -20,6 +20,7 @@ public class CodecBenchmarks
 {
     private readonly MqttBufferWriter _mqttNetWriter = new(70 * 1024, 70 * 1024);
     private readonly PreallocatedBufferWriter _mqttZeroWriter = new(70 * 1024);
+    private readonly MqttZeroPacketWriter _mqttZeroHeaderWriter = new();
 
     private MqttZeroMessageLease _lease = null!;
     private MqttZeroQueuedMessage _queuedMessage = null!;
@@ -33,7 +34,7 @@ public class CodecBenchmarks
     /// <summary>
     /// Gets or sets the PUBLISH payload size.
     /// </summary>
-    [Params(8 * 1024, 64 * 1024)]
+    [Params(32, 8 * 1024, 64 * 1024)]
     public int PayloadSize { get; set; }
 
     /// <summary>
@@ -173,9 +174,9 @@ public class CodecBenchmarks
     /// Measures fast MQTTZero PUBLISH encoding.
     /// </summary>
     /// <returns>The encoded packet length.</returns>
-    [Benchmark(Baseline = true)]
+    [Benchmark]
     [BenchmarkCategory("Encode")]
-    public int EncodeFast()
+    public int EncodeToWriterFast()
     {
         _mqttZeroWriter.Reset();
         MqttPublishPacketCodec.Encode(_queuedMessage.CreateView(false), _mqttZeroWriter);
@@ -186,13 +187,49 @@ public class CodecBenchmarks
     /// Measures MQTTnet MQTT 5 PUBLISH encoding.
     /// </summary>
     /// <returns>The encoded packet length.</returns>
-    [Benchmark]
+    [Benchmark(Baseline = true)]
     [BenchmarkCategory("Encode")]
-    public int EncodeMqttNet()
+    public int EncodeHeaderMqttNet()
     {
         _mqttNetWriter.Reset(0);
         MqttPacketBuffer packet = _mqttNetEncoder.Encode(_mqttNetPacket);
         return packet.Length;
+    }
+
+    /// <summary>
+    /// Measures MQTTZero PUBLISH header encoding without materializing the payload.
+    /// </summary>
+    /// <returns>The encoded header length.</returns>
+    [Benchmark]
+    [BenchmarkCategory("Encode")]
+    public int EncodeHeaderFast()
+    {
+        MqttZeroPublishPacketBuffer buffer = MqttPublishPacketCodec.EncodeHeader(
+            _queuedMessage.CreateView(false),
+            _mqttZeroHeaderWriter);
+        return buffer.Header.Length;
+    }
+
+    /// <summary>
+    /// Measures MQTTnet encoding with the payload materialized into the same writer.
+    /// </summary>
+    /// <returns>The complete encoded length.</returns>
+    [Benchmark]
+    [BenchmarkCategory("Encode")]
+    public int EncodeToWriterMqttNet()
+    {
+        _mqttZeroWriter.Reset();
+        _mqttNetWriter.Reset(0);
+        MqttPacketBuffer packet = _mqttNetEncoder.Encode(_mqttNetPacket);
+        packet.Packet.AsSpan().CopyTo(_mqttZeroWriter.GetSpan(packet.Packet.Count));
+        _mqttZeroWriter.Advance(packet.Packet.Count);
+        foreach (ReadOnlyMemory<byte> segment in packet.Payload)
+        {
+            segment.Span.CopyTo(_mqttZeroWriter.GetSpan(segment.Length));
+            _mqttZeroWriter.Advance(segment.Length);
+        }
+
+        return _mqttZeroWriter.WrittenCount;
     }
 
     private static ReadOnlySequence<byte> CreateSegmentedSequence(byte[] bytes, int segmentCount)

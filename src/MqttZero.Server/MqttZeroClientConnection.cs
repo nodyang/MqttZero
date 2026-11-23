@@ -9,7 +9,7 @@ namespace MqttZero;
 
 internal sealed class MqttZeroClientConnection : IAsyncDisposable
 {
-    private readonly ArrayBufferWriter<byte> _bufferWriter = new();
+    private readonly MqttZeroPacketWriter _bufferWriter = new();
     private readonly MqttZeroBufferPool _bufferPool;
     private readonly CancellationTokenSource _closed = new();
     private readonly Dictionary<ushort, MqttZeroPooledTopicAlias> _inboundTopicAliases = [];

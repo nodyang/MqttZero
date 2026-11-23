@@ -40,7 +40,7 @@ try {
   </PropertyGroup>
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
-    <PackageReference Include="MqttZero.AspNetCore.Dashboard" Version="0.4.0-alpha.1" />
+    <PackageReference Include="MqttZero.AspNetCore.Dashboard" Version="0.4.1-alpha.1" />
   </ItemGroup>
 </Project>
 '@ | Set-Content -LiteralPath $projectPath -Encoding utf8NoBOM
