@@ -11,6 +11,7 @@ namespace MqttZero;
 public sealed class MqttZeroBroker
 {
     private readonly MqttZeroOptions _options;
+    private readonly IMqttZeroPublishInterceptor[] _publishInterceptors;
     private readonly ConcurrentDictionary<string, MqttZeroClientSession> _sessions = new(StringComparer.Ordinal);
     private readonly TimeProvider _timeProvider;
     private int _connectionCount;
@@ -22,9 +23,25 @@ public sealed class MqttZeroBroker
     /// <param name="options">The broker options.</param>
     /// <param name="timeProvider">The time provider used for broker timings.</param>
     public MqttZeroBroker(MqttZeroOptions options, TimeProvider timeProvider)
+        : this(options, timeProvider, [])
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new broker with publish interceptors.
+    /// </summary>
+    /// <param name="options">The broker options.</param>
+    /// <param name="timeProvider">The time provider used for broker timings.</param>
+    /// <param name="publishInterceptors">The ordered publish interceptors.</param>
+    public MqttZeroBroker(
+        MqttZeroOptions options,
+        TimeProvider timeProvider,
+        IEnumerable<IMqttZeroPublishInterceptor> publishInterceptors)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
+        ArgumentNullException.ThrowIfNull(publishInterceptors);
+        _publishInterceptors = publishInterceptors.ToArray();
     }
 
     /// <summary>
@@ -375,6 +392,36 @@ public sealed class MqttZeroBroker
         MqttPublishPacket packet,
         CancellationToken cancellationToken)
     {
+        MqttZeroPublishContext context = new()
+        {
+            Topic = packet.TopicName,
+            Payload = packet.Payload,
+            Properties = packet.Properties,
+            QualityOfServiceLevel = packet.QualityOfServiceLevel,
+            Retain = packet.Retain,
+            SenderClientId = sender?.ClientId
+        };
+
+        if (_publishInterceptors.Length > 0)
+        {
+            foreach (IMqttZeroPublishInterceptor interceptor in _publishInterceptors)
+            {
+                MqttZeroInterceptionResult result = await interceptor
+                    .InterceptAsync(context, cancellationToken)
+                    .ConfigureAwait(false);
+                if (result != MqttZeroInterceptionResult.Continue)
+                {
+                    return;
+                }
+            }
+        }
+
+        packet.TopicName = context.Topic;
+        packet.Payload = context.Payload;
+        packet.Properties = context.Properties;
+        packet.QualityOfServiceLevel = context.QualityOfServiceLevel;
+        packet.Retain = context.Retain;
+
         byte[] topic = packet.TopicName.ToArray();
         foreach (KeyValuePair<string, MqttZeroClientSession> pair in _sessions)
         {

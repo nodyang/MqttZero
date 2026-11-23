@@ -33,7 +33,9 @@ public static class MqttZeroServiceCollectionExtensions
         {
             MqttZeroOptions options = provider.GetRequiredService<IOptions<MqttZeroOptions>>().Value;
             TimeProvider timeProvider = provider.GetRequiredService<TimeProvider>();
-            return new MqttZeroBroker(options, timeProvider);
+            IEnumerable<IMqttZeroPublishInterceptor> interceptors =
+                provider.GetServices<IMqttZeroPublishInterceptor>();
+            return new MqttZeroBroker(options, timeProvider, interceptors);
         });
         services.TryAddSingleton<MqttZeroConnectionHandler>();
         services.AddHostedService<MqttZeroHostedService>();
