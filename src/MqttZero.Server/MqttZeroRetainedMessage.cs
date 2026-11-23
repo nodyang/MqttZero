@@ -3,22 +3,48 @@ namespace MqttZero;
 internal sealed class MqttZeroRetainedMessage
 {
     public MqttZeroRetainedMessage(
-        byte[] topic,
-        byte[] payload,
+        MqttZeroMessageLease lease,
         MqttQualityOfServiceLevel qualityOfServiceLevel,
         DateTimeOffset? expiresAt)
     {
-        Topic = topic;
-        Payload = payload;
+        lease.Retain();
+        Lease = lease;
         QualityOfServiceLevel = qualityOfServiceLevel;
         ExpiresAt = expiresAt;
     }
 
-    public byte[] Topic { get; }
+    public MqttZeroMessageLease Lease { get; }
 
-    public byte[] Payload { get; }
+    public ReadOnlyMemory<byte> Topic
+    {
+        get
+        {
+            return Lease.Topic;
+        }
+    }
+
+    public ReadOnlyMemory<byte> Payload
+    {
+        get
+        {
+            return Lease.Payload;
+        }
+    }
 
     public MqttQualityOfServiceLevel QualityOfServiceLevel { get; }
 
     public DateTimeOffset? ExpiresAt { get; }
+
+    public long ByteLength
+    {
+        get
+        {
+            return Topic.Length + Payload.Length;
+        }
+    }
+
+    public void Release()
+    {
+        Lease.Release();
+    }
 }

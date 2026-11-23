@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Collections.Concurrent;
 
 namespace MqttZero;
 
@@ -7,6 +8,8 @@ namespace MqttZero;
 /// </summary>
 public sealed class MqttZeroPublishContext
 {
+    private static readonly ConcurrentQueue<MqttZeroPublishContext> ContextPool = new();
+
     /// <summary>
     /// Gets or sets the UTF-8 topic name.
     /// </summary>
@@ -36,4 +39,25 @@ public sealed class MqttZeroPublishContext
     /// Gets the originating client identifier, or <see langword="null"/> for server-originated messages.
     /// </summary>
     public string? SenderClientId { get; internal set; }
+
+    internal static MqttZeroPublishContext Rent()
+    {
+        if (ContextPool.TryDequeue(out MqttZeroPublishContext? context))
+        {
+            return context;
+        }
+
+        return new MqttZeroPublishContext();
+    }
+
+    internal void Release()
+    {
+        Topic = ReadOnlySequence<byte>.Empty;
+        Payload = ReadOnlySequence<byte>.Empty;
+        Properties = ReadOnlySequence<byte>.Empty;
+        QualityOfServiceLevel = MqttQualityOfServiceLevel.AtMostOnce;
+        Retain = false;
+        SenderClientId = null;
+        ContextPool.Enqueue(this);
+    }
 }

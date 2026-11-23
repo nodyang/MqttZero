@@ -11,11 +11,14 @@ namespace MqttZero;
 public sealed class MqttZeroBroker : IAsyncDisposable
 {
     private readonly object _sessionGate = new();
+    private readonly MqttZeroBufferPool _bufferPool;
     private readonly IMqttZeroPublishInterceptor[] _publishInterceptors;
     private readonly ConcurrentDictionary<string, MqttZeroRetainedMessage> _retainedMessages =
         new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, MqttZeroSessionState> _sessions =
         new(StringComparer.Ordinal);
+    private MqttZeroRouteEntry[] _subscriptionRouteSnapshot = [];
+    private readonly MqttZeroRouteScopePool _routeScopes = new();
     private readonly ConcurrentDictionary<string, int> _sharedSubscriptionCursors =
         new(StringComparer.Ordinal);
     private readonly MqttZeroOptions _options;
@@ -23,7 +26,9 @@ public sealed class MqttZeroBroker : IAsyncDisposable
     private CancellationTokenSource? _maintenanceCancellation;
     private Task? _maintenanceTask;
     private int _connectionCount;
+    private int _disposed;
     private long _publishedWillCount;
+    private long _retainedBytes;
     private int _stopping;
     private int _state;
 
@@ -51,7 +56,13 @@ public sealed class MqttZeroBroker : IAsyncDisposable
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
         ArgumentNullException.ThrowIfNull(publishInterceptors);
-        _publishInterceptors = publishInterceptors.ToArray();
+        _bufferPool = new MqttZeroBufferPool(options.MaxBufferedBytes);
+        _publishInterceptors = publishInterceptors
+            .OrderBy(static interceptor =>
+                interceptor is MqttZeroOrderedPublishInterceptor ordered
+                    ? ordered.Order
+                    : 0)
+            .ToArray();
     }
 
     /// <summary>
@@ -162,13 +173,13 @@ public sealed class MqttZeroBroker : IAsyncDisposable
             MqttZeroRetainedMessage message = pair.Value;
             if (message.ExpiresAt.HasValue && message.ExpiresAt.Value <= now)
             {
-                _retainedMessages.TryRemove(pair.Key, out _);
+                RemoveRetainedMessage(pair.Key);
                 continue;
             }
 
             messages.Add(new MqttZeroRetainedMessageSnapshot
             {
-                Topic = Encoding.UTF8.GetString(message.Topic),
+                Topic = Encoding.UTF8.GetString(message.Topic.Span),
                 PayloadLength = message.Payload.Length,
                 QualityOfServiceLevel = message.QualityOfServiceLevel
             });
@@ -315,7 +326,18 @@ public sealed class MqttZeroBroker : IAsyncDisposable
             }
         }
 
+        foreach (MqttZeroSessionState session in _sessions.Values)
+        {
+            ReleaseSessionMessages(session);
+        }
+
+        foreach (string topic in _retainedMessages.Keys)
+        {
+            RemoveRetainedMessage(topic);
+        }
+
         _sessions.Clear();
+        _subscriptionRouteSnapshot = [];
         Volatile.Write(ref _connectionCount, 0);
         Volatile.Write(ref _state, (int)MqttZeroBrokerState.Stopped);
     }
@@ -377,9 +399,51 @@ public sealed class MqttZeroBroker : IAsyncDisposable
                     throw new InvalidOperationException("The inbound MQTT packet exceeds the broker maximum.");
                 }
 
-                while (MqttPacketCodec.TryDecode(buffer, out MqttPacket? packet, out long consumed) &&
-                    packet != null)
+                while (true)
                 {
+                    if (session != null &&
+                        MqttPublishPacketCodec.TryDecode(
+                            buffer,
+                            out MqttZeroPublishView publishView,
+                            out long publishConsumed))
+                    {
+                        connection!.MarkPacketReceived(_timeProvider);
+                        try
+                        {
+                            MqttZeroMessageLease lease = CreateMessageLease(connection, publishView);
+                            try
+                            {
+                                await RoutePublishLeaseAsync(
+                                    session,
+                                    connection,
+                                    lease,
+                                    connectionLifetime.Token).ConfigureAwait(false);
+                            }
+                            finally
+                            {
+                                lease.Release();
+                            }
+                        }
+                        catch (MqttZeroBufferPoolExhaustedException)
+                        {
+                            await _bufferPool.WaitForCapacityAsync(connectionLifetime.Token)
+                                .ConfigureAwait(false);
+                            continue;
+                        }
+
+                        buffer = buffer.Slice(publishConsumed);
+                        continue;
+                    }
+
+                    if (!MqttPacketCodec.TryDecode(
+                        buffer,
+                        out MqttPacket? packet,
+                        out long consumed) ||
+                        packet == null)
+                    {
+                        break;
+                    }
+
                     if (session == null)
                     {
                         if (packet is not MqttConnectPacket connectPacket)
@@ -475,7 +539,8 @@ public sealed class MqttZeroBroker : IAsyncDisposable
             connectPacket.KeepAliveSeconds,
             connectPacket.ReceiveMaximum,
             connectPacket.MaximumPacketSize,
-            _timeProvider);
+            _timeProvider,
+            _bufferPool);
         MqttZeroClientConnection? oldConnection = null;
         MqttZeroWillMessage? takeoverWill = null;
         MqttZeroSessionState session;
@@ -488,6 +553,7 @@ public sealed class MqttZeroBroker : IAsyncDisposable
                 (connectPacket.CleanStart || IsSessionExpired(existing, now)))
             {
                 _sessions.TryRemove(clientId, out _);
+                ReleaseSessionMessages(existing);
                 lock (existing.SyncRoot)
                 {
                     oldConnection = existing.Connection;
@@ -544,6 +610,8 @@ public sealed class MqttZeroBroker : IAsyncDisposable
                     : null;
             }
         }
+
+        RebuildSubscriptionRouteSnapshot();
 
         if (oldConnection != null && !ReferenceEquals(oldConnection, newConnection))
         {
@@ -605,7 +673,12 @@ public sealed class MqttZeroBroker : IAsyncDisposable
             case MqttPubAckPacket pubAckPacket:
                 lock (session.SyncRoot)
                 {
-                    session.InflightMessages.Remove(pubAckPacket.PacketIdentifier);
+                    if (session.InflightMessages.Remove(
+                        pubAckPacket.PacketIdentifier,
+                        out MqttZeroQueuedMessage? acknowledged))
+                    {
+                        acknowledged.Release();
+                    }
                 }
 
                 await DrainSessionAsync(session, cancellationToken).ConfigureAwait(false);
@@ -682,6 +755,8 @@ public sealed class MqttZeroBroker : IAsyncDisposable
                 : (byte)MqttReasonCode.Success;
         }
 
+        RebuildSubscriptionRouteSnapshot();
+
         await connection.SendAsync(
             new MqttSubAckPacket
             {
@@ -714,7 +789,7 @@ public sealed class MqttZeroBroker : IAsyncDisposable
                     continue;
                 }
 
-                if (!MqttZeroTopicMatcher.Matches(filter, retainedMessage.Topic))
+                if (!MqttZeroTopicMatcher.Matches(filter, retainedMessage.Topic.Span))
                 {
                     continue;
                 }
@@ -741,7 +816,7 @@ public sealed class MqttZeroBroker : IAsyncDisposable
         }
     }
 
-    private static async ValueTask ProcessUnsubscribeAsync(
+    private async ValueTask ProcessUnsubscribeAsync(
         MqttZeroSessionState session,
         MqttZeroClientConnection connection,
         MqttUnsubscribePacket packet,
@@ -767,6 +842,8 @@ public sealed class MqttZeroBroker : IAsyncDisposable
                 ? (byte)MqttReasonCode.Success
                 : (byte)MqttReasonCode.NoSubscriptionExisted;
         }
+
+        RebuildSubscriptionRouteSnapshot();
 
         await connection.SendAsync(
             new MqttUnsubAckPacket
@@ -812,61 +889,209 @@ public sealed class MqttZeroBroker : IAsyncDisposable
         packet.QualityOfServiceLevel = context.QualityOfServiceLevel;
         packet.Retain = context.Retain;
 
-        byte[] topic = packet.TopicName.ToArray();
-        string topicKey = Encoding.UTF8.GetString(topic);
-        if (packet.Retain)
+        MqttZeroMessageLease lease = MqttZeroMessageLease.BorrowFrom(
+            packet.TopicName,
+            packet.Properties,
+            packet.Payload,
+            packet.QualityOfServiceLevel,
+            packet.Retain,
+            packet.MessageExpiryInterval,
+            packet.SubscriptionIdentifier,
+            _bufferPool);
+        lease.PacketIdentifier = packet.PacketIdentifier;
+        try
         {
-            if (packet.Payload.IsEmpty)
+            if (lease.RetainFlag)
             {
-                _retainedMessages.TryRemove(topicKey, out _);
+                StoreRetainedMessage(lease);
+            }
+
+            MqttZeroRouteEntry[] routeEntries =
+                Volatile.Read(ref _subscriptionRouteSnapshot);
+            using MqttZeroRouteScope deliveries = MqttZeroRouteSelector.Select(
+                routeEntries,
+                lease.Topic.Span,
+                sender,
+                _sharedSubscriptionCursors,
+                _routeScopes);
+            for (int index = 0; index < deliveries.Count; index++)
+            {
+                MqttZeroDeliveryCandidate delivery = deliveries[index];
+                await DeliverLeaseAsync(
+                    delivery.Session,
+                    lease,
+                    delivery.QualityOfServiceLevel,
+                    delivery.Subscription.RetainAsPublished && lease.RetainFlag,
+                    delivery.Subscription.SubscriptionIdentifier,
+                    cancellationToken).ConfigureAwait(false);
+            }
+
+            if (sender != null &&
+                lease.QualityOfServiceLevel == MqttQualityOfServiceLevel.AtLeastOnce)
+            {
+                MqttZeroClientConnection? senderConnection;
+                lock (sender.SyncRoot)
+                {
+                    senderConnection = sender.Connection;
+                }
+
+                if (senderConnection != null)
+                {
+                    await senderConnection.SendPubAckAsync(
+                        lease.PacketIdentifier,
+                        MqttReasonCode.Success,
+                        cancellationToken).ConfigureAwait(false);
+                }
+            }
+        }
+        finally
+        {
+            lease.Release();
+        }
+    }
+
+    internal MqttZeroMessageLease CreateMessageLease(
+        MqttZeroClientConnection connection,
+        MqttZeroPublishView view)
+    {
+        ReadOnlySequence<byte> topic = view.Topic;
+        if (view.TopicAlias.HasValue)
+        {
+            ushort alias = view.TopicAlias.Value;
+            if (alias == 0 || alias > _options.TopicAliasMaximum)
+            {
+                throw new InvalidOperationException("The PUBLISH topic alias is invalid.");
+            }
+
+            if (!topic.IsEmpty)
+            {
+                connection.SetInboundTopicAlias(alias, topic);
+            }
+            else if (connection.TryGetInboundTopicAlias(alias, out ReadOnlyMemory<byte> mappedTopic))
+            {
+                topic = new ReadOnlySequence<byte>(mappedTopic);
             }
             else
             {
-                if (_retainedMessages.Count >= _options.MaxRetainedMessages)
+                throw new InvalidOperationException("The PUBLISH topic alias is unknown.");
+            }
+        }
+        else if (topic.IsEmpty)
+        {
+            throw new InvalidOperationException("The PUBLISH topic is empty.");
+        }
+
+        MqttZeroMessageLease lease = MqttZeroMessageLease.BorrowFrom(
+            topic,
+            view.Properties,
+            view.Payload,
+            view.QualityOfServiceLevel,
+            view.Retain,
+            view.MessageExpiryInterval,
+            view.SubscriptionIdentifier,
+            _bufferPool);
+        lease.PacketIdentifier = view.PacketIdentifier;
+        return lease;
+    }
+
+    internal async ValueTask RoutePublishLeaseAsync(
+        MqttZeroSessionState sender,
+        MqttZeroClientConnection senderConnection,
+        MqttZeroMessageLease lease,
+        CancellationToken cancellationToken)
+    {
+        MqttZeroMessageLease effectiveLease = lease;
+        bool ownsEffectiveLease = false;
+        if (_publishInterceptors.Length > 0)
+        {
+            MqttZeroPublishContext context = MqttZeroPublishContext.Rent();
+            context.Topic = new ReadOnlySequence<byte>(lease.Topic);
+            context.Payload = new ReadOnlySequence<byte>(lease.Payload);
+            context.Properties = lease.Properties.Length == 0
+                ? ReadOnlySequence<byte>.Empty
+                : new ReadOnlySequence<byte>(lease.Properties);
+            context.QualityOfServiceLevel = lease.QualityOfServiceLevel;
+            context.Retain = lease.RetainFlag;
+            context.SenderClientId = sender.ClientId;
+            try
+            {
+                foreach (IMqttZeroPublishInterceptor interceptor in _publishInterceptors)
                 {
-                    throw new InvalidOperationException("The retained message count limit was reached.");
+                    MqttZeroInterceptionResult result = await interceptor
+                        .InterceptAsync(context, cancellationToken)
+                        .ConfigureAwait(false);
+                    if (result != MqttZeroInterceptionResult.Continue)
+                    {
+                        if (lease.QualityOfServiceLevel == MqttQualityOfServiceLevel.AtLeastOnce)
+                        {
+                            await senderConnection.SendPubAckAsync(
+                                lease.PacketIdentifier,
+                                MqttReasonCode.Success,
+                                cancellationToken).ConfigureAwait(false);
+                        }
+
+                        return;
+                    }
                 }
 
-                _retainedMessages[topicKey] = new MqttZeroRetainedMessage(
-                    topic,
-                    packet.Payload.ToArray(),
-                    packet.QualityOfServiceLevel,
-                    packet.MessageExpiryInterval.HasValue
-                        ? _timeProvider.GetUtcNow().AddSeconds(packet.MessageExpiryInterval.Value)
-                        : null);
+                effectiveLease = MqttZeroMessageLease.CopyFrom(
+                    context.Topic,
+                    context.Properties,
+                    context.Payload,
+                    context.QualityOfServiceLevel,
+                    context.Retain,
+                    lease.MessageExpiryInterval,
+                    lease.SubscriptionIdentifier,
+                    _bufferPool);
+                effectiveLease.PacketIdentifier = lease.PacketIdentifier;
+                ownsEffectiveLease = true;
+            }
+            finally
+            {
+                context.Release();
             }
         }
 
-        List<DeliveryCandidate> deliveries = SelectDeliveries(topic, sender);
-        foreach (DeliveryCandidate delivery in deliveries)
+        try
         {
-            await DeliverAsync(
-                delivery.Session,
-                packet,
-                delivery.QualityOfServiceLevel,
-                delivery.Subscription.RetainAsPublished && packet.Retain,
-                delivery.Subscription.SubscriptionIdentifier,
-                cancellationToken).ConfigureAwait(false);
-        }
-
-        if (sender != null &&
-            packet.QualityOfServiceLevel == MqttQualityOfServiceLevel.AtLeastOnce)
-        {
-            MqttZeroClientConnection? senderConnection;
-            lock (sender.SyncRoot)
+            if (effectiveLease.RetainFlag)
             {
-                senderConnection = sender.Connection;
+                StoreRetainedMessage(effectiveLease);
             }
 
-            if (senderConnection != null)
+            MqttZeroRouteEntry[] routeEntries =
+                Volatile.Read(ref _subscriptionRouteSnapshot);
+            using MqttZeroRouteScope deliveries = MqttZeroRouteSelector.Select(
+                routeEntries,
+                effectiveLease.Topic.Span,
+                sender,
+                _sharedSubscriptionCursors,
+                _routeScopes);
+            for (int index = 0; index < deliveries.Count; index++)
             {
-                await senderConnection.SendAsync(
-                    new MqttPubAckPacket
-                    {
-                        PacketIdentifier = packet.PacketIdentifier,
-                        ReasonCode = MqttReasonCode.Success
-                    },
+                MqttZeroDeliveryCandidate delivery = deliveries[index];
+                await DeliverLeaseAsync(
+                    delivery.Session,
+                    effectiveLease,
+                    delivery.QualityOfServiceLevel,
+                    delivery.Subscription.RetainAsPublished && effectiveLease.RetainFlag,
+                    delivery.Subscription.SubscriptionIdentifier,
                     cancellationToken).ConfigureAwait(false);
+            }
+
+            if (effectiveLease.QualityOfServiceLevel == MqttQualityOfServiceLevel.AtLeastOnce)
+            {
+                await senderConnection.SendPubAckAsync(
+                    effectiveLease.PacketIdentifier,
+                    MqttReasonCode.Success,
+                    cancellationToken).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            if (ownsEffectiveLease)
+            {
+                effectiveLease.Release();
             }
         }
     }
@@ -893,11 +1118,11 @@ public sealed class MqttZeroBroker : IAsyncDisposable
 
         if (!packet.TopicName.IsEmpty)
         {
-            connection.InboundTopicAliases[alias] = packet.TopicName.ToArray();
+            connection.SetInboundTopicAlias(alias, packet.TopicName);
             return;
         }
 
-        if (!connection.InboundTopicAliases.TryGetValue(alias, out byte[]? topic))
+        if (!connection.TryGetInboundTopicAlias(alias, out ReadOnlyMemory<byte> topic))
         {
             throw new InvalidOperationException("The PUBLISH topic alias is unknown.");
         }
@@ -905,69 +1130,75 @@ public sealed class MqttZeroBroker : IAsyncDisposable
         packet.TopicName = new ReadOnlySequence<byte>(topic);
     }
 
-    private List<DeliveryCandidate> SelectDeliveries(
-        ReadOnlySpan<byte> topic,
-        MqttZeroSessionState? sender)
+    private void StoreRetainedMessage(MqttZeroMessageLease lease)
     {
-        List<DeliveryCandidate> deliveries = [];
-        Dictionary<string, List<DeliveryCandidate>> shared = new(StringComparer.Ordinal);
-
-        foreach (MqttZeroSessionState session in _sessions.Values)
+        string topicKey = Encoding.UTF8.GetString(lease.Topic.Span);
+        if (lease.PayloadSequence.IsEmpty)
         {
-            DeliveryCandidate? bestRegular = null;
-            lock (session.SyncRoot)
+            RemoveRetainedMessage(topicKey);
+            return;
+        }
+
+        MqttZeroMessageLease retainedLease = lease;
+        bool ownsTemporaryLease = false;
+        if (lease.IsBorrowed)
+        {
+            retainedLease = lease.CreateOwnedCopy();
+            ownsTemporaryLease = true;
+        }
+
+        try
+        {
+            lock (_sessionGate)
             {
-                foreach (MqttZeroSubscription subscription in session.Subscriptions)
+                _retainedMessages.TryGetValue(topicKey, out MqttZeroRetainedMessage? existing);
+                if (existing == null && _retainedMessages.Count >= _options.MaxRetainedMessages)
                 {
-                    if (subscription.NoLocal && ReferenceEquals(session, sender))
-                    {
-                        continue;
-                    }
-
-                    if (!MqttZeroTopicMatcher.Matches(subscription.MatchFilter, topic))
-                    {
-                        continue;
-                    }
-
-                    DeliveryCandidate candidate = new(session, subscription);
-                    if (subscription.IsShared)
-                    {
-                        string group = subscription.SharedGroup!;
-                        if (!shared.TryGetValue(group, out List<DeliveryCandidate>? candidates))
-                        {
-                            candidates = [];
-                            shared[group] = candidates;
-                        }
-
-                        if (!candidates.Exists(item => ReferenceEquals(item.Session, session)))
-                        {
-                            candidates.Add(candidate);
-                        }
-                    }
-                    else if (bestRegular == null ||
-                        subscription.QualityOfServiceLevel > bestRegular.Subscription.QualityOfServiceLevel)
-                    {
-                        bestRegular = candidate;
-                    }
+                    throw new InvalidOperationException("The retained message count limit was reached.");
                 }
-            }
 
-            if (bestRegular != null)
-            {
-                deliveries.Add(bestRegular);
+                long previousBytes = existing?.ByteLength ?? 0;
+                long replacementBytes =
+                    retainedLease.TopicSequence.Length + retainedLease.PayloadSequence.Length;
+                long retainedBytes = _retainedBytes - previousBytes + replacementBytes;
+                if (retainedBytes > _options.MaxRetainedBytes)
+                {
+                    throw new InvalidOperationException("The retained message byte limit was reached.");
+                }
+
+                MqttZeroRetainedMessage replacement = new(
+                    retainedLease,
+                    retainedLease.QualityOfServiceLevel,
+                    retainedLease.MessageExpiryInterval.HasValue
+                        ? _timeProvider.GetUtcNow().AddSeconds(
+                            retainedLease.MessageExpiryInterval.Value)
+                        : null);
+                _retainedMessages[topicKey] = replacement;
+                _retainedBytes = retainedBytes;
+                existing?.Release();
             }
         }
-
-        foreach (KeyValuePair<string, List<DeliveryCandidate>> group in shared)
+        finally
         {
-            int index = _sharedSubscriptionCursors.AddOrUpdate(
-                group.Key,
-                0,
-                static (_, current) => current + 1) % group.Value.Count;
-            deliveries.Add(group.Value[index]);
+            if (ownsTemporaryLease)
+            {
+                retainedLease.Release();
+            }
+        }
+    }
+
+    private void RemoveRetainedMessage(string topicKey)
+    {
+        MqttZeroRetainedMessage? removed = null;
+        lock (_sessionGate)
+        {
+            if (_retainedMessages.TryRemove(topicKey, out removed))
+            {
+                _retainedBytes -= removed.ByteLength;
+            }
         }
 
-        return deliveries;
+        removed?.Release();
     }
 
     private async ValueTask DeliverAsync(
@@ -978,57 +1209,122 @@ public sealed class MqttZeroBroker : IAsyncDisposable
         uint? subscriptionIdentifier,
         CancellationToken cancellationToken)
     {
+        MqttZeroMessageLease lease = MqttZeroMessageLease.CopyFrom(
+            source.TopicName,
+            source.Properties,
+            source.Payload,
+            qos,
+            retain,
+            source.MessageExpiryInterval,
+            subscriptionIdentifier,
+            _bufferPool);
+        try
+        {
+            await DeliverLeaseAsync(
+                session,
+                lease,
+                qos,
+                retain,
+                subscriptionIdentifier,
+                cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            lease.Release();
+        }
+    }
+
+    private async ValueTask DeliverLeaseAsync(
+        MqttZeroSessionState session,
+        MqttZeroMessageLease lease,
+        MqttQualityOfServiceLevel qos,
+        bool retain,
+        uint? subscriptionIdentifier,
+        CancellationToken cancellationToken)
+    {
         DateTimeOffset now = _timeProvider.GetUtcNow();
-        DateTimeOffset? expiresAt = source.MessageExpiryInterval.HasValue
-            ? now.AddSeconds(source.MessageExpiryInterval.Value)
+        DateTimeOffset? expiresAt = lease.MessageExpiryInterval.HasValue
+            ? now.AddSeconds(lease.MessageExpiryInterval.Value)
             : null;
         if (expiresAt <= now)
         {
             return;
         }
 
-        MqttZeroQueuedMessage message = new(
-            source.TopicName,
-            source.Payload,
-            source.Properties,
-            qos,
-            retain,
-            subscriptionIdentifier,
-            expiresAt);
-        MqttZeroClientConnection? connection;
-        bool sendImmediately;
+        MqttZeroQueuedMessage? message = null;
+        MqttZeroClientConnection? connection = null;
+        bool sendImmediately = false;
+        bool messageHeld = false;
 
-        lock (session.SyncRoot)
+        try
         {
-            connection = session.Connection;
-            int inflightLimit = GetInflightLimit(connection);
-            sendImmediately = connection != null &&
-                session.PendingMessages.Count == 0 &&
-                (qos == MqttQualityOfServiceLevel.AtMostOnce ||
-                    session.InflightMessages.Count < inflightLimit);
-            if (sendImmediately && qos == MqttQualityOfServiceLevel.AtLeastOnce)
+            lock (session.SyncRoot)
             {
-                message.PacketIdentifier = session.GetNextPacketIdentifier();
-                session.InflightMessages[message.PacketIdentifier] = message;
-            }
-
-            if (!sendImmediately)
-            {
-                if (qos == MqttQualityOfServiceLevel.AtMostOnce &&
-                    connection == null &&
-                    !_options.StoreQos0InQueue)
+                connection = session.Connection;
+                int inflightLimit = GetInflightLimit(connection);
+                sendImmediately = connection != null &&
+                    session.PendingMessages.Count == 0 &&
+                    (qos == MqttQualityOfServiceLevel.AtMostOnce ||
+                        session.InflightMessages.Count < inflightLimit);
+                if (sendImmediately && qos == MqttQualityOfServiceLevel.AtLeastOnce)
                 {
-                    return;
+                    message = MqttZeroQueuedMessage.Rent(
+                        lease,
+                        qos,
+                        retain,
+                        subscriptionIdentifier,
+                        expiresAt);
+                    message.PacketIdentifier = session.GetNextPacketIdentifier();
+                    session.InflightMessages[message.PacketIdentifier] = message;
+                    messageHeld = true;
                 }
 
-                EnqueueMessage(session, message);
+                if (!sendImmediately)
+                {
+                    if (qos == MqttQualityOfServiceLevel.AtMostOnce &&
+                        connection == null &&
+                        !_options.StoreQos0InQueue)
+                    {
+                        return;
+                    }
+
+                    message = MqttZeroQueuedMessage.Rent(
+                        lease,
+                        qos,
+                        retain,
+                        subscriptionIdentifier,
+                        expiresAt);
+                    EnqueueMessage(session, message);
+                    messageHeld = true;
+                }
+            }
+
+            if (sendImmediately)
+            {
+                if (qos == MqttQualityOfServiceLevel.AtMostOnce)
+                {
+                    await connection!.SendPublishAsync(
+                        lease,
+                        qos,
+                        retain,
+                        subscriptionIdentifier,
+                        0,
+                        false,
+                        cancellationToken).ConfigureAwait(false);
+                }
+                else
+                {
+                    await connection!.SendPublishAsync(message!, false, cancellationToken)
+                        .ConfigureAwait(false);
+                }
             }
         }
-
-        if (sendImmediately)
+        finally
         {
-            await connection!.SendAsync(message.CreatePacket(false), cancellationToken)
-                .ConfigureAwait(false);
+            if (message != null && !messageHeld)
+            {
+                message.Release();
+            }
         }
     }
 
@@ -1040,11 +1336,15 @@ public sealed class MqttZeroBroker : IAsyncDisposable
                 item => item.QualityOfServiceLevel == MqttQualityOfServiceLevel.AtMostOnce);
             if (oldestQos0Index >= 0)
             {
+                MqttZeroQueuedMessage evicted = session.PendingMessages[oldestQos0Index];
                 session.PendingMessages.RemoveAt(oldestQos0Index);
+                evicted.Release();
             }
             else if (session.PendingMessages.Count > 0)
             {
+                MqttZeroQueuedMessage evicted = session.PendingMessages[0];
                 session.PendingMessages.RemoveAt(0);
+                evicted.Release();
             }
         }
 
@@ -1115,10 +1415,11 @@ public sealed class MqttZeroBroker : IAsyncDisposable
         while (true)
         {
             MqttZeroQueuedMessage? next = null;
+            bool nextHeld = false;
             lock (session.SyncRoot)
             {
                 DateTimeOffset now = _timeProvider.GetUtcNow();
-                session.PendingMessages.RemoveAll(message => message.IsExpired(now));
+                RemoveExpiredPendingMessages(session, now);
                 if (session.PendingMessages.Count == 0 ||
                     (session.PendingMessages[0].QualityOfServiceLevel ==
                         MqttQualityOfServiceLevel.AtLeastOnce &&
@@ -1133,11 +1434,50 @@ public sealed class MqttZeroBroker : IAsyncDisposable
                 {
                     next.PacketIdentifier = session.GetNextPacketIdentifier();
                     session.InflightMessages[next.PacketIdentifier] = next;
+                    nextHeld = true;
                 }
             }
 
             await connection.SendAsync(next.CreatePacket(false), cancellationToken)
                 .ConfigureAwait(false);
+            if (!nextHeld)
+            {
+                next.Release();
+            }
+        }
+    }
+
+    private static void RemoveExpiredPendingMessages(
+        MqttZeroSessionState session,
+        DateTimeOffset now)
+    {
+        for (int index = session.PendingMessages.Count - 1; index >= 0; index--)
+        {
+            MqttZeroQueuedMessage message = session.PendingMessages[index];
+            if (message.IsExpired(now))
+            {
+                session.PendingMessages.RemoveAt(index);
+                message.Release();
+            }
+        }
+    }
+
+    private static void ReleaseSessionMessages(MqttZeroSessionState session)
+    {
+        lock (session.SyncRoot)
+        {
+            foreach (MqttZeroQueuedMessage message in session.PendingMessages)
+            {
+                message.Release();
+            }
+
+            session.PendingMessages.Clear();
+            foreach (MqttZeroQueuedMessage message in session.InflightMessages.Values)
+            {
+                message.Release();
+            }
+
+            session.InflightMessages.Clear();
         }
     }
 
@@ -1186,12 +1526,14 @@ public sealed class MqttZeroBroker : IAsyncDisposable
 
         if (removeSession)
         {
+            ReleaseSessionMessages(session);
             lock (_sessionGate)
             {
                 if (_sessions.TryGetValue(session.ClientId, out MqttZeroSessionState? current) &&
                     ReferenceEquals(current, session))
                 {
                     _sessions.TryRemove(session.ClientId, out _);
+                    RebuildSubscriptionRouteSnapshot();
                 }
             }
         }
@@ -1268,21 +1610,43 @@ public sealed class MqttZeroBroker : IAsyncDisposable
 
             foreach (string topic in expiredRetainedTopics)
             {
-                _retainedMessages.TryRemove(topic, out _);
+                RemoveRetainedMessage(topic);
             }
 
             foreach (MqttZeroSessionState session in expiredSessions)
             {
+                ReleaseSessionMessages(session);
                 lock (_sessionGate)
                 {
                     if (_sessions.TryGetValue(session.ClientId, out MqttZeroSessionState? current) &&
                         ReferenceEquals(current, session))
                     {
                         _sessions.TryRemove(session.ClientId, out _);
+                        RebuildSubscriptionRouteSnapshot();
                     }
                 }
             }
         }
+    }
+
+    private void RebuildSubscriptionRouteSnapshot()
+    {
+        List<MqttZeroRouteEntry> entries = [];
+        lock (_sessionGate)
+        {
+            foreach (MqttZeroSessionState session in _sessions.Values)
+            {
+                lock (session.SyncRoot)
+                {
+                    foreach (MqttZeroSubscription subscription in session.Subscriptions)
+                    {
+                        entries.Add(new MqttZeroRouteEntry(session, subscription));
+                    }
+                }
+            }
+        }
+
+        Volatile.Write(ref _subscriptionRouteSnapshot, entries.ToArray());
     }
 
     private static bool IsSessionExpired(MqttZeroSessionState session, DateTimeOffset now)
@@ -1310,9 +1674,16 @@ public sealed class MqttZeroBroker : IAsyncDisposable
     /// Stops the broker and releases maintenance resources.
     /// </summary>
     /// <returns>A task representing disposal.</returns>
-    public ValueTask DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
-        return StopAsync();
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
+        await StopAsync().ConfigureAwait(false);
+        _routeScopes.Dispose();
+        _bufferPool.Dispose();
     }
 
     private sealed class ConnectionAttachment
@@ -1330,26 +1701,4 @@ public sealed class MqttZeroBroker : IAsyncDisposable
         public MqttZeroClientConnection Connection { get; }
     }
 
-    private sealed class DeliveryCandidate
-    {
-        public DeliveryCandidate(
-            MqttZeroSessionState session,
-            MqttZeroSubscription subscription)
-        {
-            Session = session;
-            Subscription = subscription;
-        }
-
-        public MqttZeroSessionState Session { get; }
-
-        public MqttZeroSubscription Subscription { get; }
-
-        public MqttQualityOfServiceLevel QualityOfServiceLevel
-        {
-            get
-            {
-                return Subscription.QualityOfServiceLevel;
-            }
-        }
-    }
 }
