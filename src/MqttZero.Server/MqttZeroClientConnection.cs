@@ -239,6 +239,62 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
         }
     }
 
+    public async ValueTask SendSubAckAsync(
+        MqttSubAckPacket packet,
+        CancellationToken cancellationToken)
+    {
+        await SendControlPacketDirectAsync(
+            packet,
+            2 + packet.ReasonCodes.Length,
+            packet.Properties.Length,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public async ValueTask SendUnsubAckAsync(
+        MqttUnsubAckPacket packet,
+        CancellationToken cancellationToken)
+    {
+        await SendControlPacketDirectAsync(
+            packet,
+            2 + packet.ReasonCodes.Length,
+            packet.Properties.Length,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask SendControlPacketDirectAsync(
+        MqttPacket packet,
+        long bodyLength,
+        long propertyLength,
+        CancellationToken cancellationToken)
+    {
+        int propertyLengthSize = propertyLength < 128
+            ? 1
+            : propertyLength < 16_384
+                ? 2
+                : propertyLength < 2_097_152
+                    ? 3
+                    : 4;
+        bodyLength += propertyLength + propertyLengthSize;
+        int remainingLengthSize = bodyLength < 128 ? 1 : bodyLength < 16_384 ? 2 : 3;
+        long encodedLength = 1 + remainingLengthSize + bodyLength;
+        if (encodedLength > MaximumPacketSize)
+        {
+            throw new InvalidOperationException(
+                "The outbound MQTT packet exceeds the client maximum packet size.");
+        }
+
+        await _writeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            MqttPacketCodec.Encode(packet, _writer);
+            _ = await _writer.FlushAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _writeLock.Release();
+        }
+    }
+
     public async ValueTask CloseAsync(
         MqttReasonCode reasonCode,
         CancellationToken cancellationToken)

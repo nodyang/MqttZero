@@ -125,7 +125,7 @@ public sealed partial class MqttZeroBroker
 
         RebuildSubscriptionRouteSnapshot();
 
-        await connection.SendAsync(
+        await connection.SendSubAckAsync(
             new MqttSubAckPacket
             {
                 PacketIdentifier = packet.PacketIdentifier,
@@ -213,7 +213,7 @@ public sealed partial class MqttZeroBroker
 
         RebuildSubscriptionRouteSnapshot();
 
-        await connection.SendAsync(
+        await connection.SendUnsubAckAsync(
             new MqttUnsubAckPacket
             {
                 PacketIdentifier = packet.PacketIdentifier,
