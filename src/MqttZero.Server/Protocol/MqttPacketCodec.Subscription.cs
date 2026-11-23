@@ -147,10 +147,10 @@ public static partial class MqttPacketCodec
 
     private static void EncodeSubscribe(MqttSubscribePacket packet, IBufferWriter<byte> writer)
     {
-        ReadOnlySequence<byte> properties = Mqtt5PropertyWriter.BuildSubscribeProperties(packet);
+        int propertiesLength = Mqtt5PropertyWriter.GetSubscribePropertiesLength(packet);
         int bodyLength = 2 +
-            GetVariableByteIntegerSize(properties.Length) +
-            (int)properties.Length;
+            GetVariableByteIntegerSize(propertiesLength) +
+            propertiesLength;
         foreach (MqttSubscriptionRequest subscription in packet.Subscriptions)
         {
             bodyLength += 2 + (int)subscription.TopicFilter.Length + 1;
@@ -161,7 +161,7 @@ public static partial class MqttPacketCodec
         int lengthBytes = WriteVariableByteInteger(fixedHeader[1..], bodyLength);
         writer.Advance(1 + lengthBytes);
         WriteUInt16(writer, packet.PacketIdentifier);
-        WriteProperties(writer, properties);
+        Mqtt5PropertyWriter.WriteSubscribeProperties(packet, writer);
 
         foreach (MqttSubscriptionRequest subscription in packet.Subscriptions)
         {

@@ -2,18 +2,22 @@ using MqttZero.Protocol;
 using MqttZero.Sessions;
 using System.Buffers;
 using System.Collections.Concurrent;
+using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
 
 namespace MqttZero.Routing;
 
 internal sealed class MqttZeroRouteScope : IDisposable
 {
     private MqttZeroDeliveryCandidate[] _deliveries = [];
-    private MqttZeroSessionState[] _sharedSessions = [];
-    private MqttZeroSubscription[] _sharedSubscriptions = [];
-    private string[] _sharedGroups = [];
+    private int[] _bestDeliveryIndexes = [];
+    private int _bestCapacity;
+    private int[] _bestEpochs = [];
+    private MqttZeroSessionState?[] _bestSessions = [];
+    private int _bestCount;
+    private int _epoch;
     private int _deliveryCount;
     private MqttZeroRouteScopePool? _owner;
-    private int _sharedCount;
 
     public MqttZeroRouteScope()
     {
@@ -38,6 +42,14 @@ internal sealed class MqttZeroRouteScope : IDisposable
     public void SetOwner(MqttZeroRouteScopePool owner)
     {
         _owner = owner;
+        _epoch++;
+        if (_epoch == 0)
+        {
+            Array.Clear(_bestEpochs);
+            _epoch = 1;
+        }
+
+        _bestCount = 0;
     }
 
     public void AddDelivery(MqttZeroDeliveryCandidate candidate)
@@ -46,95 +58,102 @@ internal sealed class MqttZeroRouteScope : IDisposable
         _deliveries[_deliveryCount++] = candidate;
     }
 
-    public void AddShared(
+    public void AddRegular(
         MqttZeroSessionState session,
-        MqttZeroSubscription subscription,
-        string group)
+        MqttZeroSubscription subscription)
     {
-        for (int index = 0; index < _sharedCount; index++)
+        EnsureBestCapacity();
+        int mask = _bestCapacity - 1;
+        int slot = RuntimeHelpers.GetHashCode(session) & mask;
+        while (true)
         {
-            if (ReferenceEquals(_sharedSessions[index], session) &&
-                string.Equals(_sharedGroups[index], group, StringComparison.Ordinal))
+            if (_bestEpochs[slot] != _epoch ||
+                _bestSessions[slot] == null)
             {
-                if (subscription.QualityOfServiceLevel >
-                    _sharedSubscriptions[index].QualityOfServiceLevel)
+                int deliveryIndex = _deliveryCount;
+                AddDelivery(new MqttZeroDeliveryCandidate(session, subscription));
+                _bestSessions[slot] = session;
+                _bestDeliveryIndexes[slot] = deliveryIndex;
+                _bestEpochs[slot] = _epoch;
+                _bestCount++;
+                if (_bestCount * 2 >= _bestSessions.Length)
                 {
-                    _sharedSubscriptions[index] = subscription;
+                    GrowBestTable();
                 }
 
                 return;
             }
-        }
 
-        EnsureSharedCapacity(_sharedCount + 1);
-        _sharedSessions[_sharedCount] = session;
-        _sharedSubscriptions[_sharedCount] = subscription;
-        _sharedGroups[_sharedCount] = group;
-        _sharedCount++;
-    }
-
-    public void SelectSharedGroups(ConcurrentDictionary<string, int> cursors)
-    {
-        for (int first = 0; first < _sharedCount; first++)
-        {
-            string group = _sharedGroups[first];
-            bool alreadyProcessed = false;
-            for (int earlier = 0; earlier < first; earlier++)
+            if (ReferenceEquals(_bestSessions[slot], session))
             {
-                if (string.Equals(_sharedGroups[earlier], group, StringComparison.Ordinal))
+                int deliveryIndex = _bestDeliveryIndexes[slot];
+                if (subscription.QualityOfServiceLevel >
+                    _deliveries[deliveryIndex].QualityOfServiceLevel)
                 {
-                    alreadyProcessed = true;
-                    break;
+                    _deliveries[deliveryIndex] =
+                        new MqttZeroDeliveryCandidate(session, subscription);
                 }
+
+                return;
             }
 
-            if (alreadyProcessed)
+            slot = (slot + 1) & mask;
+        }
+    }
+
+    public void AddSharedGroup(
+        MqttZeroSharedRouteGroup group,
+        ReadOnlySpan<byte> topic,
+        MqttZeroSessionState? sender,
+        ConcurrentDictionary<string, int> cursors)
+    {
+        int matchingSessionCount = 0;
+        for (int index = 0; index < group.Entries.Length; index++)
+        {
+            MqttZeroSharedRouteEntry entry = group.Entries[index];
+            if (TryGetBestSubscription(entry, topic, sender, out _))
+            {
+                matchingSessionCount++;
+            }
+        }
+
+        if (matchingSessionCount == 0)
+        {
+            return;
+        }
+
+        int cursor = cursors.AddOrUpdate(
+            group.Group,
+            0,
+            static (_, current) => current == int.MaxValue ? 0 : current + 1);
+        int selectedOffset = cursor % matchingSessionCount;
+        for (int index = 0; index < group.Entries.Length; index++)
+        {
+            MqttZeroSharedRouteEntry entry = group.Entries[index];
+            if (!TryGetBestSubscription(
+                entry,
+                topic,
+                sender,
+                out MqttZeroSubscription? subscription))
             {
                 continue;
             }
 
-            int groupCount = 0;
-            for (int candidateIndex = first; candidateIndex < _sharedCount; candidateIndex++)
+            if (selectedOffset == 0)
             {
-                if (string.Equals(_sharedGroups[candidateIndex], group, StringComparison.Ordinal))
-                {
-                    groupCount++;
-                }
+                AddDelivery(new MqttZeroDeliveryCandidate(entry.Session, subscription));
+                return;
             }
 
-            int cursor = cursors.AddOrUpdate(
-                group,
-                0,
-                static (_, current) => current == int.MaxValue ? 0 : current + 1);
-            int selectedOffset = cursor % groupCount;
-            for (int candidateIndex = first; candidateIndex < _sharedCount; candidateIndex++)
-            {
-                if (!string.Equals(_sharedGroups[candidateIndex], group, StringComparison.Ordinal))
-                {
-                    continue;
-                }
-
-                if (selectedOffset == 0)
-                {
-                    AddDelivery(new MqttZeroDeliveryCandidate(
-                        _sharedSessions[candidateIndex],
-                        _sharedSubscriptions[candidateIndex]));
-                    break;
-                }
-
-                selectedOffset--;
-            }
+            selectedOffset--;
         }
     }
 
     public void Dispose()
     {
         Array.Clear(_deliveries, 0, _deliveryCount);
-        Array.Clear(_sharedSessions, 0, _sharedCount);
-        Array.Clear(_sharedSubscriptions, 0, _sharedCount);
-        Array.Clear(_sharedGroups, 0, _sharedCount);
         _deliveryCount = 0;
-        _sharedCount = 0;
+        _bestCount = 0;
         MqttZeroRouteScopePool owner = _owner ??
             throw new InvalidOperationException("The route scope has no owner pool.");
         _owner = null;
@@ -149,12 +168,8 @@ internal sealed class MqttZeroRouteScope : IDisposable
             _deliveries = [];
         }
 
-        ReturnSharedArrays();
-        _sharedSessions = [];
-        _sharedSubscriptions = [];
-        _sharedGroups = [];
+        ReturnBestArrays();
         _deliveryCount = 0;
-        _sharedCount = 0;
         _owner = null;
     }
 
@@ -180,46 +195,100 @@ internal sealed class MqttZeroRouteScope : IDisposable
         _deliveries = replacement;
     }
 
-    private void EnsureSharedCapacity(int minimumLength)
+    private static bool TryGetBestSubscription(
+        MqttZeroSharedRouteEntry entry,
+        ReadOnlySpan<byte> topic,
+        MqttZeroSessionState? sender,
+        [NotNullWhen(true)] out MqttZeroSubscription? subscription)
     {
-        if (_sharedSessions.Length >= minimumLength)
+        subscription = null;
+        for (int index = 0; index < entry.Subscriptions.Length; index++)
         {
-            return;
+            MqttZeroSubscription candidate = entry.Subscriptions[index];
+            if ((candidate.NoLocal && ReferenceEquals(entry.Session, sender)) ||
+                !MqttZeroTopicMatcher.Matches(candidate.MatchFilter, topic))
+            {
+                continue;
+            }
+
+            if (subscription == null ||
+                candidate.QualityOfServiceLevel > subscription.QualityOfServiceLevel)
+            {
+                subscription = candidate;
+            }
         }
 
-        MqttZeroSessionState[] sessions =
-            ArrayPool<MqttZeroSessionState>.Shared.Rent(minimumLength);
-        MqttZeroSubscription[] subscriptions =
-            ArrayPool<MqttZeroSubscription>.Shared.Rent(minimumLength);
-        string[] groups = ArrayPool<string>.Shared.Rent(minimumLength);
-        if (_sharedCount > 0)
-        {
-            Array.Copy(_sharedSessions, sessions, _sharedCount);
-            Array.Copy(_sharedSubscriptions, subscriptions, _sharedCount);
-            Array.Copy(_sharedGroups, groups, _sharedCount);
-        }
-
-        ReturnSharedArrays();
-        _sharedSessions = sessions;
-        _sharedSubscriptions = subscriptions;
-        _sharedGroups = groups;
+        return subscription != null;
     }
 
-    private void ReturnSharedArrays()
+    private void EnsureBestCapacity()
     {
-        if (_sharedSessions.Length > 0)
+        if (_bestSessions.Length == 0)
         {
-            ArrayPool<MqttZeroSessionState>.Shared.Return(_sharedSessions, true);
+            _bestCapacity = 16;
+            _bestSessions = ArrayPool<MqttZeroSessionState?>.Shared.Rent(16);
+            _bestDeliveryIndexes = ArrayPool<int>.Shared.Rent(16);
+            _bestEpochs = ArrayPool<int>.Shared.Rent(16);
+            Array.Clear(_bestSessions, 0, _bestSessions.Length);
+            Array.Clear(_bestEpochs, 0, _bestEpochs.Length);
+        }
+    }
+
+    private void GrowBestTable()
+    {
+        int capacity = _bestCapacity * 2;
+        MqttZeroSessionState?[] sessions =
+            ArrayPool<MqttZeroSessionState?>.Shared.Rent(capacity);
+        int[] deliveryIndexes = ArrayPool<int>.Shared.Rent(capacity);
+        int[] epochs = ArrayPool<int>.Shared.Rent(capacity);
+        Array.Clear(sessions, 0, sessions.Length);
+        Array.Clear(epochs, 0, epochs.Length);
+        int epoch = _epoch;
+        if (epoch == int.MaxValue)
+        {
+            _epoch = 1;
+            epoch = 1;
+            Array.Clear(_bestEpochs);
         }
 
-        if (_sharedSubscriptions.Length > 0)
+        int mask = capacity - 1;
+        for (int source = 0; source < _bestCapacity; source++)
         {
-            ArrayPool<MqttZeroSubscription>.Shared.Return(_sharedSubscriptions, true);
+            MqttZeroSessionState? session = _bestSessions[source];
+            if (session == null || _bestEpochs[source] != epoch)
+            {
+                continue;
+            }
+
+            int slot = RuntimeHelpers.GetHashCode(session) & mask;
+            while (sessions[slot] != null)
+            {
+                slot = (slot + 1) & mask;
+            }
+
+            sessions[slot] = session;
+            deliveryIndexes[slot] = _bestDeliveryIndexes[source];
+            epochs[slot] = epoch;
         }
 
-        if (_sharedGroups.Length > 0)
+        ReturnBestArrays();
+        _bestSessions = sessions;
+        _bestDeliveryIndexes = deliveryIndexes;
+        _bestEpochs = epochs;
+        _bestCapacity = capacity;
+    }
+
+    private void ReturnBestArrays()
+    {
+        if (_bestSessions.Length > 0)
         {
-            ArrayPool<string>.Shared.Return(_sharedGroups, true);
+            ArrayPool<MqttZeroSessionState?>.Shared.Return(_bestSessions, true);
+            ArrayPool<int>.Shared.Return(_bestDeliveryIndexes);
+            ArrayPool<int>.Shared.Return(_bestEpochs);
+            _bestSessions = [];
+            _bestDeliveryIndexes = [];
+            _bestEpochs = [];
+            _bestCapacity = 0;
         }
     }
 }

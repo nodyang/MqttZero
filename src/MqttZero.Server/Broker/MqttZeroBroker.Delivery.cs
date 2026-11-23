@@ -242,8 +242,7 @@ public sealed partial class MqttZeroBroker
                     break;
                 }
 
-                next = session.PendingMessages[0];
-                session.PendingMessages.RemoveAt(0);
+                next = session.PendingMessages.Dequeue();
                 if (next.QualityOfServiceLevel == MqttQualityOfServiceLevel.AtLeastOnce)
                 {
                     next.PacketIdentifier = session.GetNextPacketIdentifier();
@@ -265,15 +264,7 @@ public sealed partial class MqttZeroBroker
         MqttZeroSessionState session,
         DateTimeOffset now)
     {
-        for (int index = session.PendingMessages.Count - 1; index >= 0; index--)
-        {
-            MqttZeroQueuedMessage message = session.PendingMessages[index];
-            if (message.IsExpired(now))
-            {
-                session.PendingMessages.RemoveAt(index);
-                message.Release();
-            }
-        }
+        session.PendingMessages.RemoveExpired(now);
     }
 
     private static void ReleaseSessionMessages(MqttZeroSessionState session)

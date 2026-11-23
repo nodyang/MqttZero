@@ -78,7 +78,7 @@ namespace MqttZero.Tests.Broker
                 borrowed.Release();
             }
 
-            Assert.Single(receiver.PendingMessages);
+            Assert.Equal(1, receiver.PendingMessages.Count);
             Assert.True(pool.RentedBytes > 0);
             await broker.DisposeAsync();
             Assert.Equal(0, pool.RentedBytes);
@@ -141,6 +141,60 @@ namespace MqttZero.Tests.Broker
             long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
             message.Release();
             lease.Release();
+            await connection.DisposeAsync();
+            Assert.Equal(0, allocated);
+        }
+
+        [Fact]
+        public async Task ClientConnectionControlPacketsDoNotAllocateAfterWarmup()
+        {
+            AllocationPipeWriter writer = new(1024);
+            MqttZeroClientConnection connection = new(
+                writer,
+                "memory",
+                false,
+                false,
+                0,
+                32,
+                1024 * 1024,
+                TimeProvider.System);
+            MqttConnAckPacket connAck = new()
+            {
+                SessionPresent = true,
+                ReasonCode = MqttReasonCode.Success,
+                TopicAliasMaximum = 16,
+                ReceiveMaximum = 32,
+                MaximumPacketSize = 1024 * 1024,
+                SessionExpiryInterval = 60
+            };
+            MqttDisconnectPacket disconnect = new()
+            {
+                ReasonCode = MqttReasonCode.ServerShuttingDown,
+                SessionExpiryInterval = 60
+            };
+
+            for (int index = 0; index < 10; index++)
+            {
+                await connection.SendConnAckAsync(
+                    connAck,
+                    TestContext.Current.CancellationToken);
+                await connection.SendDisconnectAsync(
+                    disconnect,
+                    TestContext.Current.CancellationToken);
+            }
+
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            for (int index = 0; index < 1000; index++)
+            {
+                await connection.SendConnAckAsync(
+                    connAck,
+                    TestContext.Current.CancellationToken);
+                await connection.SendDisconnectAsync(
+                    disconnect,
+                    TestContext.Current.CancellationToken);
+            }
+
+            long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
             await connection.DisposeAsync();
             Assert.Equal(0, allocated);
         }

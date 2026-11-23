@@ -61,13 +61,13 @@ public static partial class MqttPacketCodec
 
     private static void EncodePublish(MqttPublishPacket packet, IBufferWriter<byte> writer)
     {
-        ReadOnlySequence<byte> properties = Mqtt5PropertyWriter.BuildPublishProperties(packet);
+        int propertiesLength = Mqtt5PropertyWriter.GetPublishPropertiesLength(packet);
         int bodyLength =
             2 +
             (int)packet.TopicName.Length +
             (packet.QualityOfServiceLevel == MqttQualityOfServiceLevel.AtMostOnce ? 0 : 2) +
-            GetVariableByteIntegerSize(properties.Length) +
-            (int)properties.Length +
+            GetVariableByteIntegerSize(propertiesLength) +
+            propertiesLength +
             (int)packet.Payload.Length;
 
         Span<byte> fixedHeader = writer.GetSpan(1 + 4);
@@ -93,7 +93,7 @@ public static partial class MqttPacketCodec
             WriteUInt16(writer, packet.PacketIdentifier);
         }
 
-        WriteProperties(writer, properties);
+        Mqtt5PropertyWriter.WritePublishProperties(packet, writer);
         WriteSequence(writer, packet.Payload);
     }
 

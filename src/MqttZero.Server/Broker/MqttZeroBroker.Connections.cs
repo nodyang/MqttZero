@@ -250,7 +250,7 @@ public sealed partial class MqttZeroBroker
                     throw new InvalidOperationException("The maximum number of MQTT sessions was reached.");
                 }
 
-                session = new MqttZeroSessionState(clientId);
+                session = new MqttZeroSessionState(clientId, _options.MaxMessageQueueLength);
                 _sessions[clientId] = session;
                 sessionPresent = false;
             }
@@ -298,7 +298,7 @@ public sealed partial class MqttZeroBroker
             }
         }
 
-        await newConnection.SendAsync(
+        await newConnection.SendConnAckAsync(
             new MqttConnAckPacket
             {
                 SessionPresent = sessionPresent,

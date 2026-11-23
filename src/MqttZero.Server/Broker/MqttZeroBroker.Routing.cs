@@ -6,7 +6,6 @@ using MqttZero.Sessions;
 using System.Buffers;
 using System.Collections.Concurrent;
 using System.IO.Pipelines;
-using System.Text;
 
 namespace MqttZero.Broker;
 
@@ -67,10 +66,10 @@ public sealed partial class MqttZeroBroker
                 StoreRetainedMessage(lease);
             }
 
-            MqttZeroRouteEntry[] routeEntries =
+            MqttZeroSubscriptionRouteSnapshot routeSnapshot =
                 Volatile.Read(ref _subscriptionRouteSnapshot);
             using MqttZeroRouteScope deliveries = MqttZeroRouteSelector.Select(
-                routeEntries,
+                routeSnapshot,
                 lease.Topic.Span,
                 sender,
                 _sharedSubscriptionCursors,
@@ -220,10 +219,10 @@ public sealed partial class MqttZeroBroker
                 StoreRetainedMessage(effectiveLease);
             }
 
-            MqttZeroRouteEntry[] routeEntries =
+            MqttZeroSubscriptionRouteSnapshot routeSnapshot =
                 Volatile.Read(ref _subscriptionRouteSnapshot);
             using MqttZeroRouteScope deliveries = MqttZeroRouteSelector.Select(
-                routeEntries,
+                routeSnapshot,
                 effectiveLease.Topic.Span,
                 sender,
                 _sharedSubscriptionCursors,
@@ -293,22 +292,12 @@ public sealed partial class MqttZeroBroker
 
     private void RebuildSubscriptionRouteSnapshot()
     {
-        List<MqttZeroRouteEntry> entries = [];
         lock (_sessionGate)
         {
-            foreach (MqttZeroSessionState session in _sessions.Values)
-            {
-                lock (session.SyncRoot)
-                {
-                    foreach (MqttZeroSubscription subscription in session.Subscriptions)
-                    {
-                        entries.Add(new MqttZeroRouteEntry(session, subscription));
-                    }
-                }
-            }
+            MqttZeroSubscriptionRouteSnapshot snapshot =
+                MqttZeroSubscriptionRouteSnapshotBuilder.Build(_sessions.Values);
+            Volatile.Write(ref _subscriptionRouteSnapshot, snapshot);
         }
-
-        Volatile.Write(ref _subscriptionRouteSnapshot, entries.ToArray());
     }
 
 }

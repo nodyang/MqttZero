@@ -15,6 +15,14 @@ internal sealed class MqttZeroQueuedMessage
     {
     }
 
+    internal MqttZeroMessageLease Lease
+    {
+        get
+        {
+            return _lease;
+        }
+    }
+
     public ReadOnlyMemory<byte> Topic
     {
         get
@@ -61,15 +69,9 @@ internal sealed class MqttZeroQueuedMessage
             message = new MqttZeroQueuedMessage();
         }
 
-        if (lease.IsBorrowed)
-        {
-            message._lease = lease.CreateOwnedCopy();
-        }
-        else
-        {
-            lease.Retain();
-            message._lease = lease;
-        }
+        lease.EnsureOwned();
+        lease.Retain();
+        message._lease = lease;
         message.QualityOfServiceLevel = qualityOfServiceLevel;
         message.Retain = retain;
         message.SubscriptionIdentifier = subscriptionIdentifier;

@@ -5,14 +5,49 @@ namespace MqttZero.Protocol;
 
 internal static class Mqtt5PropertyWriter
 {
-    public static ReadOnlySequence<byte> BuildConnectProperties(MqttConnectPacket packet)
+    public static int GetConnectPropertiesLength(MqttConnectPacket packet)
     {
         if (!packet.Properties.IsEmpty)
         {
-            return packet.Properties;
+            return (int)packet.Properties.Length;
         }
 
-        ArrayBufferWriter<byte> writer = new();
+        int length = 0;
+        if (packet.SessionExpiryInterval.HasValue)
+        {
+            length += 5;
+        }
+
+        if (packet.ReceiveMaximum != ushort.MaxValue)
+        {
+            length += 3;
+        }
+
+        if (packet.MaximumPacketSize != uint.MaxValue)
+        {
+            length += 5;
+        }
+
+        if (packet.TopicAliasMaximum != 0)
+        {
+            length += 3;
+        }
+
+        return length;
+    }
+
+    public static void WriteConnectProperties(
+        MqttConnectPacket packet,
+        IBufferWriter<byte> writer)
+    {
+        int propertyLength = GetConnectPropertiesLength(packet);
+        WritePropertyLength(writer, propertyLength);
+        if (!packet.Properties.IsEmpty)
+        {
+            WriteSequence(writer, packet.Properties);
+            return;
+        }
+
         if (packet.SessionExpiryInterval.HasValue)
         {
             WriteUInt32(writer, 0x11, packet.SessionExpiryInterval.Value);
@@ -32,18 +67,41 @@ internal static class Mqtt5PropertyWriter
         {
             WriteUInt16(writer, 0x22, packet.TopicAliasMaximum);
         }
-
-        return new ReadOnlySequence<byte>(writer.WrittenMemory);
     }
 
-    public static ReadOnlySequence<byte> BuildWillProperties(MqttConnectPacket packet)
+    public static int GetWillPropertiesLength(MqttConnectPacket packet)
     {
         if (!packet.WillProperties.IsEmpty)
         {
-            return packet.WillProperties;
+            return (int)packet.WillProperties.Length;
         }
 
-        ArrayBufferWriter<byte> writer = new();
+        int length = 0;
+        if (packet.WillDelayInterval != 0)
+        {
+            length += 5;
+        }
+
+        if (packet.WillMessageExpiryInterval != 0)
+        {
+            length += 5;
+        }
+
+        return length;
+    }
+
+    public static void WriteWillProperties(
+        MqttConnectPacket packet,
+        IBufferWriter<byte> writer)
+    {
+        int propertyLength = GetWillPropertiesLength(packet);
+        WritePropertyLength(writer, propertyLength);
+        if (!packet.WillProperties.IsEmpty)
+        {
+            WriteSequence(writer, packet.WillProperties);
+            return;
+        }
+
         if (packet.WillDelayInterval != 0)
         {
             WriteUInt32(writer, 0x18, packet.WillDelayInterval);
@@ -53,18 +111,47 @@ internal static class Mqtt5PropertyWriter
         {
             WriteUInt32(writer, 0x02, packet.WillMessageExpiryInterval);
         }
-
-        return new ReadOnlySequence<byte>(writer.WrittenMemory);
     }
 
-    public static ReadOnlySequence<byte> BuildPublishProperties(MqttPublishPacket packet)
+    public static int GetPublishPropertiesLength(MqttPublishPacket packet)
     {
         if (!packet.Properties.IsEmpty)
         {
-            return packet.Properties;
+            return (int)packet.Properties.Length;
         }
 
-        ArrayBufferWriter<byte> writer = new();
+        int length = 0;
+        if (packet.MessageExpiryInterval.HasValue)
+        {
+            length += 5;
+        }
+
+        if (packet.SubscriptionIdentifier.HasValue)
+        {
+            length += 1 + GetVariableByteIntegerSize(
+                packet.SubscriptionIdentifier.Value);
+        }
+
+        if (packet.TopicAlias.HasValue)
+        {
+            length += 3;
+        }
+
+        return length;
+    }
+
+    public static void WritePublishProperties(
+        MqttPublishPacket packet,
+        IBufferWriter<byte> writer)
+    {
+        int propertyLength = GetPublishPropertiesLength(packet);
+        WritePropertyLength(writer, propertyLength);
+        if (!packet.Properties.IsEmpty)
+        {
+            WriteSequence(writer, packet.Properties);
+            return;
+        }
+
         if (packet.MessageExpiryInterval.HasValue)
         {
             WriteUInt32(writer, 0x02, packet.MessageExpiryInterval.Value);
@@ -80,18 +167,51 @@ internal static class Mqtt5PropertyWriter
         {
             WriteUInt16(writer, 0x23, packet.TopicAlias.Value);
         }
-
-        return new ReadOnlySequence<byte>(writer.WrittenMemory);
     }
 
-    public static ReadOnlySequence<byte> BuildConnAckProperties(MqttConnAckPacket packet)
+    public static int GetConnAckPropertiesLength(MqttConnAckPacket packet)
     {
         if (!packet.Properties.IsEmpty)
         {
-            return packet.Properties;
+            return (int)packet.Properties.Length;
         }
 
-        ArrayBufferWriter<byte> writer = new();
+        int length = 0;
+        if (packet.TopicAliasMaximum.HasValue)
+        {
+            length += 3;
+        }
+
+        if (packet.ReceiveMaximum.HasValue)
+        {
+            length += 3;
+        }
+
+        if (packet.MaximumPacketSize.HasValue)
+        {
+            length += 5;
+        }
+
+        if (packet.SessionExpiryInterval.HasValue)
+        {
+            length += 5;
+        }
+
+        return length;
+    }
+
+    public static void WriteConnAckProperties(
+        MqttConnAckPacket packet,
+        IBufferWriter<byte> writer)
+    {
+        int propertyLength = GetConnAckPropertiesLength(packet);
+        WritePropertyLength(writer, propertyLength);
+        if (!packet.Properties.IsEmpty)
+        {
+            WriteSequence(writer, packet.Properties);
+            return;
+        }
+
         if (packet.TopicAliasMaximum.HasValue)
         {
             WriteUInt16(writer, 0x22, packet.TopicAliasMaximum.Value);
@@ -111,76 +231,149 @@ internal static class Mqtt5PropertyWriter
         {
             WriteUInt32(writer, 0x11, packet.SessionExpiryInterval.Value);
         }
-
-        return new ReadOnlySequence<byte>(writer.WrittenMemory);
     }
 
-    public static ReadOnlySequence<byte> BuildDisconnectProperties(MqttDisconnectPacket packet)
+    public static int GetDisconnectPropertiesLength(MqttDisconnectPacket packet)
     {
         if (!packet.Properties.IsEmpty || !packet.SessionExpiryInterval.HasValue)
         {
-            return packet.Properties;
+            return (int)packet.Properties.Length;
         }
 
-        ArrayBufferWriter<byte> writer = new();
-        WriteUInt32(writer, 0x11, packet.SessionExpiryInterval.Value);
-        return new ReadOnlySequence<byte>(writer.WrittenMemory);
+        return 5;
     }
 
-    public static ReadOnlySequence<byte> BuildSubscribeProperties(MqttSubscribePacket packet)
+    public static void WriteDisconnectProperties(
+        MqttDisconnectPacket packet,
+        IBufferWriter<byte> writer)
+    {
+        int propertyLength = GetDisconnectPropertiesLength(packet);
+        WritePropertyLength(writer, propertyLength);
+        if (!packet.Properties.IsEmpty || !packet.SessionExpiryInterval.HasValue)
+        {
+            WriteSequence(writer, packet.Properties);
+            return;
+        }
+
+        WriteUInt32(writer, 0x11, packet.SessionExpiryInterval.Value);
+    }
+
+    public static int GetSubscribePropertiesLength(MqttSubscribePacket packet)
     {
         if (!packet.Properties.IsEmpty)
         {
-            return packet.Properties;
+            return (int)packet.Properties.Length;
         }
 
-        if (!packet.SubscriptionIdentifier.HasValue)
+        return packet.SubscriptionIdentifier.HasValue
+            ? 1 + GetVariableByteIntegerSize(packet.SubscriptionIdentifier.Value)
+            : 0;
+    }
+
+    public static void WriteSubscribeProperties(
+        MqttSubscribePacket packet,
+        IBufferWriter<byte> writer)
+    {
+        int propertyLength = GetSubscribePropertiesLength(packet);
+        WritePropertyLength(writer, propertyLength);
+        if (!packet.Properties.IsEmpty)
         {
-            return ReadOnlySequence<byte>.Empty;
+            WriteSequence(writer, packet.Properties);
+            return;
         }
 
-        ArrayBufferWriter<byte> writer = new();
-        WriteByte(writer, 0x0B);
-        WriteVariableByteInteger(writer, packet.SubscriptionIdentifier.Value);
-        return new ReadOnlySequence<byte>(writer.WrittenMemory);
+        if (packet.SubscriptionIdentifier.HasValue)
+        {
+            WriteByte(writer, 0x0B);
+            WriteVariableByteInteger(writer, packet.SubscriptionIdentifier.Value);
+        }
     }
 
-    private static void WriteUInt16(ArrayBufferWriter<byte> writer, byte identifier, ushort value)
+    private static void WritePropertyLength(IBufferWriter<byte> writer, int length)
     {
-        WriteByte(writer, identifier);
-        Span<byte> destination = writer.GetSpan(2);
-        BinaryPrimitives.WriteUInt16BigEndian(destination, value);
-        writer.Advance(2);
-    }
-
-    private static void WriteUInt32(ArrayBufferWriter<byte> writer, byte identifier, uint value)
-    {
-        WriteByte(writer, identifier);
         Span<byte> destination = writer.GetSpan(4);
-        BinaryPrimitives.WriteUInt32BigEndian(destination, value);
-        writer.Advance(4);
+        int count = MqttZeroPacketWriter.WriteVariableByteInteger(
+            destination,
+            (uint)length);
+        writer.Advance(count);
     }
 
-    private static void WriteByte(ArrayBufferWriter<byte> writer, byte value)
+    private static void WriteSequence(
+        IBufferWriter<byte> writer,
+        ReadOnlySequence<byte> value)
+    {
+        if (value.IsSingleSegment)
+        {
+            WriteBytes(writer, value.FirstSpan);
+            return;
+        }
+
+        foreach (ReadOnlyMemory<byte> segment in value)
+        {
+            WriteBytes(writer, segment.Span);
+        }
+    }
+
+    private static void WriteBytes(IBufferWriter<byte> writer, ReadOnlySpan<byte> value)
+    {
+        Span<byte> destination = writer.GetSpan(value.Length);
+        value.CopyTo(destination);
+        writer.Advance(value.Length);
+    }
+
+    private static void WriteUInt16(
+        IBufferWriter<byte> writer,
+        byte identifier,
+        ushort value)
+    {
+        Span<byte> destination = writer.GetSpan(3);
+        destination[0] = identifier;
+        BinaryPrimitives.WriteUInt16BigEndian(destination[1..], value);
+        writer.Advance(3);
+    }
+
+    private static void WriteUInt32(
+        IBufferWriter<byte> writer,
+        byte identifier,
+        uint value)
+    {
+        Span<byte> destination = writer.GetSpan(5);
+        destination[0] = identifier;
+        BinaryPrimitives.WriteUInt32BigEndian(destination[1..], value);
+        writer.Advance(5);
+    }
+
+    private static void WriteByte(IBufferWriter<byte> writer, byte value)
     {
         Span<byte> destination = writer.GetSpan(1);
         destination[0] = value;
         writer.Advance(1);
     }
 
-    private static void WriteVariableByteInteger(ArrayBufferWriter<byte> writer, uint value)
+    private static void WriteVariableByteInteger(IBufferWriter<byte> writer, uint value)
     {
-        do
-        {
-            byte encoded = (byte)(value % 128);
-            value /= 128;
-            if (value > 0)
-            {
-                encoded |= 0x80;
-            }
+        Span<byte> destination = writer.GetSpan(4);
+        int count = MqttZeroPacketWriter.WriteVariableByteInteger(destination, value);
+        writer.Advance(count);
+    }
 
-            WriteByte(writer, encoded);
+    private static int GetVariableByteIntegerSize(uint value)
+    {
+        if (value < 128)
+        {
+            return 1;
         }
-        while (value > 0);
+
+        if (value < 16_384)
+        {
+            return 2;
+        }
+
+        if (value < 2_097_152)
+        {
+            return 3;
+        }
+
+        return 4;
     }
 }

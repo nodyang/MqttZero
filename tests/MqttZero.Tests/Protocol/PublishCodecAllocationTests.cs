@@ -111,6 +111,66 @@ namespace MqttZero.Tests.Protocol
             Assert.Equal(payloadSize * 100, totalPayload);
             Assert.Equal(0, allocated);
         }
+
+        [Fact]
+        public void HeaderAndPayloadEncodingMatchesFullWriterEncoding()
+        {
+            MqttPublishPacket packet = new()
+            {
+                TopicName = new System.Buffers.ReadOnlySequence<byte>("hot/topic"u8.ToArray()),
+                Payload = new System.Buffers.ReadOnlySequence<byte>(new byte[8192]),
+                QualityOfServiceLevel = MqttQualityOfServiceLevel.AtLeastOnce,
+                PacketIdentifier = 7,
+                MessageExpiryInterval = 60,
+                SubscriptionIdentifier = 3
+            };
+            System.Buffers.ArrayBufferWriter<byte> sourceWriter = new();
+            MqttPacketCodec.Encode(packet, sourceWriter);
+            System.Buffers.ReadOnlySequence<byte> source = new(sourceWriter.WrittenMemory);
+            MqttPublishPacketCodec.TryDecode(source, out MqttZeroPublishView view, out _);
+
+            MqttZeroPacketWriter headerWriter = new();
+            MqttZeroPublishPacketBuffer buffer = MqttPublishPacketCodec.EncodeHeader(view, headerWriter);
+            System.Buffers.ArrayBufferWriter<byte> materialized = new();
+            buffer.Header.Span.CopyTo(materialized.GetSpan(buffer.Header.Length));
+            materialized.Advance(buffer.Header.Length);
+            foreach (System.ReadOnlyMemory<byte> segment in buffer.Payload)
+            {
+                segment.Span.CopyTo(materialized.GetSpan(segment.Length));
+                materialized.Advance(segment.Length);
+            }
+
+            Assert.Equal(sourceWriter.WrittenSpan.ToArray(), materialized.WrittenSpan.ToArray());
+        }
+
+        [Fact]
+        public void HeaderEncodingDoesNotAllocateAfterWarmup()
+        {
+            MqttPublishPacket packet = new()
+            {
+                TopicName = new System.Buffers.ReadOnlySequence<byte>("hot/topic"u8.ToArray()),
+                Payload = new System.Buffers.ReadOnlySequence<byte>(new byte[8192]),
+                QualityOfServiceLevel = MqttQualityOfServiceLevel.AtLeastOnce,
+                PacketIdentifier = 7
+            };
+            System.Buffers.ArrayBufferWriter<byte> sourceWriter = new();
+            MqttPacketCodec.Encode(packet, sourceWriter);
+            System.Buffers.ReadOnlySequence<byte> source = new(sourceWriter.WrittenMemory);
+            MqttPublishPacketCodec.TryDecode(source, out MqttZeroPublishView view, out _);
+            MqttZeroPacketWriter writer = new();
+            for (int index = 0; index < 10; index++)
+            {
+                _ = MqttPublishPacketCodec.EncodeHeader(view, writer);
+            }
+
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            for (int index = 0; index < 1000; index++)
+            {
+                _ = MqttPublishPacketCodec.EncodeHeader(view, writer);
+            }
+
+            Assert.Equal(0, GC.GetAllocatedBytesForCurrentThread() - before);
+        }
         private static ReadOnlySequence<byte> CreateSegmentedSequence(
             byte[] bytes,
             int segmentCount)

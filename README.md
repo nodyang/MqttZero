@@ -87,7 +87,7 @@ dotnet run -c Release --project benchmarks/MqttZero.Benchmarks -- `
   --filter '*' --job short --exporters csv json
 ```
 
-已提交的短作业数据和解释位于 `perf/baseline`。当前实测中，fast PUBLISH 解码、Topic 路由、QoS 1 队列和内存端到端均达到 `0 B/op`。8 KiB 内存端到端约为 MQTTnet 同工作负载 codec+匹配基线的 `1.44x`。MQTTZero 解码显著快于 MQTTnet 且无分配，但编码和“全部订阅者均命中”的线性路由尚未达到计划中的全部相对吞吐门槛；这些缺口保留在基线文档中，不应被解释为已经达成。
+已提交的基准数据和解释位于 `perf/baseline`。当前实测中，fast PUBLISH 解码、Header 编码、Topic 路由、共享订阅、QoS 1 队列、扇出和内存端到端均达到 `0 B/op`。8 KiB 内存端到端约 `317 ns`，约为 MQTTnet 同工作负载 codec+匹配基线的 `1.46x`。Header-only 小报文仍约为 MQTTnet 的 `1.07–1.14x`，公平 Full Writer 和所有路由对比也尚未达到全部计划门槛；这些缺口保留在基线文档中，不应被解释为已经达成。
 
 ## 构建与测试
 

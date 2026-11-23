@@ -17,6 +17,7 @@ namespace MqttZero.Tests.Memory
         [Fact]
         public void PooledMessageLeaseDoesNotAllocateAfterWarmup()
         {
+            using MqttZeroBufferPool pool = new(1024 * 1024);
             ReadOnlySequence<byte> topic = new("hot/topic"u8.ToArray());
             ReadOnlySequence<byte> payload = new(new byte[8192]);
             ReadOnlySequence<byte> properties = ReadOnlySequence<byte>.Empty;
@@ -28,7 +29,8 @@ namespace MqttZero.Tests.Memory
                 MqttQualityOfServiceLevel.AtLeastOnce,
                 false,
                 null,
-                null))
+                null,
+                pool))
             {
                 Assert.Equal(8192, warmup.Payload.Length);
             }
@@ -44,7 +46,8 @@ namespace MqttZero.Tests.Memory
                     MqttQualityOfServiceLevel.AtLeastOnce,
                     false,
                     null,
-                    null);
+                    null,
+                    pool);
                 total += lease.Payload.Length;
             }
 
@@ -149,6 +152,66 @@ namespace MqttZero.Tests.Memory
             owned.Release();
             Assert.Equal(0, pool.RentedBytes);
         }
+
+        [Fact]
+        public void BorrowedMessageLeasePromotesOnceAndKeepsSharedReferences()
+        {
+            using MqttZeroBufferPool pool = new(1024 * 1024);
+            MqttZeroMessageLease lease = MqttZeroMessageLease.BorrowFrom(
+                new System.Buffers.ReadOnlySequence<byte>("topic"u8.ToArray()),
+                System.Buffers.ReadOnlySequence<byte>.Empty,
+                new System.Buffers.ReadOnlySequence<byte>("payload"u8.ToArray()),
+                MqttQualityOfServiceLevel.AtLeastOnce,
+                false,
+                null,
+                null,
+                pool);
+            lease.EnsureOwned();
+            long rented = pool.RentedBytes;
+            lease.Retain();
+            lease.EnsureOwned();
+
+            Assert.False(lease.IsBorrowed);
+            Assert.Equal(rented, pool.RentedBytes);
+            lease.Release();
+            lease.Release();
+            Assert.Equal(0, pool.RentedBytes);
+        }
+
+        [Fact]
+        public void MultipleQueuedMessagesShareOneOwnedLease()
+        {
+            using MqttZeroBufferPool pool = new(1024 * 1024);
+            MqttZeroMessageLease lease = MqttZeroMessageLease.BorrowFrom(
+                new System.Buffers.ReadOnlySequence<byte>("topic"u8.ToArray()),
+                System.Buffers.ReadOnlySequence<byte>.Empty,
+                new System.Buffers.ReadOnlySequence<byte>(new byte[8192]),
+                MqttQualityOfServiceLevel.AtLeastOnce,
+                false,
+                null,
+                null,
+                pool);
+            MqttZeroQueuedMessage first = MqttZeroQueuedMessage.Rent(
+                lease,
+                MqttQualityOfServiceLevel.AtLeastOnce,
+                false,
+                null,
+                null);
+            long rented = pool.RentedBytes;
+            MqttZeroQueuedMessage second = MqttZeroQueuedMessage.Rent(
+                lease,
+                MqttQualityOfServiceLevel.AtLeastOnce,
+                false,
+                null,
+                null);
+
+            Assert.Same(first.Lease, second.Lease);
+            Assert.Equal(rented, pool.RentedBytes);
+            first.Release();
+            second.Release();
+            lease.Release();
+            Assert.Equal(0, pool.RentedBytes);
+        }
         [Fact]
         public void QueuedMessageRejectsDuplicateRelease()
         {
@@ -191,7 +254,7 @@ namespace MqttZero.Tests.Memory
             }
 
             long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
-            Assert.Empty(session.PendingMessages);
+            Assert.Equal(0, session.PendingMessages.Count);
             Assert.Empty(session.InflightMessages);
             Assert.Equal(0, allocated);
         }
