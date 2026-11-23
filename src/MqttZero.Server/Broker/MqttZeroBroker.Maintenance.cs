@@ -21,10 +21,10 @@ public sealed partial class MqttZeroBroker
         while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
         {
             DateTimeOffset now = _timeProvider.GetUtcNow();
-            List<MqttZeroClientConnection> keepAliveExpired = [];
-            List<MqttZeroWillMessage> dueWills = [];
-            List<MqttZeroSessionState> expiredSessions = [];
-            List<string> expiredRetainedTopics = [];
+            _keepAliveExpired.Clear();
+            _dueWills.Clear();
+            _expiredSessions.Clear();
+            _expiredRetainedTopics.Clear();
 
             foreach (MqttZeroSessionState session in _sessions.Values)
             {
@@ -36,7 +36,7 @@ public sealed partial class MqttZeroBroker
                             (now - session.Connection.LastPacketReceivedAt).TotalSeconds;
                         if (secondsWithoutPacket > session.Connection.KeepAliveSeconds * 1.5)
                         {
-                            keepAliveExpired.Add(session.Connection);
+                            _keepAliveExpired.Add(session.Connection);
                         }
                     }
 
@@ -44,7 +44,7 @@ public sealed partial class MqttZeroBroker
                     {
                         if (session.WillMessage != null)
                         {
-                            dueWills.Add(session.WillMessage);
+                            _dueWills.Add(session.WillMessage);
                         }
 
                         session.WillMessage = null;
@@ -53,12 +53,12 @@ public sealed partial class MqttZeroBroker
 
                     if (IsSessionExpired(session, now) && !session.WillDueAt.HasValue)
                     {
-                        expiredSessions.Add(session);
+                        _expiredSessions.Add(session);
                     }
                 }
             }
 
-            foreach (MqttZeroClientConnection connection in keepAliveExpired)
+            foreach (MqttZeroClientConnection connection in _keepAliveExpired)
             {
                 try
                 {
@@ -70,7 +70,7 @@ public sealed partial class MqttZeroBroker
                 }
             }
 
-            foreach (MqttZeroWillMessage will in dueWills)
+            foreach (MqttZeroWillMessage will in _dueWills)
             {
                 await RoutePublishAsync(null, will.CreatePacket(), cancellationToken).ConfigureAwait(false);
                 Interlocked.Increment(ref _publishedWillCount);
@@ -80,16 +80,16 @@ public sealed partial class MqttZeroBroker
             {
                 if (pair.Value.ExpiresAt.HasValue && pair.Value.ExpiresAt.Value <= now)
                 {
-                    expiredRetainedTopics.Add(pair.Key);
+                    _expiredRetainedTopics.Add(pair.Key);
                 }
             }
 
-            foreach (string topic in expiredRetainedTopics)
+            foreach (string topic in _expiredRetainedTopics)
             {
                 RemoveRetainedMessage(topic);
             }
 
-            foreach (MqttZeroSessionState session in expiredSessions)
+            foreach (MqttZeroSessionState session in _expiredSessions)
             {
                 ReleaseSessionMessages(session);
                 lock (_sessionGate)

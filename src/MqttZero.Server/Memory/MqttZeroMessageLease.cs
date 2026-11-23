@@ -13,6 +13,7 @@ internal sealed class MqttZeroMessageLease : IDisposable
     private byte[] _topicBuffer = [];
     private MqttZeroBufferPool _bufferPool = MqttZeroBufferPool.Shared;
     private bool _isBorrowed;
+    private readonly object _promotionGate = new();
     private int _referenceCount;
 
     private MqttZeroMessageLease()
@@ -114,6 +115,33 @@ internal sealed class MqttZeroMessageLease : IDisposable
             MessageExpiryInterval,
             SubscriptionIdentifier,
             _bufferPool);
+    }
+
+    public void EnsureOwned()
+    {
+        if (!_isBorrowed)
+        {
+            return;
+        }
+
+        lock (_promotionGate)
+        {
+            if (!_isBorrowed)
+            {
+                return;
+            }
+
+            _topicBuffer = CopyToPooledBuffer(TopicSequence, _topicBuffer);
+            _propertiesBuffer = CopyToPooledBuffer(PropertiesSequence, _propertiesBuffer);
+            _payloadBuffer = CopyToPooledBuffer(PayloadSequence, _payloadBuffer);
+            Topic = _topicBuffer.AsMemory(0, (int)TopicSequence.Length);
+            Properties = _propertiesBuffer.AsMemory(0, (int)PropertiesSequence.Length);
+            Payload = _payloadBuffer.AsMemory(0, (int)PayloadSequence.Length);
+            TopicSequence = new ReadOnlySequence<byte>(Topic);
+            PropertiesSequence = new ReadOnlySequence<byte>(Properties);
+            PayloadSequence = new ReadOnlySequence<byte>(Payload);
+            _isBorrowed = false;
+        }
     }
 
     public void Retain()

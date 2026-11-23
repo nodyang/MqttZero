@@ -149,6 +149,31 @@ namespace MqttZero.Tests.Memory
             owned.Release();
             Assert.Equal(0, pool.RentedBytes);
         }
+
+        [Fact]
+        public void BorrowedMessageLeasePromotesOnceAndKeepsSharedReferences()
+        {
+            using MqttZeroBufferPool pool = new(1024 * 1024);
+            MqttZeroMessageLease lease = MqttZeroMessageLease.BorrowFrom(
+                new System.Buffers.ReadOnlySequence<byte>("topic"u8.ToArray()),
+                System.Buffers.ReadOnlySequence<byte>.Empty,
+                new System.Buffers.ReadOnlySequence<byte>("payload"u8.ToArray()),
+                MqttQualityOfServiceLevel.AtLeastOnce,
+                false,
+                null,
+                null,
+                pool);
+            lease.EnsureOwned();
+            long rented = pool.RentedBytes;
+            lease.Retain();
+            lease.EnsureOwned();
+
+            Assert.False(lease.IsBorrowed);
+            Assert.Equal(rented, pool.RentedBytes);
+            lease.Release();
+            lease.Release();
+            Assert.Equal(0, pool.RentedBytes);
+        }
         [Fact]
         public void QueuedMessageRejectsDuplicateRelease()
         {

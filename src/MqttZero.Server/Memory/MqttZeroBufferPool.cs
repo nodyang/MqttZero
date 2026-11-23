@@ -14,6 +14,7 @@ internal sealed class MqttZeroBufferPool : IDisposable
     private static readonly int[] BucketSizes = CreateBucketSizes();
 
     private readonly ConcurrentQueue<byte[]>[] _buckets;
+    private readonly int[] _cachedCounts;
     private readonly SemaphoreSlim _capacityReleased = new(0, int.MaxValue);
     private readonly long _maximumBytes;
     private readonly ArrayPool<byte> _source;
@@ -31,6 +32,7 @@ internal sealed class MqttZeroBufferPool : IDisposable
         _maximumBytes = maximumBytes;
         _source = source ?? throw new ArgumentNullException(nameof(source));
         _buckets = new ConcurrentQueue<byte[]>[BucketCount];
+        _cachedCounts = new int[BucketCount];
         for (int index = 0; index < _buckets.Length; index++)
         {
             _buckets[index] = new ConcurrentQueue<byte[]>();
@@ -72,8 +74,10 @@ internal sealed class MqttZeroBufferPool : IDisposable
         int bucketIndex = GetBucketIndex(minimumLength);
         if (_buckets[bucketIndex].TryDequeue(out byte[]? cached))
         {
+            Interlocked.Decrement(ref _cachedCounts[bucketIndex]);
             if (!TryReserve(cached.Length))
             {
+                Interlocked.Increment(ref _cachedCounts[bucketIndex]);
                 _buckets[bucketIndex].Enqueue(cached);
                 buffer = [];
                 return false;
@@ -114,11 +118,14 @@ internal sealed class MqttZeroBufferPool : IDisposable
         _capacityReleased.Release();
         int bucketIndex = GetBucketIndex(buffer.Length);
         if (Volatile.Read(ref _disposed) == 0 &&
-            _buckets[bucketIndex].Count < MaximumCachedBuffersPerBucket)
+            Interlocked.Increment(ref _cachedCounts[bucketIndex]) <=
+                MaximumCachedBuffersPerBucket)
         {
             _buckets[bucketIndex].Enqueue(buffer);
             return;
         }
+
+        Interlocked.Decrement(ref _cachedCounts[bucketIndex]);
 
         _source.Return(buffer);
     }

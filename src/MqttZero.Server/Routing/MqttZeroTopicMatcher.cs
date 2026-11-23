@@ -15,6 +15,30 @@ public static class MqttZeroTopicMatcher
     /// <returns><see langword="true"/> when the filter matches the topic.</returns>
     public static bool Matches(ReadOnlySpan<byte> filter, ReadOnlySpan<byte> topic)
     {
+        int wildcardIndex = filter.IndexOfAny((byte)'+', (byte)'#');
+        if (wildcardIndex < 0)
+        {
+            return filter.SequenceEqual(topic);
+        }
+
+        if (filter[wildcardIndex] == (byte)'#' &&
+            wildcardIndex == filter.Length - 1)
+        {
+            if (wildcardIndex == 0)
+            {
+                return true;
+            }
+
+            if (filter[wildcardIndex - 1] == (byte)'/')
+            {
+                ReadOnlySpan<byte> prefix = filter[..(wildcardIndex - 1)];
+                return topic.SequenceEqual(prefix) ||
+                    (topic.Length > prefix.Length &&
+                        topic.StartsWith(prefix) &&
+                        topic[prefix.Length] == (byte)'/');
+            }
+        }
+
         int filterOffset = 0;
         int topicOffset = 0;
 

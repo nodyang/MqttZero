@@ -24,51 +24,34 @@ public sealed partial class MqttZeroBroker
             return;
         }
 
-        MqttZeroMessageLease retainedLease = lease;
-        bool ownsTemporaryLease = false;
-        if (lease.IsBorrowed)
+        lease.EnsureOwned();
+        lock (_sessionGate)
         {
-            retainedLease = lease.CreateOwnedCopy();
-            ownsTemporaryLease = true;
-        }
-
-        try
-        {
-            lock (_sessionGate)
+            _retainedMessages.TryGetValue(topicKey, out MqttZeroRetainedMessage? existing);
+            if (existing == null && _retainedMessages.Count >= _options.MaxRetainedMessages)
             {
-                _retainedMessages.TryGetValue(topicKey, out MqttZeroRetainedMessage? existing);
-                if (existing == null && _retainedMessages.Count >= _options.MaxRetainedMessages)
-                {
-                    throw new InvalidOperationException("The retained message count limit was reached.");
-                }
-
-                long previousBytes = existing?.ByteLength ?? 0;
-                long replacementBytes =
-                    retainedLease.TopicSequence.Length + retainedLease.PayloadSequence.Length;
-                long retainedBytes = _retainedBytes - previousBytes + replacementBytes;
-                if (retainedBytes > _options.MaxRetainedBytes)
-                {
-                    throw new InvalidOperationException("The retained message byte limit was reached.");
-                }
-
-                MqttZeroRetainedMessage replacement = new(
-                    retainedLease,
-                    retainedLease.QualityOfServiceLevel,
-                    retainedLease.MessageExpiryInterval.HasValue
-                        ? _timeProvider.GetUtcNow().AddSeconds(
-                            retainedLease.MessageExpiryInterval.Value)
-                        : null);
-                _retainedMessages[topicKey] = replacement;
-                _retainedBytes = retainedBytes;
-                existing?.Release();
+                throw new InvalidOperationException("The retained message count limit was reached.");
             }
-        }
-        finally
-        {
-            if (ownsTemporaryLease)
+
+            long previousBytes = existing?.ByteLength ?? 0;
+            long replacementBytes =
+                lease.TopicSequence.Length + lease.PayloadSequence.Length;
+            long retainedBytes = _retainedBytes - previousBytes + replacementBytes;
+            if (retainedBytes > _options.MaxRetainedBytes)
             {
-                retainedLease.Release();
+                throw new InvalidOperationException("The retained message byte limit was reached.");
             }
+
+            MqttZeroRetainedMessage replacement = new(
+                lease,
+                lease.QualityOfServiceLevel,
+                lease.MessageExpiryInterval.HasValue
+                    ? _timeProvider.GetUtcNow().AddSeconds(
+                        lease.MessageExpiryInterval.Value)
+                    : null);
+            _retainedMessages[topicKey] = replacement;
+            _retainedBytes = retainedBytes;
+            existing?.Release();
         }
     }
 
