@@ -17,6 +17,7 @@ namespace MqttZero.Tests.Memory
         [Fact]
         public void PooledMessageLeaseDoesNotAllocateAfterWarmup()
         {
+            using MqttZeroBufferPool pool = new(1024 * 1024);
             ReadOnlySequence<byte> topic = new("hot/topic"u8.ToArray());
             ReadOnlySequence<byte> payload = new(new byte[8192]);
             ReadOnlySequence<byte> properties = ReadOnlySequence<byte>.Empty;
@@ -28,7 +29,8 @@ namespace MqttZero.Tests.Memory
                 MqttQualityOfServiceLevel.AtLeastOnce,
                 false,
                 null,
-                null))
+                null,
+                pool))
             {
                 Assert.Equal(8192, warmup.Payload.Length);
             }
@@ -44,7 +46,8 @@ namespace MqttZero.Tests.Memory
                     MqttQualityOfServiceLevel.AtLeastOnce,
                     false,
                     null,
-                    null);
+                    null,
+                    pool);
                 total += lease.Payload.Length;
             }
 
