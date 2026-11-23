@@ -109,6 +109,79 @@ namespace MqttZero.Tests
             Assert.Equal((ushort)42, publishPacket.PacketIdentifier);
         }
 
+        [Fact]
+        public void RoundTripsSubscribePacketWithOptions()
+        {
+            MqttSubscribePacket packet = new()
+            {
+                PacketIdentifier = 7,
+                Subscriptions =
+                [
+                    new MqttSubscriptionRequest
+                    {
+                        TopicFilter = new ReadOnlySequence<byte>("devices/+"u8.ToArray()),
+                        QualityOfServiceLevel = MqttQualityOfServiceLevel.AtLeastOnce,
+                        NoLocal = true,
+                        RetainAsPublished = true
+                    }
+                ]
+            };
+
+            byte[] bytes = Encode(packet);
+
+            bool decoded = MqttPacketCodec.TryDecode(
+                new ReadOnlySequence<byte>(bytes),
+                out MqttPacket? result,
+                out long consumed);
+
+            MqttSubscribePacket subscribePacket = Assert.IsType<MqttSubscribePacket>(result);
+            Assert.True(decoded);
+            Assert.Equal(bytes.Length, consumed);
+            Assert.Equal((ushort)7, subscribePacket.PacketIdentifier);
+            MqttSubscriptionRequest request = Assert.Single(subscribePacket.Subscriptions);
+            Assert.Equal("devices/+", Encoding.UTF8.GetString(request.TopicFilter.FirstSpan));
+            Assert.Equal(MqttQualityOfServiceLevel.AtLeastOnce, request.QualityOfServiceLevel);
+            Assert.True(request.NoLocal);
+            Assert.True(request.RetainAsPublished);
+        }
+
+        [Fact]
+        public void DecodesShortQos1PubAck()
+        {
+            byte[] bytes = [0x40, 0x02, 0x00, 0x2A];
+
+            bool decoded = MqttPacketCodec.TryDecode(
+                new ReadOnlySequence<byte>(bytes),
+                out MqttPacket? packet,
+                out long consumed);
+
+            MqttPubAckPacket pubAckPacket = Assert.IsType<MqttPubAckPacket>(packet);
+            Assert.True(decoded);
+            Assert.Equal(bytes.Length, consumed);
+            Assert.Equal((ushort)42, pubAckPacket.PacketIdentifier);
+            Assert.Equal(MqttReasonCode.Success, pubAckPacket.ReasonCode);
+        }
+
+        [Fact]
+        public void EncodesSubAckReasonCodes()
+        {
+            MqttSubAckPacket packet = new()
+            {
+                PacketIdentifier = 9,
+                ReasonCodes = new byte[]
+                {
+                    (byte)MqttReasonCode.GrantedQos1,
+                    (byte)MqttReasonCode.NotAuthorized
+                }
+            };
+
+            byte[] bytes = Encode(packet);
+
+            Assert.Equal(
+                new byte[] { 0x90, 0x05, 0x00, 0x09, 0x00, 0x01, 0x87 },
+                bytes);
+        }
+
         private static byte[] Encode(MqttPacket packet)
         {
             ArrayBufferWriter<byte> writer = new();
