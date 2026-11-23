@@ -125,32 +125,20 @@ internal static class MqttPublishPacketCodec
         in MqttZeroPublishView view,
         MqttZeroPacketWriter writer)
     {
-        const int reservedHeaderSize = 5;
-        writer.Reset(reservedHeaderSize);
-        writer.Seek(reservedHeaderSize);
-        writer.WriteUInt16((ushort)view.Topic.Length);
-        WriteSequence(writer, view.Topic);
-        if (view.QualityOfServiceLevel != MqttQualityOfServiceLevel.AtMostOnce)
-        {
-            writer.WriteUInt16(view.PacketIdentifier);
-        }
-
         int propertyLength = GetPropertyLength(view);
-        writer.WriteVariableByteInteger((uint)propertyLength);
-        if (view.Properties.IsEmpty)
-        {
-            WriteScalarProperties(writer, view);
-        }
-        else
-        {
-            WriteSequence(writer, view.Properties);
-        }
-
-        uint remainingLength = (uint)(writer.WrittenCount - reservedHeaderSize) +
+        int bodyHeaderLength =
+            2 +
+            (int)view.Topic.Length +
+            (view.QualityOfServiceLevel == MqttQualityOfServiceLevel.AtMostOnce ? 0 : 2) +
+            GetVariableByteIntegerSize((uint)propertyLength) +
+            propertyLength;
+        uint remainingLength = (uint)bodyHeaderLength +
             (uint)view.Payload.Length;
         int remainingLengthSize = GetVariableByteIntegerSize(remainingLength);
-        int headerOffset = reservedHeaderSize - 1 - remainingLengthSize;
-        writer.Seek(headerOffset);
+        int headerLength = 1 + remainingLengthSize + bodyHeaderLength;
+        writer.Reset();
+        Span<byte> destination = writer.GetSpan(headerLength);
+        int offset = 0;
         byte firstByte = 0x30;
         if (view.Duplicate)
         {
@@ -163,10 +151,38 @@ internal static class MqttPublishPacketCodec
             firstByte |= 0x01;
         }
 
-        writer.WriteByte(firstByte);
-        writer.WriteVariableByteInteger(remainingLength);
+        destination[offset++] = firstByte;
+        offset += MqttZeroPacketWriter.WriteVariableByteInteger(
+            destination[offset..],
+            remainingLength);
+        BinaryPrimitives.WriteUInt16BigEndian(
+            destination[offset..],
+            (ushort)view.Topic.Length);
+        offset += 2;
+        WriteSequence(destination, view.Topic, ref offset);
+        if (view.QualityOfServiceLevel != MqttQualityOfServiceLevel.AtMostOnce)
+        {
+            BinaryPrimitives.WriteUInt16BigEndian(
+                destination[offset..],
+                view.PacketIdentifier);
+            offset += 2;
+        }
+
+        offset += MqttZeroPacketWriter.WriteVariableByteInteger(
+            destination[offset..],
+            (uint)propertyLength);
+        if (view.Properties.IsEmpty)
+        {
+            WriteScalarProperties(destination, view, ref offset);
+        }
+        else
+        {
+            WriteSequence(destination, view.Properties, ref offset);
+        }
+
+        writer.Advance(headerLength);
         return new MqttZeroPublishPacketBuffer(
-            writer.WrittenMemory[headerOffset..],
+            writer.WrittenMemory,
             view.Payload);
     }
 
@@ -453,6 +469,47 @@ internal static class MqttPublishPacketCodec
             writer.WriteByte(TopicAliasId);
             writer.WriteUInt16(view.TopicAlias.Value);
         }
+    }
+
+    private static void WriteScalarProperties(
+        Span<byte> destination,
+        in MqttZeroPublishView view,
+        ref int offset)
+    {
+        if (view.MessageExpiryInterval.HasValue)
+        {
+            destination[offset++] = MessageExpiryIntervalId;
+            BinaryPrimitives.WriteUInt32BigEndian(
+                destination[offset..],
+                view.MessageExpiryInterval.Value);
+            offset += sizeof(uint);
+        }
+
+        if (view.SubscriptionIdentifier.HasValue)
+        {
+            destination[offset++] = SubscriptionIdentifierId;
+            offset += MqttZeroPacketWriter.WriteVariableByteInteger(
+                destination[offset..],
+                view.SubscriptionIdentifier.Value);
+        }
+
+        if (view.TopicAlias.HasValue)
+        {
+            destination[offset++] = TopicAliasId;
+            BinaryPrimitives.WriteUInt16BigEndian(
+                destination[offset..],
+                view.TopicAlias.Value);
+            offset += sizeof(ushort);
+        }
+    }
+
+    private static void WriteSequence(
+        Span<byte> destination,
+        ReadOnlySequence<byte> value,
+        ref int offset)
+    {
+        value.CopyTo(destination[offset..]);
+        offset += (int)value.Length;
     }
 
     private static int GetPropertyLength(in MqttZeroPublishView view)
