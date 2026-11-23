@@ -1,3 +1,6 @@
+using MqttZero.Memory;
+using MqttZero.Protocol;
+using MqttZero.Sessions;
 using System.Buffers;
 using System.Buffers.Binary;
 using System.IO.Pipelines;

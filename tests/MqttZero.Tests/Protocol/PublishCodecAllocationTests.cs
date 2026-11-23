@@ -1,0 +1,146 @@
+using MqttZero.Tests.Support;
+using MqttZero.Broker;
+using MqttZero.Interceptors;
+using MqttZero.Memory;
+using MqttZero.Protocol;
+using MqttZero.Routing;
+using MqttZero.Sessions;
+using System.Buffers;
+using System.Collections.Concurrent;
+using System.IO.Pipelines;
+using System.Reflection;
+
+
+namespace MqttZero.Tests.Protocol
+{
+    public sealed class PublishCodecAllocationTests
+    {
+        [Fact]
+        public void PublishFastCodecDoesNotAllocateAfterWarmup()
+        {
+            MqttPublishPacket packet = new()
+            {
+                TopicName = new ReadOnlySequence<byte>("hot/topic"u8.ToArray()),
+                Payload = new ReadOnlySequence<byte>(new byte[8192]),
+                MessageExpiryInterval = 60,
+                SubscriptionIdentifier = 7
+            };
+            ArrayBufferWriter<byte> setupWriter = new();
+            MqttPacketCodec.Encode(packet, setupWriter);
+            ReadOnlySequence<byte> source = new(setupWriter.WrittenMemory);
+            PreallocatedBufferWriter writer = new(16 * 1024);
+
+            for (int index = 0; index < 10; index++)
+            {
+                _ = MqttPublishPacketCodec.TryDecode(source, out MqttZeroPublishView warmup, out _);
+                writer.Reset();
+                MqttPublishPacketCodec.Encode(warmup, writer);
+            }
+
+            int totalPayload = 0;
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            for (int index = 0; index < 1_000; index++)
+            {
+                bool decoded = MqttPublishPacketCodec.TryDecode(
+                    source,
+                    out MqttZeroPublishView view,
+                    out _);
+                if (!decoded)
+                {
+                    throw new InvalidOperationException("The fast PUBLISH decoder failed.");
+                }
+
+                totalPayload += (int)view.Payload.Length;
+                writer.Reset();
+                MqttPublishPacketCodec.Encode(view, writer);
+            }
+
+            long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+            Assert.Equal(8_192_000, totalPayload);
+            Assert.Equal(0, allocated);
+        }
+        [Theory]
+        [InlineData(8 * 1024, 1)]
+        [InlineData(8 * 1024, 10)]
+        [InlineData(64 * 1024, 1)]
+        [InlineData(64 * 1024, 10)]
+        public void FastPublishCodecHandlesSegmentedPayloadsWithoutAllocation(
+            int payloadSize,
+            int segmentCount)
+        {
+            MqttPublishPacket packet = new()
+            {
+                TopicName = new ReadOnlySequence<byte>("hot/topic"u8.ToArray()),
+                Payload = new ReadOnlySequence<byte>(new byte[payloadSize]),
+                MessageExpiryInterval = 60,
+                SubscriptionIdentifier = 7
+            };
+            ArrayBufferWriter<byte> setupWriter = new();
+            MqttPacketCodec.Encode(packet, setupWriter);
+            ReadOnlySequence<byte> source = CreateSegmentedSequence(
+                setupWriter.WrittenSpan.ToArray(),
+                segmentCount);
+            PreallocatedBufferWriter writer = new(payloadSize + 1024);
+
+            for (int index = 0; index < 10; index++)
+            {
+                _ = MqttPublishPacketCodec.TryDecode(source, out MqttZeroPublishView warmup, out _);
+                writer.Reset();
+                MqttPublishPacketCodec.Encode(warmup, writer);
+            }
+
+            int totalPayload = 0;
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            for (int index = 0; index < 100; index++)
+            {
+                bool decoded = MqttPublishPacketCodec.TryDecode(
+                    source,
+                    out MqttZeroPublishView view,
+                    out _);
+                if (!decoded)
+                {
+                    throw new InvalidOperationException("The segmented PUBLISH decoder failed.");
+                }
+
+                totalPayload += (int)view.Payload.Length;
+                writer.Reset();
+                MqttPublishPacketCodec.Encode(view, writer);
+            }
+
+            long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+            Assert.Equal(payloadSize * 100, totalPayload);
+            Assert.Equal(0, allocated);
+        }
+        private static ReadOnlySequence<byte> CreateSegmentedSequence(
+            byte[] bytes,
+            int segmentCount)
+        {
+            if (segmentCount == 1)
+            {
+                return new ReadOnlySequence<byte>(bytes);
+            }
+
+            int segmentLength = (bytes.Length + segmentCount - 1) / segmentCount;
+            SequenceSegment? first = null;
+            SequenceSegment? last = null;
+            for (int offset = 0; offset < bytes.Length; offset += segmentLength)
+            {
+                int length = Math.Min(segmentLength, bytes.Length - offset);
+                SequenceSegment segment = new(bytes.AsMemory(offset, length));
+                if (first == null)
+                {
+                    first = segment;
+                }
+                else
+                {
+                    last!.SetNext(segment);
+                }
+
+                last = segment;
+            }
+
+            return new ReadOnlySequence<byte>(first!, 0, last!, last!.Memory.Length);
+        }
+
+    }
+}

@@ -1,6 +1,6 @@
 # MQTTZero
 
-MQTTZero 是一个面向 ASP.NET Core Kestrel 的独立 MQTT 5 Broker。生产代码不依赖 MQTTnet，目标框架为 .NET 10。当前版本为 `0.3.0-alpha.1`。
+MQTTZero 是一个面向 ASP.NET Core Kestrel 的独立 MQTT 5 Broker。生产代码不依赖 MQTTnet，目标框架为 .NET 10。当前版本为 `0.4.0-alpha.1`。
 
 ## 当前能力
 
@@ -47,6 +47,21 @@ await app.RunAsync();
 
 完整示例位于 `samples/MqttZero.Sample`。
 
+## 0.4.0 命名空间迁移
+
+`0.4.0-alpha.1` 将大型源码按职责拆分到 Server 项目子目录。`MqttZeroOptions`、Snapshot、PayloadOwner、ClientConnection、RetainedMessage，以及 `AddMqttZero`、`MapMqttZero`、`UseMqttZero` 等入口保持原 namespace。
+
+| 类型 | 新 namespace |
+|---|---|
+| MQTT Packet、Codec、QoS、ReasonCode | `MqttZero.Protocol` |
+| `MqttZeroBroker`、`MqttZeroBrokerState` | `MqttZero.Broker` |
+| Session、Subscription、Will、QueuedMessage | `MqttZero.Sessions` |
+| TopicMatcher、RouteScope、RouteSelector | `MqttZero.Routing` |
+| BufferPool、MessageLease | `MqttZero.Memory` |
+| Publish Interceptor API | `MqttZero.Interceptors` |
+
+引用迁移后的类型时需要增加对应 `using`。本版本不提供旧 namespace 转发类型。
+
 ## 性能与分配
 
 阶段二的硬门禁覆盖 Broker 稳态同步热路径：
@@ -72,7 +87,7 @@ dotnet run -c Release --project benchmarks/MqttZero.Benchmarks -- `
   --filter '*' --job short --exporters csv json
 ```
 
-已提交的短作业数据和解释位于 `perf/baseline`。当前实测中，fast PUBLISH 解码、Topic 路由、QoS 1 队列和内存端到端均达到 `0 B/op`。8 KiB 内存端到端约为 MQTTnet 同工作负载 codec+匹配基线的 `1.69x`。MQTTZero 解码显著快于 MQTTnet 且无分配，但编码和“全部订阅者均命中”的线性路由尚未达到计划中的全部相对吞吐门槛；这些缺口保留在基线文档中，不应被解释为已经达成。
+已提交的短作业数据和解释位于 `perf/baseline`。当前实测中，fast PUBLISH 解码、Topic 路由、QoS 1 队列和内存端到端均达到 `0 B/op`。8 KiB 内存端到端约为 MQTTnet 同工作负载 codec+匹配基线的 `1.44x`。MQTTZero 解码显著快于 MQTTnet 且无分配，但编码和“全部订阅者均命中”的线性路由尚未达到计划中的全部相对吞吐门槛；这些缺口保留在基线文档中，不应被解释为已经达成。
 
 ## 构建与测试
 

@@ -1,3 +1,9 @@
+using MqttZero.Broker;
+using MqttZero.Interceptors;
+using MqttZero.Memory;
+using MqttZero.Protocol;
+using MqttZero.Routing;
+using MqttZero.Sessions;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -6,6 +12,50 @@ namespace MqttZero.Tests
 {
     public sealed class SourceConventionTests
     {
+        private static readonly HashSet<string> AllowedServerRootSources =
+            new(StringComparer.OrdinalIgnoreCase)
+            {
+                "MqttZeroOptions.cs",
+                "MqttZeroClientSnapshot.cs",
+                "MqttZeroSessionSnapshot.cs",
+                "MqttZeroRetainedMessageSnapshot.cs",
+                "MqttZeroPayloadOwner.cs",
+                "MqttZeroPayloadOwnerFactory.cs",
+                "MqttZeroClientConnection.cs",
+                "MqttZeroPooledTopicAlias.cs",
+                "MqttZeroRetainedMessage.cs"
+            };
+
+        private static readonly Dictionary<string, string> ProjectRootNamespaces =
+            new(StringComparer.OrdinalIgnoreCase)
+            {
+                ["src/MqttZero.Server"] = "MqttZero",
+                ["src/MqttZero.AspNetCore"] = "MqttZero.AspNetCore",
+                ["src/MqttZero.AspNetCore.Dashboard"] = "MqttZero.AspNetCore.Dashboard",
+                ["tests/MqttZero.Tests"] = "MqttZero.Tests",
+                ["tests/MqttZero.Dashboard.Tests"] = "MqttZero.Dashboard.Tests",
+                ["benchmarks/MqttZero.Benchmarks"] = "MqttZero.Benchmarks",
+                ["samples/MqttZero.Sample"] = "MqttZero.Sample"
+            };
+
+        private static readonly HashSet<string> NamespaceOptionalFiles =
+            new(StringComparer.OrdinalIgnoreCase)
+            {
+                "Program.cs",
+                "TestAssembly.cs"
+            };
+
+        private static readonly HashSet<string> AllowedTestRootSources =
+            new(StringComparer.OrdinalIgnoreCase)
+            {
+                "OptionsTests.cs",
+                "PayloadOwnerTests.cs",
+                "RetainedLeaseTests.cs",
+                "SourceConventionTests.cs",
+                "TestAssembly.cs",
+                "TopicAliasAllocationTests.cs"
+            };
+
         [Fact]
         public void SourceFilesFollowTeamConventions()
         {
@@ -44,6 +94,117 @@ namespace MqttZero.Tests
             Assert.True(
                 violations.Count == 0,
                 string.Join(Environment.NewLine, violations));
+        }
+
+        [Fact]
+        public void ServerProjectRootContainsOnlyApprovedSmallTypes()
+        {
+            string repositoryRoot = FindRepositoryRoot();
+            string serverProject = Path.Combine(
+                repositoryRoot,
+                "src",
+                "MqttZero.Server");
+            string[] unexpected = Directory
+                .EnumerateFiles(serverProject, "*.cs", SearchOption.TopDirectoryOnly)
+                .Select(Path.GetFileName)
+                .Where(static name =>
+                    name != null &&
+                    !AllowedServerRootSources.Contains(name))
+                .Order(StringComparer.Ordinal)
+                .ToArray()!;
+
+            Assert.True(
+                unexpected.Length == 0,
+                "Move these sources into responsibility folders: " +
+                string.Join(", ", unexpected));
+        }
+
+        [Fact]
+        public void SourceNamespacesMatchProjectDirectories()
+        {
+            string repositoryRoot = FindRepositoryRoot();
+            List<string> violations = [];
+            foreach (KeyValuePair<string, string> project in ProjectRootNamespaces)
+            {
+                string projectDirectory = Path.Combine(
+                    repositoryRoot,
+                    project.Key.Replace('/', Path.DirectorySeparatorChar));
+                foreach (string path in Directory.EnumerateFiles(
+                    projectDirectory,
+                    "*.cs",
+                    SearchOption.AllDirectories))
+                {
+                    if (IsGeneratedPath(path))
+                    {
+                        continue;
+                    }
+
+                    string text = File.ReadAllText(path);
+                    CompilationUnitSyntax root = CSharpSyntaxTree.ParseText(
+                        text,
+                        path: path,
+                        cancellationToken: TestContext.Current.CancellationToken)
+                        .GetCompilationUnitRoot(TestContext.Current.CancellationToken);
+                    string? actualNamespace = root.Members
+                        .OfType<BaseNamespaceDeclarationSyntax>()
+                        .Select(static declaration => declaration.Name.ToString())
+                        .FirstOrDefault();
+                    if (actualNamespace == null &&
+                        NamespaceOptionalFiles.Contains(Path.GetFileName(path)))
+                    {
+                        continue;
+                    }
+
+                    string relativeDirectory = Path.GetRelativePath(
+                        projectDirectory,
+                        Path.GetDirectoryName(path)!);
+                    string expectedNamespace = project.Value;
+                    if (relativeDirectory != ".")
+                    {
+                        string namespaceSuffix = relativeDirectory
+                            .Replace(Path.DirectorySeparatorChar, '.')
+                            .Replace(Path.AltDirectorySeparatorChar, '.');
+                        expectedNamespace += "." + namespaceSuffix;
+                    }
+
+                    if (!string.Equals(
+                        actualNamespace,
+                        expectedNamespace,
+                        StringComparison.Ordinal))
+                    {
+                        violations.Add(
+                            $"{path}: expected namespace '{expectedNamespace}', " +
+                            $"found '{actualNamespace ?? "<none>"}'.");
+                    }
+                }
+            }
+
+            Assert.True(
+                violations.Count == 0,
+                string.Join(Environment.NewLine, violations));
+        }
+
+        [Fact]
+        public void TestProjectRootContainsOnlyApprovedSmallTests()
+        {
+            string repositoryRoot = FindRepositoryRoot();
+            string testProject = Path.Combine(
+                repositoryRoot,
+                "tests",
+                "MqttZero.Tests");
+            string[] unexpected = Directory
+                .EnumerateFiles(testProject, "*.cs", SearchOption.TopDirectoryOnly)
+                .Select(Path.GetFileName)
+                .Where(static name =>
+                    name != null &&
+                    !AllowedTestRootSources.Contains(name))
+                .Order(StringComparer.Ordinal)
+                .ToArray()!;
+
+            Assert.True(
+                unexpected.Length == 0,
+                "Move these test sources into domain folders: " +
+                string.Join(", ", unexpected));
         }
 
         private static void CheckLineEndings(string path, string text, List<string> violations)

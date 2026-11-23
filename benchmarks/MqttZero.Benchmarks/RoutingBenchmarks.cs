@@ -1,3 +1,6 @@
+using MqttZero.Protocol;
+using MqttZero.Routing;
+using MqttZero.Sessions;
 using System.Collections.Concurrent;
 using BenchmarkDotNet.Attributes;
 

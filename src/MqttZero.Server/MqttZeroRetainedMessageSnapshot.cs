@@ -1,3 +1,4 @@
+using MqttZero.Protocol;
 namespace MqttZero;
 
 /// <summary>

@@ -5,7 +5,7 @@
       "mqttzero.aspnetcore": {
         "type": "Project",
         "dependencies": {
-          "MqttZero.Server": "[0.3.0-alpha.1, )"
+          "MqttZero.Server": "[0.4.0-alpha.1, )"
         }
       },
       "mqttzero.server": {

@@ -1,0 +1,97 @@
+using MqttZero.Interceptors;
+using MqttZero.Memory;
+using MqttZero.Protocol;
+using MqttZero.Routing;
+using MqttZero.Sessions;
+using System.Buffers;
+using System.Collections.Concurrent;
+using System.IO.Pipelines;
+using System.Text;
+
+namespace MqttZero.Broker;
+
+/// <summary>
+/// Implements session detachment and session resource cleanup.
+/// </summary>
+public sealed partial class MqttZeroBroker
+{
+    private async ValueTask DetachConnectionAsync(
+        MqttZeroSessionState session,
+        MqttZeroClientConnection connection,
+        bool cleanDisconnect)
+    {
+        DateTimeOffset now = _timeProvider.GetUtcNow();
+        bool removeSession = false;
+
+        lock (session.SyncRoot)
+        {
+            if (!ReferenceEquals(session.Connection, connection))
+            {
+                return;
+            }
+
+            session.Connection = null;
+            session.DisconnectedAt = now;
+            uint expiryInterval = session.ExpiryInterval;
+            if (cleanDisconnect || Volatile.Read(ref _stopping) != 0)
+            {
+                session.WillDueAt = null;
+                session.WillMessage = null;
+            }
+            else if (session.WillMessage != null)
+            {
+                uint delay = session.WillMessage.DelayInterval;
+                if (expiryInterval > 0)
+                {
+                    delay = Math.Min(delay, expiryInterval);
+                }
+
+                session.WillDueAt = now.AddSeconds(delay);
+            }
+
+            if (expiryInterval == 0 && session.WillDueAt == null)
+            {
+                removeSession = true;
+            }
+        }
+
+        await session.DrainLock.WaitAsync().ConfigureAwait(false);
+        session.DrainLock.Release();
+
+        if (removeSession)
+        {
+            ReleaseSessionMessages(session);
+            lock (_sessionGate)
+            {
+                if (_sessions.TryGetValue(session.ClientId, out MqttZeroSessionState? current) &&
+                    ReferenceEquals(current, session))
+                {
+                    _sessions.TryRemove(session.ClientId, out _);
+                    RebuildSubscriptionRouteSnapshot();
+                }
+            }
+        }
+    }
+
+    private static bool IsSessionExpired(MqttZeroSessionState session, DateTimeOffset now)
+    {
+        if (session.Connection != null || !session.DisconnectedAt.HasValue)
+        {
+            return false;
+        }
+
+        return session.ExpiryInterval == 0 ||
+            now >= session.DisconnectedAt.Value.AddSeconds(session.ExpiryInterval);
+    }
+
+    private int GetInflightLimit(MqttZeroClientConnection? connection)
+    {
+        if (connection == null)
+        {
+            return _options.MaxInflight;
+        }
+
+        return Math.Min(_options.MaxInflight, connection.ReceiveMaximum);
+    }
+
+}
