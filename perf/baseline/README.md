@@ -34,3 +34,13 @@
 - `codec-0.4.0-alpha.1.*`
 - `routing-0.4.0-alpha.1.*`
 - `memory-transport-0.4.0-alpha.1.*`
+- `codec-0.4.1-alpha.1.*`
+- `routing-0.4.1-alpha.1.*`
+- `memory-transport-0.4.1-alpha.1.*`
+
+## 0.4.1 优化结果
+
+- Header-only PUBLISH 编码约 34-40 ns，`0 B/op`。
+- 1000 个相同 Topic Filter 的路由约 11.36 us，相对 0.4 的约 18.33 us 提升约 38%。
+- 8 KiB 内存 Transport QoS 0 约 361.1 ns，保持 `0 B/op`，优于 0.4 的约 372 ns。
+- 完整 EncodeToWriter 尚未达到公平 MQTTnet 门禁，生产路径仍使用原 Encode。
