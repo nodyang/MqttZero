@@ -13,6 +13,7 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
     private readonly MqttZeroBufferPool _bufferPool;
     private readonly CancellationTokenSource _closed = new();
     private readonly Dictionary<ushort, MqttZeroPooledTopicAlias> _inboundTopicAliases = [];
+    private readonly MqttZeroPooledTopicAlias?[] _inboundTopicAliasArray = new MqttZeroPooledTopicAlias?[257];
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private readonly PipeWriter _writer;
 
@@ -68,7 +69,10 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
     public void SetInboundTopicAlias(ushort alias, ReadOnlySequence<byte> topic)
     {
         int length = checked((int)topic.Length);
-        if (!_inboundTopicAliases.TryGetValue(alias, out MqttZeroPooledTopicAlias? entry) ||
+        MqttZeroPooledTopicAlias? entry = alias <= 256
+            ? _inboundTopicAliasArray[alias]
+            : _inboundTopicAliases.GetValueOrDefault(alias);
+        if (entry == null ||
             entry.Buffer.Length < length)
         {
             if (entry != null)
@@ -77,7 +81,14 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
             }
 
             entry = new MqttZeroPooledTopicAlias(_bufferPool.Rent(length), length);
-            _inboundTopicAliases[alias] = entry;
+            if (alias <= 256)
+            {
+                _inboundTopicAliasArray[alias] = entry;
+            }
+            else
+            {
+                _inboundTopicAliases[alias] = entry;
+            }
         }
 
         topic.CopyTo(entry.Buffer);
@@ -86,7 +97,10 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
 
     public bool TryGetInboundTopicAlias(ushort alias, out ReadOnlyMemory<byte> topic)
     {
-        if (_inboundTopicAliases.TryGetValue(alias, out MqttZeroPooledTopicAlias? entry))
+        MqttZeroPooledTopicAlias? entry = alias <= 256
+            ? _inboundTopicAliasArray[alias]
+            : _inboundTopicAliases.GetValueOrDefault(alias);
+        if (entry != null)
         {
             topic = entry.Buffer.AsMemory(0, entry.Length);
             return true;
@@ -235,6 +249,14 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
         foreach (MqttZeroPooledTopicAlias alias in _inboundTopicAliases.Values)
         {
             _bufferPool.Return(alias.Buffer);
+        }
+
+        for (int index = 0; index < _inboundTopicAliasArray.Length; index++)
+        {
+            if (_inboundTopicAliasArray[index] is MqttZeroPooledTopicAlias alias)
+            {
+                _bufferPool.Return(alias.Buffer);
+            }
         }
 
         _inboundTopicAliases.Clear();
