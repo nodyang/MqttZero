@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.IO.Pipelines;
+using System.Net;
 using System.Reflection;
 using BenchmarkDotNet.Attributes;
 using MqttZero.Broker;
@@ -71,7 +72,7 @@ public class FanoutBenchmarks : IDisposable
             MemoryWriter writer = new(16 * 1024);
             MqttZeroClientConnection connection = new(
                 writer,
-                "memory",
+                new IPEndPoint(IPAddress.Loopback, 0),
                 false,
                 false,
                 0,
@@ -92,7 +93,7 @@ public class FanoutBenchmarks : IDisposable
         _senderWriter = new MemoryWriter(16 * 1024);
         _senderConnection = new MqttZeroClientConnection(
             _senderWriter,
-            "sender",
+            new IPEndPoint(IPAddress.Loopback, 0),
             false,
             false,
             0,

@@ -7,6 +7,7 @@ using System.Buffers;
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.IO.Pipelines;
+using System.Net;
 using System.Reflection;
 using BenchmarkDotNet.Attributes;
 using MQTTnet.Adapter;
@@ -50,7 +51,7 @@ public class MemoryTransportBenchmarks : IDisposable
         _receiverWriter = new MemoryPipeWriter(16 * 1024);
         _receiverConnection = new MqttZeroClientConnection(
             _receiverWriter,
-            "memory",
+            new IPEndPoint(IPAddress.Loopback, 0),
             false,
             false,
             0,

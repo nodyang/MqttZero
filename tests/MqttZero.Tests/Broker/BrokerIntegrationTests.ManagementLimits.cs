@@ -54,6 +54,30 @@ namespace MqttZero.Tests.Broker
                 await disconnected.Task.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken));
             await app.StopAsync(cancellationToken);
         }
+
+        [Fact(Timeout = 15_000)]
+        public async Task ManagementApiExposesTypedKestrelRemoteEndPoint()
+        {
+            int port = GetFreePort();
+            await using WebApplication app = await StartTcpBrokerAsync(port);
+            CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+            MqttZeroBroker broker = app.Services.GetRequiredService<MqttZeroBroker>();
+            MqttClientFactory factory = new();
+            using IMqttClient client = factory.CreateMqttClient();
+
+            await client.ConnectAsync(
+                CreateClientOptions(port, "endpoint-client"),
+                cancellationToken);
+
+            MqttZeroClientSnapshot snapshot = Assert.Single(broker.GetClients());
+            IPEndPoint remoteEndPoint = Assert.IsType<IPEndPoint>(snapshot.RemoteEndPoint);
+            Assert.True(IPAddress.IsLoopback(remoteEndPoint.Address));
+            Assert.True(remoteEndPoint.Port > 0);
+
+            await client.DisconnectAsync(cancellationToken: cancellationToken);
+            await app.StopAsync(cancellationToken);
+        }
+
         [Fact(Timeout = 10_000)]
         public async Task ClosesConnectionForOversizedInboundPacket()
         {

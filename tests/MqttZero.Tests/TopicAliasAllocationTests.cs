@@ -17,7 +17,7 @@ namespace MqttZero.Tests
             using MqttZeroBufferPool bufferPool = new(1024 * 1024);
             MqttZeroClientConnection connection = new(
                 new NullPipeWriter(),
-                "memory",
+                null,
                 false,
                 false,
                 0,
