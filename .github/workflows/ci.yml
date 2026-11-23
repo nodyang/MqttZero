@@ -77,6 +77,8 @@ jobs:
           dotnet-version: 10.0.400
           cache: true
           cache-dependency-path: "**/packages.lock.json"
+      - name: Restore locked dependencies
+        run: dotnet restore MqttZero.slnx --locked-mode
       - name: Pack and consume NuGet packages
         shell: pwsh
         run: ./eng/verify-packages.ps1
