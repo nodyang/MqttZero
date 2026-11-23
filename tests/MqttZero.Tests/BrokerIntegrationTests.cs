@@ -1,5 +1,8 @@
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Authentication;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
@@ -19,7 +22,6 @@ namespace MqttZero.Tests
             int port = GetFreePort();
             WebApplicationBuilder builder = WebApplication.CreateBuilder();
             builder.Logging.ClearProviders();
-            builder.Logging.AddConsole();
             builder.WebHost.ConfigureKestrel(kestrel =>
             {
                 kestrel.Listen(IPAddress.Loopback, port, listen => listen.UseMqttZero());
@@ -126,6 +128,61 @@ namespace MqttZero.Tests
             await app.StopAsync(cancellationToken);
         }
 
+        [Fact(Timeout = 15_000)]
+        public async Task RoutesMessagesOverKestrelTls()
+        {
+            int port = GetFreePort();
+            using X509Certificate2 certificate = CreateServerCertificate();
+            WebApplicationBuilder builder = WebApplication.CreateBuilder();
+            builder.Logging.ClearProviders();
+            builder.WebHost.ConfigureKestrel(kestrel =>
+            {
+                kestrel.Listen(
+                    IPAddress.Loopback,
+                    port,
+                    listen => listen.UseHttps(certificate).UseMqttZero());
+            });
+            builder.Services.AddMqttZero();
+
+            await using WebApplication app = builder.Build();
+            CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+            await app.StartAsync(cancellationToken);
+
+            MqttClientFactory factory = new();
+            using IMqttClient subscriber = factory.CreateMqttClient();
+            using IMqttClient publisher = factory.CreateMqttClient();
+            TaskCompletionSource<string> received = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            subscriber.ApplicationMessageReceivedAsync += eventArgs =>
+            {
+                received.TrySetResult(eventArgs.ApplicationMessage.ConvertPayloadToString());
+                return Task.CompletedTask;
+            };
+
+            await subscriber.ConnectAsync(CreateTlsClientOptions(port, "tls-subscriber"), cancellationToken);
+            await publisher.ConnectAsync(CreateTlsClientOptions(port, "tls-publisher"), cancellationToken);
+            await subscriber.SubscribeAsync(
+                new MqttClientSubscribeOptionsBuilder()
+                    .WithTopicFilter(
+                        "secure/#",
+                        MQTTnet.Protocol.MqttQualityOfServiceLevel.AtLeastOnce)
+                    .Build(),
+                cancellationToken);
+
+            await publisher.PublishStringAsync(
+                "secure/data",
+                "encrypted",
+                MQTTnet.Protocol.MqttQualityOfServiceLevel.AtLeastOnce,
+                cancellationToken: cancellationToken);
+
+            Assert.Equal(
+                "encrypted",
+                await received.Task.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken));
+
+            await publisher.DisconnectAsync(cancellationToken: cancellationToken);
+            await subscriber.DisconnectAsync(cancellationToken: cancellationToken);
+            await app.StopAsync(cancellationToken);
+        }
+
         private static MQTTnet.MqttClientOptions CreateClientOptions(int port, string clientId)
         {
             return new MqttClientOptionsBuilder()
@@ -147,6 +204,59 @@ namespace MqttZero.Tests
                 .WithClientId(clientId)
                 .WithCleanStart()
                 .Build();
+        }
+
+        private static MQTTnet.MqttClientOptions CreateTlsClientOptions(int port, string clientId)
+        {
+            return new MqttClientOptionsBuilder()
+                .WithTcpServer("127.0.0.1", port)
+                .WithProtocolVersion(MQTTnet.Formatter.MqttProtocolVersion.V500)
+                .WithClientId(clientId)
+                .WithCleanStart()
+                .WithTlsOptions(options =>
+                {
+                    options
+                        .UseTls()
+                        .WithSslProtocols(SslProtocols.Tls12 | SslProtocols.Tls13)
+                        .WithAllowUntrustedCertificates()
+                        .WithIgnoreCertificateChainErrors()
+                        .WithCertificateValidationHandler(static _ => true);
+                })
+                .Build();
+        }
+
+        private static X509Certificate2 CreateServerCertificate()
+        {
+            using RSA rsa = RSA.Create(2048);
+            CertificateRequest request = new(
+                "CN=localhost",
+                rsa,
+                HashAlgorithmName.SHA256,
+                RSASignaturePadding.Pkcs1);
+            SubjectAlternativeNameBuilder alternativeNames = new();
+            alternativeNames.AddDnsName("localhost");
+            alternativeNames.AddIpAddress(IPAddress.Loopback);
+            request.CertificateExtensions.Add(alternativeNames.Build());
+            request.CertificateExtensions.Add(
+                new X509BasicConstraintsExtension(false, false, 0, false));
+            request.CertificateExtensions.Add(
+                new X509KeyUsageExtension(
+                    X509KeyUsageFlags.DigitalSignature | X509KeyUsageFlags.KeyEncipherment,
+                    false));
+            request.CertificateExtensions.Add(
+                new X509EnhancedKeyUsageExtension(
+                    new OidCollection
+                    {
+                        new("1.3.6.1.5.5.7.3.1")
+                    },
+                    false));
+            using X509Certificate2 temporary = request.CreateSelfSigned(
+                DateTimeOffset.UtcNow.AddMinutes(-1),
+                DateTimeOffset.UtcNow.AddDays(1));
+            return X509CertificateLoader.LoadPkcs12(
+                temporary.Export(X509ContentType.Pkcs12),
+                null,
+                X509KeyStorageFlags.UserKeySet | X509KeyStorageFlags.Exportable);
         }
 
         private static int GetFreePort()
