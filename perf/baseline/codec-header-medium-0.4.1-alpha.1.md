@@ -6,8 +6,8 @@ BenchmarkDotNet v0.15.8, Windows 11 (10.0.26300.9974)
   [Host]    : .NET 10.0.15 (10.0.15, 10.0.1526.53008), X64 RyuJIT x86-64-v3
   MediumRun : .NET 10.0.15 (10.0.15, 10.0.1526.53008), X64 RyuJIT x86-64-v3
 
-Job=MediumRun  IterationCount=15  LaunchCount=2  
-WarmupCount=10  
+Job=MediumRun  IterationCount=15  LaunchCount=2
+WarmupCount=10
 
 ```
 | Method           | PayloadSize | Segments | Mean     | Error    | StdDev   | Median   | Allocated |

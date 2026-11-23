@@ -6,8 +6,8 @@ BenchmarkDotNet v0.15.8, Windows 11 (10.0.26300.9974)
   [Host]   : .NET 10.0.15 (10.0.15, 10.0.1526.53008), X64 RyuJIT x86-64-v3
   ShortRun : .NET 10.0.15 (10.0.15, 10.0.1526.53008), X64 RyuJIT x86-64-v3
 
-Job=ShortRun  IterationCount=3  LaunchCount=1  
-WarmupCount=3  
+Job=ShortRun  IterationCount=3  LaunchCount=1
+WarmupCount=3
 
 ```
 | Method | PayloadSize | Mean         | Error        | StdDev     | Ratio | RatioSD | Allocated | Alloc Ratio |
