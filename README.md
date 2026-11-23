@@ -1,6 +1,6 @@
 # MQTTZero
 
-MQTTZero 是一个面向 ASP.NET Core Kestrel 的独立 MQTT 5 Broker。生产代码不依赖 MQTTnet，目标框架为 .NET 10。
+MQTTZero 是一个面向 ASP.NET Core Kestrel 的独立 MQTT 5 Broker。生产代码不依赖 MQTTnet，目标框架为 .NET 10。当前版本为 `0.3.0-alpha.1`。
 
 ## 当前能力
 
@@ -10,6 +10,7 @@ MQTTZero 是一个面向 ASP.NET Core Kestrel 的独立 MQTT 5 Broker。生产�
 - QoS 1 Inflight `DUP` 重发、KeepAlive 超时、Will/Will Delay 和 Message Expiry。
 - UTF-8 Topic 通配符、Topic Alias、共享订阅轮询、Retained 回放和内存 PayloadOwner。
 - DI 发布拦截器、Broker 生命周期、客户端快照和健康检查。
+- 池化字节池、引用计数 Payload Lease、无分配 PUBLISH 解码/路由/QoS 1 队列/编码和内存 Transport 热路径。
 - 可选 Vue 3 + Element Plus 管理面板，构建资源内嵌在 NuGet 程序集中。
 
 ## 快速开始
@@ -48,15 +49,30 @@ await app.RunAsync();
 
 ## 性能与分配
 
-`MqttZeroPayloadOwnerFactory` 从池中提供单段或多段 Payload。入站 PUBLISH 的 Topic、Properties 和 Payload 通过 `ReadOnlySequence<byte>` 切片解析，避免自动复制成中间数组。
+阶段二的硬门禁覆盖 Broker 稳态同步热路径：
 
-运行基准：
+- `MqttPublishPacketCodec` 直接解析 `ReadOnlySequence<byte>`，不创建完整报文或 Topic 数组。
+- Topic/Properties/Payload 由引用计数 `MqttZeroMessageLease` 共享；在线订阅者、离线队列和 Inflight 消息持有同一份内存。
+- 路由使用每 Broker 的池化 `MqttZeroRouteScope` 和不可变订阅快照，不为每条消息创建 `List`、`Dictionary` 或候选对象。
+- QoS 1 描述符、PubAck 和出站 PUBLISH 编码复用池化对象，并直接写入连接自己的 `IBufferWriter`。
+- `MqttZeroBufferPool` 以 `ArrayPool<byte>` 为底层来源执行字节预算；耗尽时暂停读取并等待释放，不静默回退到普通数组。
+
+零分配口径仅包含预热后的单线程同步 Broker 核心热路径。Kestrel/TLS/WebSocket、连接建立、订阅变更、Retained 更新、管理 API、日志、异常、Observer 和异步拦截器续接允许分配。WebSocket 为维持单帧语义允许在边界复制一次 Payload。
+
+运行分配哨兵：
 
 ```powershell
-dotnet run -c Release --project benchmarks/MqttZero.Benchmarks
+./perf/verify-allocation.ps1
 ```
 
-当前版本优先建立端到端协议正确性基线。20 万消息/秒和严格零分配回归门禁仍需在目标硬件上补齐，不应把开发机单次结果当作容量承诺。
+运行完整基准：
+
+```powershell
+dotnet run -c Release --project benchmarks/MqttZero.Benchmarks -- `
+  --filter '*' --job short --exporters csv json
+```
+
+已提交的短作业数据和解释位于 `perf/baseline`。当前实测中，fast PUBLISH 解码、Topic 路由、QoS 1 队列和内存端到端均达到 `0 B/op`。8 KiB 内存端到端约为 MQTTnet 同工作负载 codec+匹配基线的 `1.69x`。MQTTZero 解码显著快于 MQTTnet 且无分配，但编码和“全部订阅者均命中”的线性路由尚未达到计划中的全部相对吞吐门槛；这些缺口保留在基线文档中，不应被解释为已经达成。
 
 ## 构建与测试
 
@@ -85,4 +101,4 @@ npm run build
 
 ## 限制
 
-当前不包含 QoS 2、Enhanced Authentication、MQTT 3.1.1、跨进程持久化、集群、桥接和客户端 SDK。MQTT 5 会话、Will、KeepAlive、Topic Alias、共享订阅和 QoS 1 恢复已实现；完整 MQTT 5 属性语义、Dashboard Live Events 和严格性能门禁仍在后续范围内。
+当前不包含 QoS 2、Enhanced Authentication、MQTT 3.1.1、跨进程持久化、集群、桥接和客户端 SDK。Session、Will、QoS 1 队列在进程重启后丢失。Dashboard、管理 API、异步拦截器续接和网络框架边界不属于 `0 B/op` 承诺。完整 MQTT 5 属性语义与 Dashboard Live Events 仍在后续范围内。

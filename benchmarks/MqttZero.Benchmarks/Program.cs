@@ -1,4 +1,3 @@
 using BenchmarkDotNet.Running;
-using MqttZero.Benchmarks;
 
-BenchmarkRunner.Run<CodecBenchmarks>();
+BenchmarkSwitcher.FromAssembly(typeof(Program).Assembly).Run(args);

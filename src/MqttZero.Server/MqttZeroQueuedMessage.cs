@@ -59,8 +59,15 @@ internal sealed class MqttZeroQueuedMessage
             message = new MqttZeroQueuedMessage();
         }
 
-        lease.Retain();
-        message._lease = lease;
+        if (lease.IsBorrowed)
+        {
+            message._lease = lease.CreateOwnedCopy();
+        }
+        else
+        {
+            lease.Retain();
+            message._lease = lease;
+        }
         message.QualityOfServiceLevel = qualityOfServiceLevel;
         message.Retain = retain;
         message.SubscriptionIdentifier = subscriptionIdentifier;
@@ -94,11 +101,9 @@ internal sealed class MqttZeroQueuedMessage
     public MqttZeroPublishView CreateView(bool duplicate)
     {
         return new MqttZeroPublishView(
-            new ReadOnlySequence<byte>(Topic),
-            Properties.Length == 0
-                ? ReadOnlySequence<byte>.Empty
-                : new ReadOnlySequence<byte>(Properties),
-            new ReadOnlySequence<byte>(Payload),
+            _lease.TopicSequence,
+            _lease.PropertiesSequence,
+            _lease.PayloadSequence,
             QualityOfServiceLevel,
             PacketIdentifier,
             duplicate,
@@ -110,6 +115,7 @@ internal sealed class MqttZeroQueuedMessage
 
     public void Release()
     {
+        ObjectDisposedException.ThrowIf(_lease is null, this);
         _lease.Release();
         _lease = null!;
         SubscriptionIdentifier = null;

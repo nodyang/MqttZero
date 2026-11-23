@@ -81,16 +81,8 @@ internal static class MqttPublishPacketCodec
 
     public static void Encode(in MqttZeroPublishView view, IBufferWriter<byte> writer)
     {
-        int propertyLength = view.Properties.IsEmpty
-            ? GetScalarPropertyLength(view)
-            : (int)view.Properties.Length;
-        int bodyLength =
-            2 +
-            (int)view.Topic.Length +
-            (view.QualityOfServiceLevel == MqttQualityOfServiceLevel.AtMostOnce ? 0 : 2) +
-            GetVariableByteIntegerSize((uint)propertyLength) +
-            propertyLength +
-            (int)view.Payload.Length;
+        int bodyLength = GetBodyLength(view);
+        int propertyLength = GetPropertyLength(view);
 
         Span<byte> fixedHeader = writer.GetSpan(5);
         byte firstByte = 0x30;
@@ -128,6 +120,12 @@ internal static class MqttPublishPacketCodec
         }
 
         WriteSequence(writer, view.Payload);
+    }
+
+    public static int GetEncodedLength(in MqttZeroPublishView view)
+    {
+        int bodyLength = GetBodyLength(view);
+        return 1 + GetVariableByteIntegerSize((uint)bodyLength) + bodyLength;
     }
 
     private static bool TryReadProperties(
@@ -327,6 +325,25 @@ internal static class MqttPublishPacketCodec
         }
 
         return length;
+    }
+
+    private static int GetBodyLength(in MqttZeroPublishView view)
+    {
+        int propertyLength = GetPropertyLength(view);
+        return
+            2 +
+            (int)view.Topic.Length +
+            (view.QualityOfServiceLevel == MqttQualityOfServiceLevel.AtMostOnce ? 0 : 2) +
+            GetVariableByteIntegerSize((uint)propertyLength) +
+            propertyLength +
+            (int)view.Payload.Length;
+    }
+
+    private static int GetPropertyLength(in MqttZeroPublishView view)
+    {
+        return view.Properties.IsEmpty
+            ? GetScalarPropertyLength(view)
+            : (int)view.Properties.Length;
     }
 
     private static void WriteScalarProperties(IBufferWriter<byte> writer, in MqttZeroPublishView view)

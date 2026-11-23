@@ -21,9 +21,11 @@ public static class MqttZeroBuilderInterceptorExtensions
         where TInterceptor : class, IMqttZeroPublishInterceptor
     {
         ArgumentNullException.ThrowIfNull(builder);
-        _ = order;
-        builder.Services.TryAddEnumerable(
-            ServiceDescriptor.Singleton<IMqttZeroPublishInterceptor, TInterceptor>());
+        builder.Services.TryAddSingleton<TInterceptor>();
+        builder.Services.AddSingleton<IMqttZeroPublishInterceptor>(
+            provider => new MqttZeroOrderedPublishInterceptor(
+                provider.GetRequiredService<TInterceptor>(),
+                order));
         return builder;
     }
 }

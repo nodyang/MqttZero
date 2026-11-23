@@ -17,7 +17,7 @@ public sealed class MqttZeroBroker : IAsyncDisposable
         new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, MqttZeroSessionState> _sessions =
         new(StringComparer.Ordinal);
-    private MqttZeroSessionState[] _sessionRouteSnapshot = [];
+    private MqttZeroRouteEntry[] _subscriptionRouteSnapshot = [];
     private readonly MqttZeroRouteScopePool _routeScopes = new();
     private readonly ConcurrentDictionary<string, int> _sharedSubscriptionCursors =
         new(StringComparer.Ordinal);
@@ -26,6 +26,7 @@ public sealed class MqttZeroBroker : IAsyncDisposable
     private CancellationTokenSource? _maintenanceCancellation;
     private Task? _maintenanceTask;
     private int _connectionCount;
+    private int _disposed;
     private long _publishedWillCount;
     private long _retainedBytes;
     private int _stopping;
@@ -56,7 +57,12 @@ public sealed class MqttZeroBroker : IAsyncDisposable
         _timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
         ArgumentNullException.ThrowIfNull(publishInterceptors);
         _bufferPool = new MqttZeroBufferPool(options.MaxBufferedBytes);
-        _publishInterceptors = publishInterceptors.ToArray();
+        _publishInterceptors = publishInterceptors
+            .OrderBy(static interceptor =>
+                interceptor is MqttZeroOrderedPublishInterceptor ordered
+                    ? ordered.Order
+                    : 0)
+            .ToArray();
     }
 
     /// <summary>
@@ -331,7 +337,7 @@ public sealed class MqttZeroBroker : IAsyncDisposable
         }
 
         _sessions.Clear();
-        _sessionRouteSnapshot = [];
+        _subscriptionRouteSnapshot = [];
         Volatile.Write(ref _connectionCount, 0);
         Volatile.Write(ref _state, (int)MqttZeroBrokerState.Stopped);
     }
@@ -581,8 +587,6 @@ public sealed class MqttZeroBroker : IAsyncDisposable
                 sessionPresent = true;
             }
 
-            RebuildSessionRouteSnapshot();
-
             lock (session.SyncRoot)
             {
                 MqttZeroClientConnection? currentConnection = session.Connection;
@@ -606,6 +610,8 @@ public sealed class MqttZeroBroker : IAsyncDisposable
                     : null;
             }
         }
+
+        RebuildSubscriptionRouteSnapshot();
 
         if (oldConnection != null && !ReferenceEquals(oldConnection, newConnection))
         {
@@ -749,6 +755,8 @@ public sealed class MqttZeroBroker : IAsyncDisposable
                 : (byte)MqttReasonCode.Success;
         }
 
+        RebuildSubscriptionRouteSnapshot();
+
         await connection.SendAsync(
             new MqttSubAckPacket
             {
@@ -808,7 +816,7 @@ public sealed class MqttZeroBroker : IAsyncDisposable
         }
     }
 
-    private static async ValueTask ProcessUnsubscribeAsync(
+    private async ValueTask ProcessUnsubscribeAsync(
         MqttZeroSessionState session,
         MqttZeroClientConnection connection,
         MqttUnsubscribePacket packet,
@@ -834,6 +842,8 @@ public sealed class MqttZeroBroker : IAsyncDisposable
                 ? (byte)MqttReasonCode.Success
                 : (byte)MqttReasonCode.NoSubscriptionExisted;
         }
+
+        RebuildSubscriptionRouteSnapshot();
 
         await connection.SendAsync(
             new MqttUnsubAckPacket
@@ -879,7 +889,7 @@ public sealed class MqttZeroBroker : IAsyncDisposable
         packet.QualityOfServiceLevel = context.QualityOfServiceLevel;
         packet.Retain = context.Retain;
 
-        MqttZeroMessageLease lease = MqttZeroMessageLease.CopyFrom(
+        MqttZeroMessageLease lease = MqttZeroMessageLease.BorrowFrom(
             packet.TopicName,
             packet.Properties,
             packet.Payload,
@@ -896,10 +906,10 @@ public sealed class MqttZeroBroker : IAsyncDisposable
                 StoreRetainedMessage(lease);
             }
 
-            MqttZeroSessionState[] routeSessions =
-                Volatile.Read(ref _sessionRouteSnapshot);
+            MqttZeroRouteEntry[] routeEntries =
+                Volatile.Read(ref _subscriptionRouteSnapshot);
             using MqttZeroRouteScope deliveries = MqttZeroRouteSelector.Select(
-                routeSessions,
+                routeEntries,
                 lease.Topic.Span,
                 sender,
                 _sharedSubscriptionCursors,
@@ -971,7 +981,7 @@ public sealed class MqttZeroBroker : IAsyncDisposable
             throw new InvalidOperationException("The PUBLISH topic is empty.");
         }
 
-        MqttZeroMessageLease lease = MqttZeroMessageLease.CopyFrom(
+        MqttZeroMessageLease lease = MqttZeroMessageLease.BorrowFrom(
             topic,
             view.Properties,
             view.Payload,
@@ -1049,10 +1059,10 @@ public sealed class MqttZeroBroker : IAsyncDisposable
                 StoreRetainedMessage(effectiveLease);
             }
 
-            MqttZeroSessionState[] routeSessions =
-                Volatile.Read(ref _sessionRouteSnapshot);
+            MqttZeroRouteEntry[] routeEntries =
+                Volatile.Read(ref _subscriptionRouteSnapshot);
             using MqttZeroRouteScope deliveries = MqttZeroRouteSelector.Select(
-                routeSessions,
+                routeEntries,
                 effectiveLease.Topic.Span,
                 sender,
                 _sharedSubscriptionCursors,
@@ -1123,37 +1133,57 @@ public sealed class MqttZeroBroker : IAsyncDisposable
     private void StoreRetainedMessage(MqttZeroMessageLease lease)
     {
         string topicKey = Encoding.UTF8.GetString(lease.Topic.Span);
-        if (lease.Payload.IsEmpty)
+        if (lease.PayloadSequence.IsEmpty)
         {
             RemoveRetainedMessage(topicKey);
             return;
         }
 
-        lock (_sessionGate)
+        MqttZeroMessageLease retainedLease = lease;
+        bool ownsTemporaryLease = false;
+        if (lease.IsBorrowed)
         {
-            _retainedMessages.TryGetValue(topicKey, out MqttZeroRetainedMessage? existing);
-            if (existing == null && _retainedMessages.Count >= _options.MaxRetainedMessages)
-            {
-                throw new InvalidOperationException("The retained message count limit was reached.");
-            }
+            retainedLease = lease.CreateOwnedCopy();
+            ownsTemporaryLease = true;
+        }
 
-            long previousBytes = existing?.ByteLength ?? 0;
-            long replacementBytes = lease.Topic.Length + lease.Payload.Length;
-            long retainedBytes = _retainedBytes - previousBytes + replacementBytes;
-            if (retainedBytes > _options.MaxRetainedBytes)
+        try
+        {
+            lock (_sessionGate)
             {
-                throw new InvalidOperationException("The retained message byte limit was reached.");
-            }
+                _retainedMessages.TryGetValue(topicKey, out MqttZeroRetainedMessage? existing);
+                if (existing == null && _retainedMessages.Count >= _options.MaxRetainedMessages)
+                {
+                    throw new InvalidOperationException("The retained message count limit was reached.");
+                }
 
-            MqttZeroRetainedMessage replacement = new(
-                lease,
-                lease.QualityOfServiceLevel,
-                lease.MessageExpiryInterval.HasValue
-                    ? _timeProvider.GetUtcNow().AddSeconds(lease.MessageExpiryInterval.Value)
-                    : null);
-            _retainedMessages[topicKey] = replacement;
-            _retainedBytes = retainedBytes;
-            existing?.Release();
+                long previousBytes = existing?.ByteLength ?? 0;
+                long replacementBytes =
+                    retainedLease.TopicSequence.Length + retainedLease.PayloadSequence.Length;
+                long retainedBytes = _retainedBytes - previousBytes + replacementBytes;
+                if (retainedBytes > _options.MaxRetainedBytes)
+                {
+                    throw new InvalidOperationException("The retained message byte limit was reached.");
+                }
+
+                MqttZeroRetainedMessage replacement = new(
+                    retainedLease,
+                    retainedLease.QualityOfServiceLevel,
+                    retainedLease.MessageExpiryInterval.HasValue
+                        ? _timeProvider.GetUtcNow().AddSeconds(
+                            retainedLease.MessageExpiryInterval.Value)
+                        : null);
+                _retainedMessages[topicKey] = replacement;
+                _retainedBytes = retainedBytes;
+                existing?.Release();
+            }
+        }
+        finally
+        {
+            if (ownsTemporaryLease)
+            {
+                retainedLease.Release();
+            }
         }
     }
 
@@ -1221,14 +1251,9 @@ public sealed class MqttZeroBroker : IAsyncDisposable
             return;
         }
 
-        MqttZeroQueuedMessage message = MqttZeroQueuedMessage.Rent(
-            lease,
-            qos,
-            retain,
-            subscriptionIdentifier,
-            expiresAt);
-        MqttZeroClientConnection? connection;
-        bool sendImmediately;
+        MqttZeroQueuedMessage? message = null;
+        MqttZeroClientConnection? connection = null;
+        bool sendImmediately = false;
         bool messageHeld = false;
 
         try
@@ -1243,6 +1268,12 @@ public sealed class MqttZeroBroker : IAsyncDisposable
                         session.InflightMessages.Count < inflightLimit);
                 if (sendImmediately && qos == MqttQualityOfServiceLevel.AtLeastOnce)
                 {
+                    message = MqttZeroQueuedMessage.Rent(
+                        lease,
+                        qos,
+                        retain,
+                        subscriptionIdentifier,
+                        expiresAt);
                     message.PacketIdentifier = session.GetNextPacketIdentifier();
                     session.InflightMessages[message.PacketIdentifier] = message;
                     messageHeld = true;
@@ -1257,6 +1288,12 @@ public sealed class MqttZeroBroker : IAsyncDisposable
                         return;
                     }
 
+                    message = MqttZeroQueuedMessage.Rent(
+                        lease,
+                        qos,
+                        retain,
+                        subscriptionIdentifier,
+                        expiresAt);
                     EnqueueMessage(session, message);
                     messageHeld = true;
                 }
@@ -1264,13 +1301,27 @@ public sealed class MqttZeroBroker : IAsyncDisposable
 
             if (sendImmediately)
             {
-                await connection!.SendPublishAsync(message, false, cancellationToken)
-                    .ConfigureAwait(false);
+                if (qos == MqttQualityOfServiceLevel.AtMostOnce)
+                {
+                    await connection!.SendPublishAsync(
+                        lease,
+                        qos,
+                        retain,
+                        subscriptionIdentifier,
+                        0,
+                        false,
+                        cancellationToken).ConfigureAwait(false);
+                }
+                else
+                {
+                    await connection!.SendPublishAsync(message!, false, cancellationToken)
+                        .ConfigureAwait(false);
+                }
             }
         }
         finally
         {
-            if (!messageHeld)
+            if (message != null && !messageHeld)
             {
                 message.Release();
             }
@@ -1482,7 +1533,7 @@ public sealed class MqttZeroBroker : IAsyncDisposable
                     ReferenceEquals(current, session))
                 {
                     _sessions.TryRemove(session.ClientId, out _);
-                    RebuildSessionRouteSnapshot();
+                    RebuildSubscriptionRouteSnapshot();
                 }
             }
         }
@@ -1571,23 +1622,31 @@ public sealed class MqttZeroBroker : IAsyncDisposable
                         ReferenceEquals(current, session))
                     {
                         _sessions.TryRemove(session.ClientId, out _);
-                        RebuildSessionRouteSnapshot();
+                        RebuildSubscriptionRouteSnapshot();
                     }
                 }
             }
         }
     }
 
-    private void RebuildSessionRouteSnapshot()
+    private void RebuildSubscriptionRouteSnapshot()
     {
-        MqttZeroSessionState[] snapshot = new MqttZeroSessionState[_sessions.Count];
-        int index = 0;
-        foreach (MqttZeroSessionState session in _sessions.Values)
+        List<MqttZeroRouteEntry> entries = [];
+        lock (_sessionGate)
         {
-            snapshot[index++] = session;
+            foreach (MqttZeroSessionState session in _sessions.Values)
+            {
+                lock (session.SyncRoot)
+                {
+                    foreach (MqttZeroSubscription subscription in session.Subscriptions)
+                    {
+                        entries.Add(new MqttZeroRouteEntry(session, subscription));
+                    }
+                }
+            }
         }
 
-        Volatile.Write(ref _sessionRouteSnapshot, snapshot);
+        Volatile.Write(ref _subscriptionRouteSnapshot, entries.ToArray());
     }
 
     private static bool IsSessionExpired(MqttZeroSessionState session, DateTimeOffset now)
@@ -1615,9 +1674,16 @@ public sealed class MqttZeroBroker : IAsyncDisposable
     /// Stops the broker and releases maintenance resources.
     /// </summary>
     /// <returns>A task representing disposal.</returns>
-    public ValueTask DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
-        return StopAsync();
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
+        await StopAsync().ConfigureAwait(false);
+        _routeScopes.Dispose();
+        _bufferPool.Dispose();
     }
 
     private sealed class ConnectionAttachment

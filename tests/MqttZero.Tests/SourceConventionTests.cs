@@ -120,7 +120,8 @@ namespace MqttZero.Tests
         {
             string normalized = path.Replace('\\', '/');
             return normalized.Contains("/obj/", StringComparison.Ordinal) ||
-                normalized.Contains("/bin/", StringComparison.Ordinal);
+                normalized.Contains("/bin/", StringComparison.Ordinal) ||
+                normalized.Contains("/artifacts/", StringComparison.Ordinal);
         }
 
         private static string FindRepositoryRoot()

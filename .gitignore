@@ -13,3 +13,4 @@ dashboard/**/*.tsbuildinfo
 dashboard/**/vite.config.js
 dashboard/**/vite.config.d.ts
 artifacts/
+BenchmarkDotNet.Artifacts/

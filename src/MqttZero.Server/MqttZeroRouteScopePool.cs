@@ -2,12 +2,14 @@ using System.Collections.Concurrent;
 
 namespace MqttZero;
 
-internal sealed class MqttZeroRouteScopePool
+internal sealed class MqttZeroRouteScopePool : IDisposable
 {
     private readonly ConcurrentQueue<MqttZeroRouteScope> _scopes = new();
+    private int _disposed;
 
     public MqttZeroRouteScope Rent()
     {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         if (_scopes.TryDequeue(out MqttZeroRouteScope? scope))
         {
             scope.SetOwner(this);
@@ -21,6 +23,25 @@ internal sealed class MqttZeroRouteScopePool
 
     public void Return(MqttZeroRouteScope scope)
     {
+        if (Volatile.Read(ref _disposed) != 0)
+        {
+            scope.ReleaseBuffers();
+            return;
+        }
+
         _scopes.Enqueue(scope);
+    }
+
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
+        while (_scopes.TryDequeue(out MqttZeroRouteScope? scope))
+        {
+            scope.ReleaseBuffers();
+        }
     }
 }

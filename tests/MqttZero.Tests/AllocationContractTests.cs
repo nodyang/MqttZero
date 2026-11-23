@@ -85,6 +85,163 @@ namespace MqttZero.Tests
         }
 
         [Fact]
+        public void MessageLeaseHandlesConcurrentReferencesAndFinalRelease()
+        {
+            using MqttZeroBufferPool pool = new(1024 * 1024);
+            MqttZeroMessageLease lease = MqttZeroMessageLease.CopyFrom(
+                new ReadOnlySequence<byte>("topic"u8.ToArray()),
+                ReadOnlySequence<byte>.Empty,
+                new ReadOnlySequence<byte>("payload"u8.ToArray()),
+                MqttQualityOfServiceLevel.AtMostOnce,
+                false,
+                null,
+                null,
+                pool);
+
+            Parallel.For(0, 1000, _ => lease.Retain());
+            Parallel.For(0, 1000, _ => lease.Release());
+            Assert.True(pool.RentedBytes > 0);
+
+            lease.Release();
+            Assert.Equal(0, pool.RentedBytes);
+        }
+
+        [Fact]
+        public void MessageLeaseRejectsDuplicateRelease()
+        {
+            MqttZeroMessageLease lease = MqttZeroMessageLease.CopyFrom(
+                new ReadOnlySequence<byte>("topic"u8.ToArray()),
+                ReadOnlySequence<byte>.Empty,
+                new ReadOnlySequence<byte>("payload"u8.ToArray()),
+                MqttQualityOfServiceLevel.AtMostOnce,
+                false,
+                null,
+                null);
+
+            lease.Release();
+
+            Assert.Throws<ObjectDisposedException>(() => lease.Release());
+        }
+
+        [Fact]
+        public void BorrowedMessageLeaseDefersCopiesUntilOwnedCopyIsRequested()
+        {
+            using MqttZeroBufferPool pool = new(1024 * 1024);
+            MqttZeroMessageLease borrowed = MqttZeroMessageLease.BorrowFrom(
+                new ReadOnlySequence<byte>("topic"u8.ToArray()),
+                ReadOnlySequence<byte>.Empty,
+                new ReadOnlySequence<byte>("payload"u8.ToArray()),
+                MqttQualityOfServiceLevel.AtMostOnce,
+                false,
+                null,
+                null,
+                pool);
+
+            Assert.True(borrowed.IsBorrowed);
+            Assert.Equal(0, pool.RentedBytes);
+            MqttZeroMessageLease owned = borrowed.CreateOwnedCopy();
+            Assert.False(owned.IsBorrowed);
+            Assert.True(pool.RentedBytes > 0);
+
+            borrowed.Release();
+            owned.Release();
+            Assert.Equal(0, pool.RentedBytes);
+        }
+
+        [Fact]
+        public async Task OfflineQueuePromotesBorrowedLeaseAndReleasesOwnedCopy()
+        {
+            MqttZeroBufferPool pool = new(1024 * 1024);
+            MqttZeroBroker broker = new(new MqttZeroOptions(), TimeProvider.System);
+            await broker.StartAsync(TestContext.Current.CancellationToken);
+            FieldInfo bufferPoolField = typeof(MqttZeroBroker).GetField(
+                "_bufferPool",
+                BindingFlags.Instance | BindingFlags.NonPublic)!;
+            bufferPoolField.SetValue(broker, pool);
+
+            MqttZeroSessionState receiver = new("offline");
+            receiver.Subscriptions.Add(new MqttZeroSubscription(
+                "hot/#"u8.ToArray(),
+                MqttQualityOfServiceLevel.AtLeastOnce,
+                false,
+                false,
+                null));
+            FieldInfo sessionsField = typeof(MqttZeroBroker).GetField(
+                "_sessions",
+                BindingFlags.Instance | BindingFlags.NonPublic)!;
+            ConcurrentDictionary<string, MqttZeroSessionState> sessions =
+                (ConcurrentDictionary<string, MqttZeroSessionState>)sessionsField.GetValue(broker)!;
+            Assert.True(sessions.TryAdd(receiver.ClientId, receiver));
+            MethodInfo rebuildMethod = typeof(MqttZeroBroker).GetMethod(
+                "RebuildSubscriptionRouteSnapshot",
+                BindingFlags.Instance | BindingFlags.NonPublic)!;
+            rebuildMethod.Invoke(broker, null);
+
+            AllocationPipeWriter senderWriter = new(16 * 1024);
+            MqttZeroClientConnection senderConnection = new(
+                senderWriter,
+                "sender",
+                false,
+                false,
+                0,
+                32,
+                1024 * 1024,
+                TimeProvider.System,
+                pool);
+            MqttZeroSessionState sender = new("sender");
+            MqttZeroMessageLease borrowed = MqttZeroMessageLease.BorrowFrom(
+                new ReadOnlySequence<byte>("hot/topic"u8.ToArray()),
+                ReadOnlySequence<byte>.Empty,
+                new ReadOnlySequence<byte>(new byte[1024]),
+                MqttQualityOfServiceLevel.AtLeastOnce,
+                false,
+                null,
+                null,
+                pool);
+            try
+            {
+                await broker.RoutePublishLeaseAsync(
+                    sender,
+                    senderConnection,
+                    borrowed,
+                    TestContext.Current.CancellationToken);
+            }
+            finally
+            {
+                borrowed.Release();
+            }
+
+            Assert.Single(receiver.PendingMessages);
+            Assert.True(pool.RentedBytes > 0);
+            await broker.DisposeAsync();
+            Assert.Equal(0, pool.RentedBytes);
+        }
+
+        [Fact]
+        public void QueuedMessageRejectsDuplicateRelease()
+        {
+            MqttZeroMessageLease lease = MqttZeroMessageLease.CopyFrom(
+                new ReadOnlySequence<byte>("topic"u8.ToArray()),
+                ReadOnlySequence<byte>.Empty,
+                new ReadOnlySequence<byte>("payload"u8.ToArray()),
+                MqttQualityOfServiceLevel.AtMostOnce,
+                false,
+                null,
+                null);
+            MqttZeroQueuedMessage message = MqttZeroQueuedMessage.Rent(
+                lease,
+                MqttQualityOfServiceLevel.AtMostOnce,
+                false,
+                null,
+                null);
+
+            message.Release();
+            lease.Release();
+
+            Assert.Throws<ObjectDisposedException>(() => message.Release());
+        }
+
+        [Fact]
         public void PublishFastCodecDoesNotAllocateAfterWarmup()
         {
             MqttPublishPacket packet = new()
@@ -126,6 +283,59 @@ namespace MqttZero.Tests
 
             long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
             Assert.Equal(8_192_000, totalPayload);
+            Assert.Equal(0, allocated);
+        }
+
+        [Theory]
+        [InlineData(8 * 1024, 1)]
+        [InlineData(8 * 1024, 10)]
+        [InlineData(64 * 1024, 1)]
+        [InlineData(64 * 1024, 10)]
+        public void FastPublishCodecHandlesSegmentedPayloadsWithoutAllocation(
+            int payloadSize,
+            int segmentCount)
+        {
+            MqttPublishPacket packet = new()
+            {
+                TopicName = new ReadOnlySequence<byte>("hot/topic"u8.ToArray()),
+                Payload = new ReadOnlySequence<byte>(new byte[payloadSize]),
+                MessageExpiryInterval = 60,
+                SubscriptionIdentifier = 7
+            };
+            ArrayBufferWriter<byte> setupWriter = new();
+            MqttPacketCodec.Encode(packet, setupWriter);
+            ReadOnlySequence<byte> source = CreateSegmentedSequence(
+                setupWriter.WrittenSpan.ToArray(),
+                segmentCount);
+            PreallocatedBufferWriter writer = new(payloadSize + 1024);
+
+            for (int index = 0; index < 10; index++)
+            {
+                _ = MqttPublishPacketCodec.TryDecode(source, out MqttZeroPublishView warmup, out _);
+                writer.Reset();
+                MqttPublishPacketCodec.Encode(warmup, writer);
+            }
+
+            int totalPayload = 0;
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            for (int index = 0; index < 100; index++)
+            {
+                bool decoded = MqttPublishPacketCodec.TryDecode(
+                    source,
+                    out MqttZeroPublishView view,
+                    out _);
+                if (!decoded)
+                {
+                    throw new InvalidOperationException("The segmented PUBLISH decoder failed.");
+                }
+
+                totalPayload += (int)view.Payload.Length;
+                writer.Reset();
+                MqttPublishPacketCodec.Encode(view, writer);
+            }
+
+            long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+            Assert.Equal(payloadSize * 100, totalPayload);
             Assert.Equal(0, allocated);
         }
 
@@ -246,7 +456,7 @@ namespace MqttZero.Tests
                 (ConcurrentDictionary<string, MqttZeroSessionState>)sessionsField.GetValue(broker)!;
             Assert.True(sessions.TryAdd(receiver.ClientId, receiver));
             MethodInfo rebuildMethod = typeof(MqttZeroBroker).GetMethod(
-                "RebuildSessionRouteSnapshot",
+                "RebuildSubscriptionRouteSnapshot",
                 BindingFlags.Instance | BindingFlags.NonPublic)!;
             rebuildMethod.Invoke(broker, null);
 
@@ -394,6 +604,37 @@ namespace MqttZero.Tests
             lease.Release();
         }
 
+        private static ReadOnlySequence<byte> CreateSegmentedSequence(
+            byte[] bytes,
+            int segmentCount)
+        {
+            if (segmentCount == 1)
+            {
+                return new ReadOnlySequence<byte>(bytes);
+            }
+
+            int segmentLength = (bytes.Length + segmentCount - 1) / segmentCount;
+            SequenceSegment? first = null;
+            SequenceSegment? last = null;
+            for (int offset = 0; offset < bytes.Length; offset += segmentLength)
+            {
+                int length = Math.Min(segmentLength, bytes.Length - offset);
+                SequenceSegment segment = new(bytes.AsMemory(offset, length));
+                if (first == null)
+                {
+                    first = segment;
+                }
+                else
+                {
+                    last!.SetNext(segment);
+                }
+
+                last = segment;
+            }
+
+            return new ReadOnlySequence<byte>(first!, 0, last!, last!.Memory.Length);
+        }
+
         private static async Task AssertBrokerPublishDoesNotAllocateAfterWarmup(
             IMqttZeroPublishInterceptor[] interceptors)
         {
@@ -423,7 +664,7 @@ namespace MqttZero.Tests
             receiver.Connection = receiverConnection;
             Assert.True(sessions.TryAdd(receiver.ClientId, receiver));
             MethodInfo rebuildMethod = typeof(MqttZeroBroker).GetMethod(
-                "RebuildSessionRouteSnapshot",
+                "RebuildSubscriptionRouteSnapshot",
                 BindingFlags.Instance | BindingFlags.NonPublic)!;
             rebuildMethod.Invoke(broker, null);
 
@@ -593,6 +834,20 @@ namespace MqttZero.Tests
             public void Reset()
             {
                 _written = 0;
+            }
+        }
+
+        private sealed class SequenceSegment : ReadOnlySequenceSegment<byte>
+        {
+            public SequenceSegment(ReadOnlyMemory<byte> memory)
+            {
+                Memory = memory;
+            }
+
+            public void SetNext(SequenceSegment next)
+            {
+                next.RunningIndex = RunningIndex + Memory.Length;
+                Next = next;
             }
         }
     }

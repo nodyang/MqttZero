@@ -139,6 +139,23 @@ internal sealed class MqttZeroRouteScope : IDisposable
         owner.Return(this);
     }
 
+    public void ReleaseBuffers()
+    {
+        if (_deliveries.Length > 0)
+        {
+            ArrayPool<MqttZeroDeliveryCandidate>.Shared.Return(_deliveries, true);
+            _deliveries = [];
+        }
+
+        ReturnSharedArrays();
+        _sharedSessions = [];
+        _sharedSubscriptions = [];
+        _sharedGroups = [];
+        _deliveryCount = 0;
+        _sharedCount = 0;
+        _owner = null;
+    }
+
     private void EnsureDeliveryCapacity(int minimumLength)
     {
         if (_deliveries.Length >= minimumLength)
