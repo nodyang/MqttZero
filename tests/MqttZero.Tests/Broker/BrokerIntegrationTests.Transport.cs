@@ -1,0 +1,193 @@
+using MqttZero.Broker;
+using MqttZero.Interceptors;
+using MqttZero.Memory;
+using MqttZero.Protocol;
+using MqttZero.Routing;
+using MqttZero.Sessions;
+using MqttQualityOfServiceLevel = MqttZero.Protocol.MqttQualityOfServiceLevel;
+using System.Buffers;
+using System.Globalization;
+using System.Net;
+using System.Net.Sockets;
+using System.Security.Authentication;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Server.Kestrel.Core;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using MQTTnet;
+using MQTTnet.Protocol;
+using MqttZero.AspNetCore;
+
+namespace MqttZero.Tests.Broker
+{
+    public sealed partial class BrokerIntegrationTests
+    {
+        [Fact(Timeout = 15_000)]
+        public async Task RoutesPublishedMessageToSubscriber()
+        {
+            int port = GetFreePort();
+            WebApplicationBuilder builder = WebApplication.CreateBuilder();
+            builder.Logging.ClearProviders();
+            builder.WebHost.ConfigureKestrel(kestrel =>
+            {
+                kestrel.Listen(IPAddress.Loopback, port, listen => listen.UseMqttZero());
+            });
+            builder.Services.AddMqttZero();
+
+            await using WebApplication app = builder.Build();
+            CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+            await app.StartAsync(cancellationToken);
+            MqttZeroBroker broker = app.Services.GetRequiredService<MqttZeroBroker>();
+            Assert.Equal(MqttZeroBrokerState.Running, broker.State);
+
+            MqttClientFactory factory = new();
+            using IMqttClient subscriber = factory.CreateMqttClient();
+            using IMqttClient publisher = factory.CreateMqttClient();
+            TaskCompletionSource<string> received = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            subscriber.ApplicationMessageReceivedAsync += eventArgs =>
+            {
+                received.TrySetResult(eventArgs.ApplicationMessage.ConvertPayloadToString());
+                return Task.CompletedTask;
+            };
+
+            MQTTnet.MqttClientOptions subscriberOptions = CreateClientOptions(port, "subscriber");
+            MQTTnet.MqttClientOptions publisherOptions = CreateClientOptions(port, "publisher");
+
+            await subscriber.ConnectAsync(subscriberOptions, cancellationToken);
+            await publisher.ConnectAsync(publisherOptions, cancellationToken);
+            Assert.True(broker.ConnectedClientCount >= 2);
+            await subscriber.SubscribeAsync(
+                new MqttClientSubscribeOptionsBuilder()
+                    .WithTopicFilter(
+                        "devices/+/temperature",
+                        MQTTnet.Protocol.MqttQualityOfServiceLevel.AtLeastOnce)
+                    .Build(),
+                cancellationToken);
+
+            await publisher.PublishStringAsync(
+                "devices/a/temperature",
+                "21.5",
+                MQTTnet.Protocol.MqttQualityOfServiceLevel.AtLeastOnce,
+                cancellationToken: cancellationToken);
+
+            string payload = await received.Task.WaitAsync(
+                TimeSpan.FromSeconds(5),
+                cancellationToken);
+            Assert.Equal("21.5", payload);
+
+            await publisher.DisconnectAsync(cancellationToken: cancellationToken);
+            await subscriber.DisconnectAsync(cancellationToken: cancellationToken);
+            await app.StopAsync(cancellationToken);
+        }
+        [Fact(Timeout = 15_000)]
+        public async Task RoutesWebSocketMessagesUsingMqttSubProtocol()
+        {
+            int port = GetFreePort();
+            WebApplicationBuilder builder = WebApplication.CreateBuilder();
+            builder.Logging.ClearProviders();
+            builder.WebHost.UseUrls($"http://127.0.0.1:{port}");
+            builder.Services.AddMqttZero();
+
+            await using WebApplication app = builder.Build();
+            app.UseWebSockets();
+            app.MapMqttZero("/mqtt");
+
+            CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+            await app.StartAsync(cancellationToken);
+
+            MqttClientFactory factory = new();
+            using IMqttClient subscriber = factory.CreateMqttClient();
+            using IMqttClient publisher = factory.CreateMqttClient();
+            TaskCompletionSource<string> received = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            subscriber.ApplicationMessageReceivedAsync += eventArgs =>
+            {
+                received.TrySetResult(eventArgs.ApplicationMessage.ConvertPayloadToString());
+                return Task.CompletedTask;
+            };
+
+            MQTTnet.MqttClientOptions subscriberOptions = CreateWebSocketClientOptions(port, "ws-subscriber");
+            MQTTnet.MqttClientOptions publisherOptions = CreateWebSocketClientOptions(port, "ws-publisher");
+
+            await subscriber.ConnectAsync(subscriberOptions, cancellationToken);
+            await publisher.ConnectAsync(publisherOptions, cancellationToken);
+            await subscriber.SubscribeAsync(
+                new MqttClientSubscribeOptionsBuilder()
+                    .WithTopicFilter(
+                        "sensors/#",
+                        MQTTnet.Protocol.MqttQualityOfServiceLevel.AtLeastOnce)
+                    .Build(),
+                cancellationToken);
+
+            await publisher.PublishStringAsync(
+                "sensors/a",
+                "ok",
+                MQTTnet.Protocol.MqttQualityOfServiceLevel.AtLeastOnce,
+                cancellationToken: cancellationToken);
+
+            Assert.Equal("ok", await received.Task.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken));
+
+            await publisher.DisconnectAsync(cancellationToken: cancellationToken);
+            await subscriber.DisconnectAsync(cancellationToken: cancellationToken);
+            await app.StopAsync(cancellationToken);
+        }
+        [Fact(Timeout = 15_000)]
+        public async Task RoutesMessagesOverKestrelTls()
+        {
+            int port = GetFreePort();
+            using X509Certificate2 certificate = CreateServerCertificate();
+            WebApplicationBuilder builder = WebApplication.CreateBuilder();
+            builder.Logging.ClearProviders();
+            builder.WebHost.ConfigureKestrel(kestrel =>
+            {
+                kestrel.Listen(
+                    IPAddress.Loopback,
+                    port,
+                    listen => listen.UseHttps(certificate).UseMqttZero());
+            });
+            builder.Services.AddMqttZero();
+
+            await using WebApplication app = builder.Build();
+            CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+            await app.StartAsync(cancellationToken);
+
+            MqttClientFactory factory = new();
+            using IMqttClient subscriber = factory.CreateMqttClient();
+            using IMqttClient publisher = factory.CreateMqttClient();
+            TaskCompletionSource<string> received = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            subscriber.ApplicationMessageReceivedAsync += eventArgs =>
+            {
+                received.TrySetResult(eventArgs.ApplicationMessage.ConvertPayloadToString());
+                return Task.CompletedTask;
+            };
+
+            await subscriber.ConnectAsync(CreateTlsClientOptions(port, "tls-subscriber"), cancellationToken);
+            await publisher.ConnectAsync(CreateTlsClientOptions(port, "tls-publisher"), cancellationToken);
+            await subscriber.SubscribeAsync(
+                new MqttClientSubscribeOptionsBuilder()
+                    .WithTopicFilter(
+                        "secure/#",
+                        MQTTnet.Protocol.MqttQualityOfServiceLevel.AtLeastOnce)
+                    .Build(),
+                cancellationToken);
+
+            await publisher.PublishStringAsync(
+                "secure/data",
+                "encrypted",
+                MQTTnet.Protocol.MqttQualityOfServiceLevel.AtLeastOnce,
+                cancellationToken: cancellationToken);
+
+            Assert.Equal(
+                "encrypted",
+                await received.Task.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken));
+
+            await publisher.DisconnectAsync(cancellationToken: cancellationToken);
+            await subscriber.DisconnectAsync(cancellationToken: cancellationToken);
+            await app.StopAsync(cancellationToken);
+        }
+    }
+}

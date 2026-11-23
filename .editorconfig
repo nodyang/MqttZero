@@ -38,6 +38,8 @@ dotnet_diagnostic.IDE0072.severity = none
 dotnet_diagnostic.IDE0160.severity = none
 dotnet_diagnostic.IDE0290.severity = none
 dotnet_diagnostic.IDE0301.severity = none
+dotnet_diagnostic.IDE0130.severity = error
+dotnet_style_namespace_match_folder = true:error
 indent_style = space
 indent_size = 4
 

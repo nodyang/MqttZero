@@ -1,7 +1,13 @@
+using MqttZero.Broker;
+using MqttZero.Interceptors;
+using MqttZero.Memory;
+using MqttZero.Protocol;
+using MqttZero.Routing;
+using MqttZero.Sessions;
 using Microsoft.Extensions.DependencyInjection;
 using MqttZero.AspNetCore;
 
-namespace MqttZero.Tests
+namespace MqttZero.Tests.Interceptors
 {
     public sealed class PublishInterceptorTests
     {

@@ -1,7 +1,14 @@
+using MqttQualityOfServiceLevel = MqttZero.Protocol.MqttQualityOfServiceLevel;
+using MqttZero.Broker;
+using MqttZero.Interceptors;
+using MqttZero.Memory;
+using MqttZero.Protocol;
+using MqttZero.Routing;
+using MqttZero.Sessions;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using MqttZero.AspNetCore;
 
-namespace MqttZero.Tests
+namespace MqttZero.Tests.Broker
 {
     public sealed class BrokerLifecycleTests
     {

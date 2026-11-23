@@ -1,6 +1,12 @@
+using MqttZero.Broker;
+using MqttZero.Interceptors;
+using MqttZero.Memory;
+using MqttZero.Protocol;
+using MqttZero.Routing;
+using MqttZero.Sessions;
 using System.Text;
 
-namespace MqttZero.Tests
+namespace MqttZero.Tests.Routing
 {
     public sealed class TopicMatcherTests
     {

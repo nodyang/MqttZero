@@ -11,6 +11,8 @@
 - 只读数组和列表参数优先使用 Span/Memory。
 - 禁止无意义的 `Span<T>.ToArray()`。
 - Logger、正则和 JSON 使用源生成。
+- 大型领域代码按 `Protocol`、`Broker`、`Sessions`、`Routing`、`Memory`、`Interceptors` 分目录；少量入口类型可保留在项目根目录。
+- 文件 namespace 必须与项目根 namespace 加相对目录一致，架构测试和 IDE0130 会校验。
 
 ## 开发流程
 

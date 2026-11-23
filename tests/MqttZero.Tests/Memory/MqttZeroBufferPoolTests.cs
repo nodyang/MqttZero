@@ -1,4 +1,10 @@
-namespace MqttZero.Tests
+using MqttZero.Broker;
+using MqttZero.Interceptors;
+using MqttZero.Memory;
+using MqttZero.Protocol;
+using MqttZero.Routing;
+using MqttZero.Sessions;
+namespace MqttZero.Tests.Memory
 {
     public sealed class MqttZeroBufferPoolTests
     {
