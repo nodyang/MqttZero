@@ -31,8 +31,9 @@ public static partial class MqttPacketCodec
             }
 
             MqttQualityOfServiceLevel qos = (MqttQualityOfServiceLevel)(options & 0x03);
-            byte retainHandling = (byte)((options >> 4) & 0x03);
-            if (qos == MqttQualityOfServiceLevel.ExactlyOnce || retainHandling == 3)
+            byte encodedRetainHandling = (byte)((options >> 4) & 0x03);
+            if (qos == MqttQualityOfServiceLevel.ExactlyOnce ||
+                encodedRetainHandling == 3)
             {
                 return false;
             }
@@ -43,7 +44,7 @@ public static partial class MqttPacketCodec
                 QualityOfServiceLevel = qos,
                 NoLocal = (options & 0x04) != 0,
                 RetainAsPublished = (options & 0x08) != 0,
-                RetainHandling = retainHandling
+                RetainHandling = (MqttRetainHandling)encodedRetainHandling
             });
         }
 
@@ -179,7 +180,7 @@ public static partial class MqttPacketCodec
                 options |= 0x08;
             }
 
-            options |= (byte)(subscription.RetainHandling << 4);
+            options |= (byte)((byte)subscription.RetainHandling << 4);
             WriteByte(writer, options);
         }
     }

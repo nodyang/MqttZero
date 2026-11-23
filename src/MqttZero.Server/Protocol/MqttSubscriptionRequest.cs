@@ -28,7 +28,7 @@ public sealed class MqttSubscriptionRequest
     public bool RetainAsPublished { get; set; }
 
     /// <summary>
-    /// Gets or sets the retain handling mode from zero to two.
+    /// Gets or sets the retained-message handling mode.
     /// </summary>
-    public byte RetainHandling { get; set; }
+    public MqttRetainHandling RetainHandling { get; set; }
 }

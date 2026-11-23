@@ -19,7 +19,8 @@ public sealed class MqttConnectPacket : MqttPacket
     /// <summary>
     /// Gets or sets the negotiated protocol version.
     /// </summary>
-    public byte ProtocolVersion { get; set; } = 5;
+    public MqttProtocolVersion ProtocolVersion { get; set; } =
+        MqttProtocolVersion.V500;
 
     /// <summary>
     /// Gets or sets a value indicating whether the client requests a clean session.

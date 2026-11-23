@@ -19,7 +19,7 @@ public static partial class MqttPacketCodec
             protocolName.Length != 4 ||
             !protocolName.FirstSpan.SequenceEqual("MQTT"u8) ||
             !reader.TryRead(out byte protocolVersion) ||
-            protocolVersion != 5 ||
+            protocolVersion != (byte)MqttProtocolVersion.V500 ||
             !reader.TryRead(out byte connectFlags) ||
             (connectFlags & 0x01) != 0 ||
             !TryReadUInt16(ref reader, out ushort keepAliveSeconds) ||
@@ -68,7 +68,7 @@ public static partial class MqttPacketCodec
 
         packet = new MqttConnectPacket
         {
-            ProtocolVersion = protocolVersion,
+            ProtocolVersion = (MqttProtocolVersion)protocolVersion,
             CleanStart = (connectFlags & 0x02) != 0,
             KeepAliveSeconds = keepAliveSeconds,
             ClientId = clientId,
@@ -134,7 +134,7 @@ public static partial class MqttPacketCodec
         writer.Advance(1 + lengthBytes);
 
         WriteUtf8(writer, "MQTT"u8);
-        WriteByte(writer, packet.ProtocolVersion);
+        WriteByte(writer, (byte)packet.ProtocolVersion);
         WriteByte(writer, BuildConnectFlags(packet));
         WriteUInt16(writer, packet.KeepAliveSeconds);
         Mqtt5PropertyWriter.WriteConnectProperties(packet, writer);
