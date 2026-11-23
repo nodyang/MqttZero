@@ -1,6 +1,6 @@
 # MQTTZero
 
-MQTTZero 是一个面向 ASP.NET Core Kestrel 的独立 MQTT 5 Broker。生产代码不依赖 MQTTnet，目标框架为 .NET 10。当前版本为 `0.4.0-alpha.1`。
+MQTTZero 是一个面向 ASP.NET Core Kestrel 的独立 MQTT 5 Broker。生产代码不依赖 MQTTnet，目标框架为 .NET 10。当前版本为 `0.5.0-alpha.1`。
 
 ## 当前能力
 
@@ -61,6 +61,39 @@ await app.RunAsync();
 | Publish Interceptor API | `MqttZero.Interceptors` |
 
 引用迁移后的类型时需要增加对应 `using`。本版本不提供旧 namespace 转发类型。
+
+## 0.5.0 属性强类型迁移
+
+`0.5.0-alpha.1` 删除了以下原始类型 API，不提供字符串或字节兼容重载：
+
+| 属性 | 0.4 API | 0.5 API |
+|---|---|---|
+| 客户端远端地址 | `string? RemoteEndPoint` | `EndPoint? RemoteEndPoint` |
+| Retain Handling | `byte RetainHandling` | `MqttRetainHandling RetainHandling` |
+| MQTT 协议版本 | `byte ProtocolVersion` | `MqttProtocolVersion ProtocolVersion` |
+
+```csharp
+using System.Net;
+using MqttZero.Protocol;
+
+EndPoint? remoteEndPoint = client.RemoteEndPoint;
+MqttRetainHandling retainHandling = request.RetainHandling;
+MqttProtocolVersion protocolVersion = packet.ProtocolVersion;
+```
+
+Broker 的高级接入 API 现在接收原始 `EndPoint?`：
+
+```csharp
+await broker.AcceptConnectionAsync(
+    input,
+    output,
+    remoteEndPoint,
+    isSecure: false,
+    isWebSocket: false,
+    cancellationToken);
+```
+
+Dashboard REST JSON 保持不变：`remoteEndPoint` 仍是 `"host:port"` 字符串，UI 不需要迁移。
 
 ## 性能与分配
 
