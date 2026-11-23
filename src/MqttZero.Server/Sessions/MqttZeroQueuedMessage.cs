@@ -15,6 +15,14 @@ internal sealed class MqttZeroQueuedMessage
     {
     }
 
+    internal MqttZeroMessageLease Lease
+    {
+        get
+        {
+            return _lease;
+        }
+    }
+
     public ReadOnlyMemory<byte> Topic
     {
         get

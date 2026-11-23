@@ -174,6 +174,41 @@ namespace MqttZero.Tests.Memory
             lease.Release();
             Assert.Equal(0, pool.RentedBytes);
         }
+
+        [Fact]
+        public void MultipleQueuedMessagesShareOneOwnedLease()
+        {
+            using MqttZeroBufferPool pool = new(1024 * 1024);
+            MqttZeroMessageLease lease = MqttZeroMessageLease.BorrowFrom(
+                new System.Buffers.ReadOnlySequence<byte>("topic"u8.ToArray()),
+                System.Buffers.ReadOnlySequence<byte>.Empty,
+                new System.Buffers.ReadOnlySequence<byte>(new byte[8192]),
+                MqttQualityOfServiceLevel.AtLeastOnce,
+                false,
+                null,
+                null,
+                pool);
+            MqttZeroQueuedMessage first = MqttZeroQueuedMessage.Rent(
+                lease,
+                MqttQualityOfServiceLevel.AtLeastOnce,
+                false,
+                null,
+                null);
+            long rented = pool.RentedBytes;
+            MqttZeroQueuedMessage second = MqttZeroQueuedMessage.Rent(
+                lease,
+                MqttQualityOfServiceLevel.AtLeastOnce,
+                false,
+                null,
+                null);
+
+            Assert.Same(first.Lease, second.Lease);
+            Assert.Equal(rented, pool.RentedBytes);
+            first.Release();
+            second.Release();
+            lease.Release();
+            Assert.Equal(0, pool.RentedBytes);
+        }
         [Fact]
         public void QueuedMessageRejectsDuplicateRelease()
         {
