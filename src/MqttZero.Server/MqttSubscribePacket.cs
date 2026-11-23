@@ -27,6 +27,11 @@ public sealed class MqttSubscribePacket : MqttPacket
     public ReadOnlySequence<byte> Properties { get; set; }
 
     /// <summary>
+    /// Gets or sets the subscription identifier.
+    /// </summary>
+    public uint? SubscriptionIdentifier { get; set; }
+
+    /// <summary>
     /// Gets or sets the requested subscriptions.
     /// </summary>
     public List<MqttSubscriptionRequest> Subscriptions { get; set; } = [];

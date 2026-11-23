@@ -27,6 +27,21 @@ public sealed class MqttPublishPacket : MqttPacket
     public ReadOnlySequence<byte> Properties { get; set; }
 
     /// <summary>
+    /// Gets or sets the message expiry interval in seconds.
+    /// </summary>
+    public uint? MessageExpiryInterval { get; set; }
+
+    /// <summary>
+    /// Gets or sets the subscription identifier attached to this delivery.
+    /// </summary>
+    public uint? SubscriptionIdentifier { get; set; }
+
+    /// <summary>
+    /// Gets or sets the MQTT 5 topic alias.
+    /// </summary>
+    public ushort? TopicAlias { get; set; }
+
+    /// <summary>
     /// Gets or sets the payload sequence.
     /// </summary>
     public ReadOnlySequence<byte> Payload { get; set; }

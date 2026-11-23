@@ -42,6 +42,26 @@ public sealed class MqttConnectPacket : MqttPacket
     public ReadOnlySequence<byte> Properties { get; set; }
 
     /// <summary>
+    /// Gets or sets the requested session expiry interval in seconds.
+    /// </summary>
+    public uint? SessionExpiryInterval { get; set; }
+
+    /// <summary>
+    /// Gets or sets the receive maximum requested by the client.
+    /// </summary>
+    public ushort ReceiveMaximum { get; set; } = ushort.MaxValue;
+
+    /// <summary>
+    /// Gets or sets the maximum packet size accepted by the client.
+    /// </summary>
+    public uint MaximumPacketSize { get; set; } = uint.MaxValue;
+
+    /// <summary>
+    /// Gets or sets the maximum inbound topic alias accepted by the client.
+    /// </summary>
+    public ushort TopicAliasMaximum { get; set; }
+
+    /// <summary>
     /// Gets or sets a value indicating whether a username is present.
     /// </summary>
     public bool HasUserName { get; set; }
@@ -80,6 +100,16 @@ public sealed class MqttConnectPacket : MqttPacket
     /// Gets or sets the will property payload section.
     /// </summary>
     public ReadOnlySequence<byte> WillProperties { get; set; }
+
+    /// <summary>
+    /// Gets or sets the will delay interval in seconds.
+    /// </summary>
+    public uint WillDelayInterval { get; set; }
+
+    /// <summary>
+    /// Gets or sets the will message expiry interval in seconds.
+    /// </summary>
+    public uint WillMessageExpiryInterval { get; set; }
 
     /// <summary>
     /// Gets or sets the UTF-8 will topic.

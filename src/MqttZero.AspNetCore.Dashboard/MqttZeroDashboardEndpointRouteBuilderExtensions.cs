@@ -39,6 +39,7 @@ public static class MqttZeroDashboardEndpointRouteBuilderExtensions
 
         group.MapGet("/api/v1/overview", GetOverview);
         group.MapGet("/api/v1/clients", GetClients);
+        group.MapGet("/api/v1/sessions", GetSessions);
         group.MapGet("/api/v1/antiforgery", GetAntiforgeryToken);
         group.MapPost("/api/v1/publish", PublishAsync)
             .RequireAuthorization(options.OperateAuthorizationPolicy);
@@ -89,6 +90,25 @@ public static class MqttZeroDashboardEndpointRouteBuilderExtensions
                 client.SubscriptionCount))
             .ToArray();
         return Results.Json(clients, DashboardJsonSerializerContext.Default.DashboardClientDtoArray);
+    }
+
+    private static IResult GetSessions(MqttZeroBroker broker)
+    {
+        DashboardSessionDto[] sessions = broker.GetSessions()
+            .Select(static session => new DashboardSessionDto(
+                session.ClientId,
+                session.IsConnected,
+                session.CleanStart,
+                session.SessionPresent,
+                session.ExpiryIntervalSeconds,
+                session.ExpiresAt,
+                session.SubscriptionCount,
+                session.PendingMessageCount,
+                session.InflightMessageCount,
+                session.HasWill,
+                session.WillTopic))
+            .ToArray();
+        return Results.Json(sessions, DashboardJsonSerializerContext.Default.DashboardSessionDtoArray);
     }
 
     private static IResult GetAntiforgeryToken(HttpContext context, IAntiforgery antiforgery)

@@ -19,6 +19,9 @@ namespace MqttZero.Tests
             Assert.Equal(256L * 1024 * 1024, options.MaxRetainedBytes);
             Assert.Equal(TimeSpan.FromSeconds(10), options.ConnectTimeout);
             Assert.Equal(TimeSpan.FromSeconds(30), options.IncompletePacketTimeout);
+            Assert.Equal(TimeSpan.FromHours(24), options.MaxSessionExpiryInterval);
+            Assert.Equal(TimeSpan.FromMilliseconds(500), options.KeepAliveCheckInterval);
+            Assert.Equal((ushort)32, options.TopicAliasMaximum);
         }
     }
 }
