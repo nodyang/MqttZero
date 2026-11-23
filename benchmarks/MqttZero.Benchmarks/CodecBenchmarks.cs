@@ -179,7 +179,10 @@ public class CodecBenchmarks
     public int EncodeToWriterFast()
     {
         _mqttZeroWriter.Reset();
-        MqttPublishPacketCodec.Encode(_queuedMessage.CreateView(false), _mqttZeroWriter);
+        MqttPublishPacketCodec.EncodeToWriter(
+            _queuedMessage.CreateView(false),
+            _mqttZeroHeaderWriter,
+            _mqttZeroWriter);
         return _mqttZeroWriter.WrittenCount;
     }
 
