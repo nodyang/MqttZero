@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Connections;
+using Microsoft.AspNetCore.Connections.Features;
 using Microsoft.AspNetCore.Http.Connections;
 using Microsoft.Extensions.Hosting;
 
@@ -31,6 +32,12 @@ public sealed class MqttZeroConnectionHandler : ConnectionHandler
         using CancellationTokenSource cancellation = CancellationTokenSource.CreateLinkedTokenSource(
             connection.ConnectionClosed,
             _applicationLifetime.ApplicationStopping);
+
+        ITransferFormatFeature? transferFormatFeature = connection.Features.Get<ITransferFormatFeature>();
+        if (transferFormatFeature != null)
+        {
+            transferFormatFeature.ActiveFormat = TransferFormat.Binary;
+        }
 
         Microsoft.AspNetCore.Http.HttpContext? httpContext = connection.GetHttpContext();
         bool isWebSocket = httpContext?.WebSockets.IsWebSocketRequest == true;
