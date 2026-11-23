@@ -1,5 +1,7 @@
 using System.Net;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using MqttZero.AspNetCore;
 using MqttZero.AspNetCore.Dashboard;
 
@@ -32,12 +34,26 @@ builder.Services.AddAuthorizationBuilder()
         // Replace with the host application's real operator policy.
         policy.RequireAssertion(static _ => true);
     });
+builder.Services.AddHealthChecks()
+    .AddMqttZeroHealthCheck(tags: ["ready"]);
 
 WebApplication app = builder.Build();
 
 app.UseWebSockets();
 app.MapMqttZero("/mqtt");
 app.MapMqttZeroDashboard("/mqttzero");
+app.MapHealthChecks(
+    "/health/live",
+    new HealthCheckOptions
+    {
+        Predicate = static _ => false
+    });
+app.MapHealthChecks(
+    "/health/ready",
+    new HealthCheckOptions
+    {
+        Predicate = static registration => registration.Tags.Contains("ready")
+    });
 app.MapGet("/", static () => Results.Redirect("/mqttzero/"));
 
 await app.RunAsync();

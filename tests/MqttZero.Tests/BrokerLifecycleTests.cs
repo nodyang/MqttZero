@@ -1,3 +1,6 @@
+using Microsoft.Extensions.Diagnostics.HealthChecks;
+using MqttZero.AspNetCore;
+
 namespace MqttZero.Tests
 {
     public sealed class BrokerLifecycleTests
@@ -32,6 +35,24 @@ namespace MqttZero.Tests
 
             await broker.StopAsync(TestContext.Current.CancellationToken);
             Assert.Equal(MqttZeroBrokerState.Stopped, broker.State);
+        }
+
+        [Fact]
+        public async Task HealthCheckReportsBrokerState()
+        {
+            MqttZeroBroker broker = new(new MqttZeroOptions(), TimeProvider.System);
+            MqttZeroHealthCheck healthCheck = new(broker);
+
+            HealthCheckResult stopped = await healthCheck.CheckHealthAsync(
+                new HealthCheckContext(),
+                TestContext.Current.CancellationToken);
+            await broker.StartAsync(TestContext.Current.CancellationToken);
+            HealthCheckResult running = await healthCheck.CheckHealthAsync(
+                new HealthCheckContext(),
+                TestContext.Current.CancellationToken);
+
+            Assert.Equal(HealthStatus.Unhealthy, stopped.Status);
+            Assert.Equal(HealthStatus.Healthy, running.Status);
         }
     }
 }

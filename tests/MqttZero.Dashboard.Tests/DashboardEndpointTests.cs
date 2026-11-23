@@ -1,5 +1,7 @@
 using System.Net;
+using System.Net.Http.Json;
 using System.Net.Sockets;
+using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
@@ -45,10 +47,34 @@ namespace MqttZero.Dashboard.Tests
                 cancellationToken);
             string index = await indexResponse.Content.ReadAsStringAsync(cancellationToken);
 
+            using HttpResponseMessage tokenResponse = await client.GetAsync(
+                $"http://127.0.0.1:{port}/mqttzero/api/v1/antiforgery",
+                cancellationToken);
+            using JsonDocument tokenDocument = JsonDocument.Parse(
+                await tokenResponse.Content.ReadAsStringAsync(cancellationToken));
+            string requestToken = tokenDocument.RootElement.GetProperty("token").GetString()!;
+            using HttpRequestMessage publishRequest = new(
+                HttpMethod.Post,
+                $"http://127.0.0.1:{port}/mqttzero/api/v1/publish")
+            {
+                Content = JsonContent.Create(new
+                {
+                    topic = "dashboard/test",
+                    payload = "hello",
+                    qualityOfServiceLevel = 0,
+                    retain = false
+                })
+            };
+            publishRequest.Headers.Add("RequestVerificationToken", requestToken);
+            using HttpResponseMessage publishResponse = await client.SendAsync(
+                publishRequest,
+                cancellationToken);
+
             Assert.Equal(HttpStatusCode.OK, overviewResponse.StatusCode);
             Assert.Contains("\"connectedClients\":0", overview, StringComparison.Ordinal);
             Assert.Equal(HttpStatusCode.OK, indexResponse.StatusCode);
             Assert.Contains("<div id=\"app\"></div>", index, StringComparison.Ordinal);
+            Assert.Equal(HttpStatusCode.NoContent, publishResponse.StatusCode);
 
             await app.StopAsync(cancellationToken);
         }

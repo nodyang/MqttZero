@@ -4,6 +4,12 @@
     <AssemblyName>MqttZero.Server</AssemblyName>
     <Description>High-performance MQTT 5 broker core.</Description>
     <PackageId>MqttZero.Server</PackageId>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
     <IsPackable>true</IsPackable>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+    <None Include="..\..\LICENSE" Pack="true" PackagePath="\" />
+  </ItemGroup>
 </Project>

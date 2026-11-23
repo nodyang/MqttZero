@@ -77,6 +77,10 @@ body,
   font-size: 22px;
 }
 
+.publish-form {
+  max-width: 760px;
+}
+
 @media (max-width: 760px) {
   .sidebar {
     width: 150px !important;

@@ -1,11 +1,27 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { getClients, getOverview, type ClientDto, type OverviewDto } from './api'
+import { ElMessage } from 'element-plus'
+import {
+  getClients,
+  getOverview,
+  publishMessage,
+  type ClientDto,
+  type OverviewDto,
+  type PublishRequest
+} from './api'
+import { formatBrokerState } from './format'
 
 const activePage = ref('overview')
 const overview = ref<OverviewDto>({ state: 'Created', connectedClients: 0 })
 const clients = ref<ClientDto[]>([])
 const error = ref('')
+const publishing = ref(false)
+const publishForm = ref<PublishRequest>({
+  topic: 'devices/demo',
+  payload: '{"value":1}',
+  qualityOfServiceLevel: 0,
+  retain: false
+})
 let timer: number | undefined
 
 const title = computed(() => {
@@ -28,6 +44,18 @@ async function refresh() {
     clients.value = await getClients()
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : '加载失败'
+  }
+}
+
+async function publish() {
+  try {
+    publishing.value = true
+    await publishMessage(publishForm.value)
+    ElMessage.success('消息已发送')
+  } catch (reason) {
+    ElMessage.error(reason instanceof Error ? reason.message : '发布失败')
+  } finally {
+    publishing.value = false
   }
 }
 
@@ -58,7 +86,7 @@ onUnmounted(() => {
     <el-container>
       <el-header class="header">
         <strong>{{ title }}</strong>
-        <span class="state">Broker：{{ overview.state }}</span>
+        <span class="state">Broker：{{ formatBrokerState(overview.state) }}</span>
       </el-header>
 
       <el-main>
@@ -71,7 +99,7 @@ onUnmounted(() => {
           </el-card>
           <el-card>
             <div class="metric-label">运行状态</div>
-            <div class="metric-value small">{{ overview.state }}</div>
+            <div class="metric-value small">{{ formatBrokerState(overview.state) }}</div>
           </el-card>
           <el-card>
             <div class="metric-label">零分配目标</div>
@@ -94,11 +122,35 @@ onUnmounted(() => {
         </el-card>
 
         <el-card v-if="activePage === 'publish'">
-          <el-empty description="Publish API 已预留，下一步接入操作权限和 Antiforgery。" />
+          <el-form :model="publishForm" label-width="100px" class="publish-form">
+            <el-form-item label="Topic">
+              <el-input v-model="publishForm.topic" />
+            </el-form-item>
+            <el-form-item label="QoS">
+              <el-radio-group v-model="publishForm.qualityOfServiceLevel">
+                <el-radio :value="0">QoS 0</el-radio>
+                <el-radio :value="1">QoS 1</el-radio>
+              </el-radio-group>
+            </el-form-item>
+            <el-form-item label="保留消息">
+              <el-switch v-model="publishForm.retain" />
+            </el-form-item>
+            <el-form-item label="Payload">
+              <el-input
+                v-model="publishForm.payload"
+                type="textarea"
+                :rows="8"
+                placeholder="UTF-8 文本"
+              />
+            </el-form-item>
+            <el-form-item>
+              <el-button type="primary" :loading="publishing" @click="publish">发布</el-button>
+            </el-form-item>
+          </el-form>
         </el-card>
 
         <el-card v-if="activePage === 'events'">
-          <el-empty description="SignalR 实时事件服务已预留。" />
+          <el-empty description="SignalR Hub 已挂载于 /mqttzero/hubs/events；事件推送接口已预留。" />
         </el-card>
       </el-main>
     </el-container>

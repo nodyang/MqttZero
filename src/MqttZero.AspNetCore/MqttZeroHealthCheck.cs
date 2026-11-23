@@ -1,0 +1,33 @@
+using Microsoft.Extensions.Diagnostics.HealthChecks;
+
+namespace MqttZero.AspNetCore;
+
+/// <summary>
+/// Reports MQTTZero broker readiness.
+/// </summary>
+public sealed class MqttZeroHealthCheck : IHealthCheck
+{
+    private readonly MqttZeroBroker _broker;
+
+    /// <summary>
+    /// Initializes a new health check.
+    /// </summary>
+    /// <param name="broker">The MQTTZero broker.</param>
+    public MqttZeroHealthCheck(MqttZeroBroker broker)
+    {
+        _broker = broker;
+    }
+
+    /// <inheritdoc />
+    public Task<HealthCheckResult> CheckHealthAsync(
+        HealthCheckContext context,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        MqttZeroBrokerState state = _broker.State;
+        return Task.FromResult(
+            state == MqttZeroBrokerState.Running
+                ? HealthCheckResult.Healthy("MQTTZero broker is running.")
+                : HealthCheckResult.Unhealthy($"MQTTZero broker state is {state}."));
+    }
+}
