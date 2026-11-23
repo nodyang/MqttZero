@@ -37,11 +37,13 @@ namespace MqttZero.Tests.Routing
                 CreateSession("b", "$share/workers/jobs/#"),
                 CreateSession("c", "$share/audit/jobs/#")
             ];
+            MqttZeroSubscriptionRouteSnapshot snapshot =
+                MqttZeroSubscriptionRouteSnapshotBuilder.Build(sessions);
             ConcurrentDictionary<string, int> cursors = new(StringComparer.Ordinal);
             MqttZeroRouteScopePool scopePool = new();
 
             using MqttZeroRouteScope route = MqttZeroRouteSelector.Select(
-                sessions,
+                snapshot,
                 "jobs/one"u8,
                 null,
                 cursors,
@@ -50,6 +52,126 @@ namespace MqttZero.Tests.Routing
             Assert.Equal(2, route.Count);
             Assert.Equal("a", route[0].Session.ClientId);
             Assert.Equal("c", route[1].Session.ClientId);
+        }
+
+        [Fact]
+        public void SharedSubscriptionSelectsHighestMatchingQosAndHonorsNoLocal()
+        {
+            MqttZeroSessionState first = new("a");
+            MqttZeroSessionState second = new("b");
+            MqttZeroSubscription lowQos = new(
+                "$share/workers/route/#"u8.ToArray(),
+                MqttQualityOfServiceLevel.AtMostOnce,
+                false,
+                false,
+                null);
+            MqttZeroSubscription highQos = new(
+                "$share/workers/route/#"u8.ToArray(),
+                MqttQualityOfServiceLevel.AtLeastOnce,
+                false,
+                false,
+                null);
+            MqttZeroSubscription noLocal = new(
+                "$share/workers/route/#"u8.ToArray(),
+                MqttQualityOfServiceLevel.AtLeastOnce,
+                true,
+                false,
+                null);
+            MqttZeroSubscription secondOnly = new(
+                "$share/workers/route/#"u8.ToArray(),
+                MqttQualityOfServiceLevel.AtMostOnce,
+                false,
+                false,
+                null);
+            MqttZeroSharedRouteGroup group = new(
+                "workers",
+                [
+                    new MqttZeroSharedRouteEntry(first, [lowQos, highQos, noLocal]),
+                    new MqttZeroSharedRouteEntry(second, [secondOnly])
+                ]);
+            MqttZeroSubscriptionRouteSnapshot snapshot = new([], [group]);
+            ConcurrentDictionary<string, int> cursors = new(StringComparer.Ordinal);
+            MqttZeroRouteScopePool scopePool = new();
+
+            using (MqttZeroRouteScope route = MqttZeroRouteSelector.Select(
+                snapshot,
+                "route/topic"u8,
+                second,
+                cursors,
+                scopePool))
+            {
+                Assert.Equal(1, route.Count);
+                MqttZeroDeliveryCandidate delivery = route[0];
+                Assert.Same(first, delivery.Session);
+                Assert.Same(highQos, delivery.Subscription);
+            }
+
+            using (MqttZeroRouteScope route = MqttZeroRouteSelector.Select(
+                snapshot,
+                "route/topic"u8,
+                first,
+                cursors,
+                scopePool))
+            {
+                Assert.Equal(1, route.Count);
+                MqttZeroDeliveryCandidate delivery = route[0];
+                Assert.Same(second, delivery.Session);
+            }
+        }
+
+        [Fact]
+        public void SharedSubscriptionRoutingDoesNotAllocateAfterWarmup()
+        {
+            MqttZeroSharedRouteEntry[] entries =
+                new MqttZeroSharedRouteEntry[100];
+            for (int index = 0; index < entries.Length; index++)
+            {
+                MqttZeroSubscription subscription = new(
+                    "$share/workers/route/#"u8.ToArray(),
+                    MqttQualityOfServiceLevel.AtLeastOnce,
+                    false,
+                    false,
+                    null);
+                entries[index] = new MqttZeroSharedRouteEntry(
+                    new MqttZeroSessionState(
+                        index.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+                    [subscription]);
+            }
+
+            MqttZeroSubscriptionRouteSnapshot snapshot = new(
+                [],
+                [new MqttZeroSharedRouteGroup(
+                    "workers",
+                    entries)]);
+            ConcurrentDictionary<string, int> cursors = new(StringComparer.Ordinal);
+            MqttZeroRouteScopePool scopePool = new();
+            for (int index = 0; index < 10; index++)
+            {
+                using MqttZeroRouteScope warmup = MqttZeroRouteSelector.Select(
+                    snapshot,
+                    "route/topic"u8,
+                    null,
+                    cursors,
+                    scopePool);
+                Assert.Equal(1, warmup.Count);
+            }
+
+            int delivered = 0;
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            for (int index = 0; index < 100; index++)
+            {
+                using MqttZeroRouteScope route = MqttZeroRouteSelector.Select(
+                    snapshot,
+                    "route/topic"u8,
+                    null,
+                    cursors,
+                    scopePool);
+                delivered += route.Count;
+            }
+
+            long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+            Assert.Equal(100, delivered);
+            Assert.Equal(0, allocated);
         }
 
         private static void AssertZeroAllocationForSubscriberCount(int subscriberCount)
@@ -62,12 +184,14 @@ namespace MqttZero.Tests.Routing
                     "route/#"));
             }
 
+            MqttZeroSubscriptionRouteSnapshot snapshot =
+                MqttZeroSubscriptionRouteSnapshotBuilder.Build(sessions);
             ConcurrentDictionary<string, int> cursors = new(StringComparer.Ordinal);
             MqttZeroRouteScopePool scopePool = new();
             for (int index = 0; index < 10; index++)
             {
                 using (MqttZeroRouteScope warmup = MqttZeroRouteSelector.Select(
-                    sessions,
+                    snapshot,
                     "route/topic"u8,
                     null,
                     cursors,
@@ -82,7 +206,7 @@ namespace MqttZero.Tests.Routing
             for (int index = 0; index < 100; index++)
             {
                 using MqttZeroRouteScope route = MqttZeroRouteSelector.Select(
-                    sessions,
+                    snapshot,
                     "route/topic"u8,
                     null,
                     cursors,

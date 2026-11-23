@@ -6,7 +6,6 @@ using MqttZero.Sessions;
 using System.Buffers;
 using System.Collections.Concurrent;
 using System.IO.Pipelines;
-using System.Text;
 
 namespace MqttZero.Broker;
 
@@ -293,49 +292,12 @@ public sealed partial class MqttZeroBroker
 
     private void RebuildSubscriptionRouteSnapshot()
     {
-        Dictionary<string, List<MqttZeroRouteEntry>> regularGroups =
-            new(StringComparer.Ordinal);
-        List<MqttZeroRouteEntry> sharedEntries = [];
         lock (_sessionGate)
         {
-            foreach (MqttZeroSessionState session in _sessions.Values)
-            {
-                lock (session.SyncRoot)
-                {
-                    foreach (MqttZeroSubscription subscription in session.Subscriptions)
-                    {
-                        MqttZeroRouteEntry entry = new(session, subscription);
-                        if (subscription.IsShared)
-                        {
-                            sharedEntries.Add(entry);
-                            continue;
-                        }
-
-                        string key = Encoding.UTF8.GetString(subscription.MatchFilter);
-                        if (!regularGroups.TryGetValue(key, out List<MqttZeroRouteEntry>? entries))
-                        {
-                            entries = [];
-                            regularGroups[key] = entries;
-                        }
-
-                        entries.Add(entry);
-                    }
-                }
-            }
+            MqttZeroSubscriptionRouteSnapshot snapshot =
+                MqttZeroSubscriptionRouteSnapshotBuilder.Build(_sessions.Values);
+            Volatile.Write(ref _subscriptionRouteSnapshot, snapshot);
         }
-
-        MqttZeroRouteFilterGroup[] groups = new MqttZeroRouteFilterGroup[regularGroups.Count];
-        int groupIndex = 0;
-        foreach (List<MqttZeroRouteEntry> entries in regularGroups.Values)
-        {
-            groups[groupIndex++] = new MqttZeroRouteFilterGroup(
-                entries[0].Subscription.MatchFilter,
-                entries.ToArray());
-        }
-
-        Volatile.Write(
-            ref _subscriptionRouteSnapshot,
-            new MqttZeroSubscriptionRouteSnapshot(groups, sharedEntries.ToArray()));
     }
 
 }

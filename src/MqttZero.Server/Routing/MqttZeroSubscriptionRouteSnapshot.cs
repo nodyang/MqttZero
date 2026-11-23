@@ -7,13 +7,13 @@ internal sealed class MqttZeroSubscriptionRouteSnapshot
 
     public MqttZeroSubscriptionRouteSnapshot(
         MqttZeroRouteFilterGroup[] regularGroups,
-        MqttZeroRouteEntry[] sharedEntries)
+        MqttZeroSharedRouteGroup[] sharedGroups)
     {
         RegularGroups = regularGroups;
-        SharedEntries = sharedEntries;
+        SharedGroups = sharedGroups;
     }
 
     public MqttZeroRouteFilterGroup[] RegularGroups { get; }
 
-    public MqttZeroRouteEntry[] SharedEntries { get; }
+    public MqttZeroSharedRouteGroup[] SharedGroups { get; }
 }
