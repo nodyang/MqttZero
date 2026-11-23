@@ -1,0 +1,46 @@
+using System.Reflection;
+
+namespace MqttZero.AspNetCore.Dashboard;
+
+internal static class MqttZeroDashboardAssets
+{
+    private const string ResourcePrefix = "MqttZeroDashboard/";
+    private static readonly Assembly DashboardAssembly = typeof(MqttZeroDashboardAssets).Assembly;
+
+    public static bool TryOpen(
+        string path,
+        out Stream? stream,
+        out string contentType)
+    {
+        string normalizedPath = string.IsNullOrWhiteSpace(path) || path == "/"
+            ? "index.html"
+            : path.TrimStart('/');
+        string resourceName = string.Concat(ResourcePrefix, normalizedPath);
+        stream = DashboardAssembly.GetManifestResourceStream(resourceName);
+        if (stream == null)
+        {
+            string windowsResourceName = string.Concat(
+                ResourcePrefix,
+                normalizedPath.Replace('/', Path.DirectorySeparatorChar));
+            stream = DashboardAssembly.GetManifestResourceStream(windowsResourceName);
+        }
+
+        contentType = GetContentType(normalizedPath);
+        return stream != null;
+    }
+
+    private static string GetContentType(string path)
+    {
+        return Path.GetExtension(path).ToLowerInvariant() switch
+        {
+            ".html" => "text/html; charset=utf-8",
+            ".css" => "text/css; charset=utf-8",
+            ".js" => "text/javascript; charset=utf-8",
+            ".json" => "application/json; charset=utf-8",
+            ".svg" => "image/svg+xml",
+            ".png" => "image/png",
+            ".ico" => "image/x-icon",
+            _ => "application/octet-stream"
+        };
+    }
+}

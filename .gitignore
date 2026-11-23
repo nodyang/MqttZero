@@ -9,3 +9,6 @@ TestResults/
 *.snupkg
 node_modules/
 dashboard/**/dist/
+dashboard/**/*.tsbuildinfo
+dashboard/**/vite.config.js
+dashboard/**/vite.config.d.ts

@@ -1,0 +1,27 @@
+{
+  "name": "mqttzero-dashboard",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc -b && vite build",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@microsoft/signalr": "latest",
+    "echarts": "latest",
+    "element-plus": "latest",
+    "pinia": "latest",
+    "vue": "latest",
+    "vue-router": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "@vitejs/plugin-vue": "latest",
+    "typescript": "latest",
+    "vite": "latest",
+    "vitest": "latest",
+    "vue-tsc": "latest"
+  }
+}
