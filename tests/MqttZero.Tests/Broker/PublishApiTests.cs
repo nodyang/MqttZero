@@ -12,7 +12,9 @@ namespace MqttZero.Tests.Broker
         [Fact]
         public async Task PublishMessageEntityUsesTheSharedPublishPipeline()
         {
-            MqttZeroBroker broker = new(new MqttZeroOptions(), TimeProvider.System);
+            MqttZeroBroker broker = MqttZeroBroker.Create(
+                new MqttZeroOptions(),
+                TimeProvider.System);
             await broker.StartAsync(TestContext.Current.CancellationToken);
             try
             {
@@ -42,7 +44,9 @@ namespace MqttZero.Tests.Broker
         [Fact]
         public async Task PayloadFactoryExtensionBuildsAMessageForTheCoreMethod()
         {
-            MqttZeroBroker broker = new(new MqttZeroOptions(), TimeProvider.System);
+            MqttZeroBroker broker = MqttZeroBroker.Create(
+                new MqttZeroOptions(),
+                TimeProvider.System);
             await broker.StartAsync(TestContext.Current.CancellationToken);
             try
             {
@@ -73,7 +77,9 @@ namespace MqttZero.Tests.Broker
         [Fact]
         public async Task SequenceExtensionBuildsAMessageForTheCoreMethod()
         {
-            MqttZeroBroker broker = new(new MqttZeroOptions(), TimeProvider.System);
+            MqttZeroBroker broker = MqttZeroBroker.Create(
+                new MqttZeroOptions(),
+                TimeProvider.System);
             await broker.StartAsync(TestContext.Current.CancellationToken);
             try
             {
@@ -100,7 +106,9 @@ namespace MqttZero.Tests.Broker
         [Fact]
         public async Task StreamExtensionDoesNotOwnOrDisposeTheCallerStream()
         {
-            MqttZeroBroker broker = new(new MqttZeroOptions(), TimeProvider.System);
+            MqttZeroBroker broker = MqttZeroBroker.Create(
+                new MqttZeroOptions(),
+                TimeProvider.System);
             await broker.StartAsync(TestContext.Current.CancellationToken);
             TrackingReadStream payload = new("stream"u8.ToArray());
             try
@@ -127,7 +135,7 @@ namespace MqttZero.Tests.Broker
         [Fact]
         public async Task OversizedStreamPublishDoesNotRetainPartialPayload()
         {
-            MqttZeroBroker broker = new(
+            MqttZeroBroker broker = MqttZeroBroker.Create(
                 new MqttZeroOptions
                 {
                     MaxPacketSize = 32

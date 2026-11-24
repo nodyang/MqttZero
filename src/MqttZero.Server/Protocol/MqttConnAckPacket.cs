@@ -47,6 +47,11 @@ public sealed class MqttConnAckPacket : MqttPacket
     public uint? MaximumPacketSize { get; set; }
 
     /// <summary>
+    /// Gets or sets the optional reason string.
+    /// </summary>
+    public string? ReasonString { get; set; }
+
+    /// <summary>
     /// Gets or sets the session expiry interval accepted by the server.
     /// </summary>
     public uint? SessionExpiryInterval { get; set; }

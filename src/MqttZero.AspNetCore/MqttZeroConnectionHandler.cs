@@ -3,9 +3,11 @@ using MqttZero.Interceptors;
 using Microsoft.AspNetCore.Connections;
 using Microsoft.AspNetCore.Connections.Features;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Http.Connections;
 using Microsoft.Extensions.Hosting;
 using System.Net.Sockets;
+using System.Security.Cryptography.X509Certificates;
 
 namespace MqttZero.AspNetCore;
 
@@ -71,6 +73,9 @@ public sealed class MqttZeroConnectionHandler : ConnectionHandler
         bool allowPacketFragmentation = webSocketOptions != null
             ? webSocketOptions.ResolveAllowPacketFragmentation(transportInfo)
             : endpointOptions.ResolveAllowPacketFragmentation(transportInfo);
+        X509Certificate2? clientCertificate =
+            connection.Features.Get<ITlsConnectionFeature>()
+                ?.ClientCertificate;
 
         await _broker.AcceptConnectionAsync(
             connection.Transport.Input,
@@ -78,6 +83,7 @@ public sealed class MqttZeroConnectionHandler : ConnectionHandler
             connection.RemoteEndPoint,
             isSecure,
             isWebSocket,
+            clientCertificate,
             allowPacketFragmentation,
             cancellation.Token).ConfigureAwait(false);
     }

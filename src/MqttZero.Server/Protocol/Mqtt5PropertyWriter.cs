@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Buffers.Binary;
+using System.Text;
 
 namespace MqttZero.Protocol;
 
@@ -197,6 +198,11 @@ internal static class Mqtt5PropertyWriter
             length += 5;
         }
 
+        if (!string.IsNullOrEmpty(packet.ReasonString))
+        {
+            length += 3 + Encoding.UTF8.GetByteCount(packet.ReasonString);
+        }
+
         return length;
     }
 
@@ -230,6 +236,11 @@ internal static class Mqtt5PropertyWriter
         if (packet.SessionExpiryInterval.HasValue)
         {
             WriteUInt32(writer, 0x11, packet.SessionExpiryInterval.Value);
+        }
+
+        if (!string.IsNullOrEmpty(packet.ReasonString))
+        {
+            WriteString(writer, 0x1F, packet.ReasonString);
         }
     }
 
@@ -319,6 +330,16 @@ internal static class Mqtt5PropertyWriter
         Span<byte> destination = writer.GetSpan(value.Length);
         value.CopyTo(destination);
         writer.Advance(value.Length);
+    }
+
+    private static void WriteString(IBufferWriter<byte> writer, byte identifier, string value)
+    {
+        int byteCount = Encoding.UTF8.GetByteCount(value);
+        Span<byte> destination = writer.GetSpan(byteCount + 3);
+        destination[0] = identifier;
+        BinaryPrimitives.WriteUInt16BigEndian(destination[1..], (ushort)byteCount);
+        Encoding.UTF8.GetBytes(value, destination[3..]);
+        writer.Advance(byteCount + 3);
     }
 
     private static void WriteUInt16(

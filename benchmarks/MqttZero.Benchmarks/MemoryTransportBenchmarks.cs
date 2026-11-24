@@ -40,7 +40,9 @@ public class MemoryTransportBenchmarks : IDisposable
     [GlobalSetup]
     public void Setup()
     {
-        _broker = new MqttZeroBroker(new MqttZeroOptions(), TimeProvider.System);
+        _broker = MqttZeroBroker.Create(
+            new MqttZeroOptions(),
+            TimeProvider.System);
         _receiver = new MqttZeroSessionState("receiver");
         _receiver.Subscriptions.Add(new MqttZeroSubscription(
             "hot/#"u8.ToArray(),

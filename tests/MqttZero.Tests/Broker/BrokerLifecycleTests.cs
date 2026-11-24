@@ -16,7 +16,9 @@ namespace MqttZero.Tests.Broker
         [Fact]
         public async Task LifecycleTransitionsAndSnapshotsAreAvailable()
         {
-            MqttZeroBroker broker = new(new MqttZeroOptions(), TimeProvider.System);
+            MqttZeroBroker broker = MqttZeroBroker.Create(
+                new MqttZeroOptions(),
+                TimeProvider.System);
 
             await broker.StartAsync(TestContext.Current.CancellationToken);
 
@@ -48,7 +50,9 @@ namespace MqttZero.Tests.Broker
         [Fact]
         public async Task HealthCheckReportsBrokerState()
         {
-            MqttZeroBroker broker = new(new MqttZeroOptions(), TimeProvider.System);
+            MqttZeroBroker broker = MqttZeroBroker.Create(
+                new MqttZeroOptions(),
+                TimeProvider.System);
             MqttZeroHealthCheck healthCheck = new(broker);
 
             HealthCheckResult stopped = await healthCheck.CheckHealthAsync(

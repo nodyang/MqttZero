@@ -79,6 +79,7 @@ public sealed partial class MqttZeroBroker
     {
         byte[] reasonCodes = new byte[packet.Subscriptions.Count];
         bool[] existed = new bool[packet.Subscriptions.Count];
+        bool changed = false;
 
         for (int index = 0; index < packet.Subscriptions.Count; index++)
         {
@@ -86,6 +87,38 @@ public sealed partial class MqttZeroBroker
             if (request.QualityOfServiceLevel == MqttQualityOfServiceLevel.ExactlyOnce)
             {
                 reasonCodes[index] = (byte)MqttReasonCode.QosNotSupported;
+                continue;
+            }
+
+            MqttZeroSubscribeContext context = new()
+            {
+                Client = connection.ClientInfo,
+                TopicFilter = request.TopicFilter,
+                QualityOfServiceLevel = request.QualityOfServiceLevel,
+                NoLocal = request.NoLocal,
+                RetainAsPublished = request.RetainAsPublished,
+                RetainHandling = request.RetainHandling
+            };
+            MqttZeroInterceptionResult interception = MqttZeroInterceptionResult.Continue;
+            foreach (IMqttZeroSubscribeInterceptor interceptor in _subscribeInterceptors)
+            {
+                interception = await interceptor.InterceptAsync(context, cancellationToken)
+                    .ConfigureAwait(false);
+                if (interception != MqttZeroInterceptionResult.Continue)
+                {
+                    break;
+                }
+            }
+
+            if (interception == MqttZeroInterceptionResult.CloseConnection)
+            {
+                await connection.CloseAsync(context.ReasonCode, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            if (interception == MqttZeroInterceptionResult.Consume)
+            {
+                reasonCodes[index] = (byte)context.ReasonCode;
                 continue;
             }
 
@@ -121,9 +154,13 @@ public sealed partial class MqttZeroBroker
             reasonCodes[index] = request.QualityOfServiceLevel == MqttQualityOfServiceLevel.AtLeastOnce
                 ? (byte)MqttReasonCode.GrantedQos1
                 : (byte)MqttReasonCode.Success;
+            changed = true;
         }
 
-        RebuildSubscriptionRouteSnapshot();
+        if (changed)
+        {
+            RebuildSubscriptionRouteSnapshot();
+        }
 
         await connection.SendSubAckAsync(
             new MqttSubAckPacket
@@ -193,9 +230,38 @@ public sealed partial class MqttZeroBroker
         CancellationToken cancellationToken)
     {
         byte[] reasonCodes = new byte[packet.TopicFilters.Count];
+        bool changed = false;
         for (int index = 0; index < packet.TopicFilters.Count; index++)
         {
             byte[] topicFilter = packet.TopicFilters[index].ToArray();
+            MqttZeroUnsubscribeContext context = new()
+            {
+                Client = connection.ClientInfo,
+                TopicFilter = new ReadOnlySequence<byte>(topicFilter)
+            };
+            MqttZeroInterceptionResult interception = MqttZeroInterceptionResult.Continue;
+            foreach (IMqttZeroUnsubscribeInterceptor interceptor in _unsubscribeInterceptors)
+            {
+                interception = await interceptor.InterceptAsync(context, cancellationToken)
+                    .ConfigureAwait(false);
+                if (interception != MqttZeroInterceptionResult.Continue)
+                {
+                    break;
+                }
+            }
+
+            if (interception == MqttZeroInterceptionResult.CloseConnection)
+            {
+                await connection.CloseAsync(context.ReasonCode, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            if (interception == MqttZeroInterceptionResult.Consume)
+            {
+                reasonCodes[index] = (byte)context.ReasonCode;
+                continue;
+            }
+
             bool removed;
             lock (session.SyncRoot)
             {
@@ -205,6 +271,7 @@ public sealed partial class MqttZeroBroker
                 if (removed)
                 {
                     session.Subscriptions.RemoveAt(existingIndex);
+                    changed = true;
                 }
             }
 
@@ -213,7 +280,10 @@ public sealed partial class MqttZeroBroker
                 : (byte)MqttReasonCode.NoSubscriptionExisted;
         }
 
-        RebuildSubscriptionRouteSnapshot();
+        if (changed)
+        {
+            RebuildSubscriptionRouteSnapshot();
+        }
 
         await connection.SendUnsubAckAsync(
             new MqttUnsubAckPacket

@@ -8,6 +8,9 @@ using System.Collections.Concurrent;
 using System.IO.Pipelines;
 using System.Net;
 using System.Text;
+using System.Security.Cryptography.X509Certificates;
+using MqttZero.Events;
+using MqttZero.Observers;
 
 namespace MqttZero.Broker;
 
@@ -61,6 +64,28 @@ public sealed partial class MqttZeroBroker
         EndPoint? remoteEndPoint,
         bool isSecure,
         bool isWebSocket,
+        bool allowPacketFragmentation,
+        CancellationToken cancellationToken)
+    {
+        await AcceptConnectionAsync(
+            input,
+            output,
+            remoteEndPoint,
+            isSecure,
+            isWebSocket,
+            null,
+            allowPacketFragmentation,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Processes one accepted connection with client certificate data.</summary>
+    public async ValueTask AcceptConnectionAsync(
+        PipeReader input,
+        PipeWriter output,
+        EndPoint? remoteEndPoint,
+        bool isSecure,
+        bool isWebSocket,
+        X509Certificate2? clientCertificate,
         bool allowPacketFragmentation,
         CancellationToken cancellationToken)
     {
@@ -161,7 +186,12 @@ public sealed partial class MqttZeroBroker
                             remoteEndPoint,
                             isSecure,
                             isWebSocket,
+                            clientCertificate,
                             allowPacketFragmentation).ConfigureAwait(false);
+                        if (attachment == null)
+                        {
+                            return;
+                        }
                         session = attachment.Session;
                         connection = attachment.Connection;
                         closeRegistration = connection.ClosedToken.Register(
@@ -181,6 +211,7 @@ public sealed partial class MqttZeroBroker
                     if (packet is MqttDisconnectPacket)
                     {
                         cleanDisconnect = true;
+                        connection.DisconnectType = MqttZeroDisconnectType.ClientRequest;
                         return;
                     }
                 }
@@ -207,6 +238,25 @@ public sealed partial class MqttZeroBroker
             if (session != null && connection != null)
             {
                 await DetachConnectionAsync(session, connection, cleanDisconnect).ConfigureAwait(false);
+                MqttZeroClientDisconnectedContext disconnectedContext = new()
+                {
+                    Client = connection.ClientInfo,
+                    DisconnectType = connection.DisconnectType,
+                    ReasonCode = connection.CloseReasonCode
+                };
+                foreach (IMqttZeroConnectionObserver observer in _connectionObservers)
+                {
+                    try
+                    {
+                        await observer.OnDisconnectedAsync(
+                            disconnectedContext,
+                            CancellationToken.None).ConfigureAwait(false);
+                    }
+                    catch (Exception)
+                    {
+                    }
+                }
+
                 await connection.DisposeAsync().ConfigureAwait(false);
             }
 
@@ -225,6 +275,7 @@ public sealed partial class MqttZeroBroker
         EndPoint? remoteEndPoint,
         bool isSecure,
         bool isWebSocket,
+        X509Certificate2? clientCertificate,
         bool allowPacketFragmentation)
     {
         string clientId = connectPacket.ClientId.IsEmpty
@@ -248,6 +299,57 @@ public sealed partial class MqttZeroBroker
             _timeProvider,
             _bufferPool,
             allowPacketFragmentation);
+        MqttZeroClientInfo clientInfo = new()
+        {
+            ClientId = clientId,
+            UserName = connectPacket.HasUserName
+                ? Encoding.UTF8.GetString(connectPacket.UserName.ToArray())
+                : null,
+            RemoteEndPoint = remoteEndPoint,
+            IsSecure = isSecure,
+            IsWebSocket = isWebSocket,
+            ProtocolVersion = connectPacket.ProtocolVersion,
+            ClientCertificate = clientCertificate
+        };
+        newConnection.ClientInfo = clientInfo;
+        MqttZeroConnectionContext connectionContext = new()
+        {
+            Client = clientInfo,
+            ConnectPacket = connectPacket
+        };
+        foreach (IMqttZeroConnectionInterceptor interceptor in _connectionInterceptors)
+        {
+            MqttZeroConnectionInterceptionResult result;
+            try
+            {
+                result = await interceptor.InterceptAsync(connectionContext, CancellationToken.None)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception)
+            {
+                result = MqttZeroConnectionInterceptionResult.Reject;
+                connectionContext.RejectReasonCode = MqttReasonCode.ImplementationSpecificError;
+            }
+
+            if (result == MqttZeroConnectionInterceptionResult.Drop)
+            {
+                await newConnection.DisposeAsync().ConfigureAwait(false);
+                return null!;
+            }
+
+            if (result == MqttZeroConnectionInterceptionResult.Reject)
+            {
+                await newConnection.SendConnAckAsync(
+                    new MqttConnAckPacket
+                    {
+                        ReasonCode = connectionContext.RejectReasonCode,
+                        ReasonString = connectionContext.ReasonString
+                    },
+                    CancellationToken.None).ConfigureAwait(false);
+                await newConnection.DisposeAsync().ConfigureAwait(false);
+                return null!;
+            }
+        }
         MqttZeroClientConnection? oldConnection = null;
         MqttZeroWillMessage? takeoverWill = null;
         MqttZeroSessionState session;
@@ -343,6 +445,22 @@ public sealed partial class MqttZeroBroker
                 SessionExpiryInterval = effectiveExpiry
             },
             CancellationToken.None).ConfigureAwait(false);
+        MqttZeroClientConnectedContext connectedContext = new()
+        {
+            Client = clientInfo,
+            SessionPresent = sessionPresent
+        };
+        foreach (IMqttZeroConnectionObserver observer in _connectionObservers)
+        {
+            try
+            {
+                await observer.OnConnectedAsync(connectedContext, CancellationToken.None)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception)
+            {
+            }
+        }
         if (takeoverWill != null)
         {
             await RoutePublishAsync(null, takeoverWill.CreatePacket(), CancellationToken.None)

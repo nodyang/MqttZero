@@ -92,6 +92,24 @@ await broker.PublishAsync(
 
 Stream 由调用方拥有；扩展会在发布前将内容收集到池化多段 Payload，并执行最大包大小限制。
 
+## 拦截器与 Observer
+
+CONNECT 认证、Topic 授权和投递控制使用 DI 拦截器：
+
+```csharp
+builder.Services.AddMqttZero()
+    .AddConnectionInterceptor<MqttAuthenticator>()
+    .AddSubscribeInterceptor<TopicAcl>()
+    .AddUnsubscribeInterceptor<TopicAcl>()
+    .AddEnqueueInterceptor<DeliveryPolicy>()
+    .AddConnectionObserver<PresenceObserver>()
+    .AddDeliveryObserver<DeliveryMetricsObserver>();
+```
+
+`IMqttZeroConnectionInterceptor` 可返回 `Continue`、`Reject` 或 `Drop`；拒绝时通过 `RejectReasonCode` 返回 MQTT 5 CONNACK 原因。订阅和退订授权按 Topic Filter 执行，被拒绝的 Filter 不进入路由快照。
+
+Observer 只观察、不参与 Allow/Deny 决策，异常会被隔离。用户名和客户端证书可提供给扩展；原始密码只在 CONNECT 拦截上下文生效，不进入 Observer。启用 Observer 后允许分配，未注册扩展时原有热路径继续执行零分配检查。
+
 ## Kestrel 入口配置
 
 `UseMqttZero` 支持连接级 TCP 选项和静态 TLS。Listening Socket 的 `ReuseAddress` 等选项仍由 Kestrel `SocketTransportOptions` 管理。

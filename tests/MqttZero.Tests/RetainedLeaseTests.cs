@@ -14,7 +14,9 @@ namespace MqttZero.Tests
         [Fact]
         public async Task ClearingRetainedMessageReleasesPooledLease()
         {
-            MqttZeroBroker broker = new(new MqttZeroOptions(), TimeProvider.System);
+            MqttZeroBroker broker = MqttZeroBroker.Create(
+                new MqttZeroOptions(),
+                TimeProvider.System);
             await broker.StartAsync(TestContext.Current.CancellationToken);
             MqttZeroBufferPool bufferPool = Assert.IsType<MqttZeroBufferPool>(
                 typeof(MqttZeroBroker).GetField(

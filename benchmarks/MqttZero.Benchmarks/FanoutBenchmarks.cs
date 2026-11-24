@@ -51,7 +51,9 @@ public class FanoutBenchmarks : IDisposable
             MaxInflight = Math.Max(32, Subscribers),
             MaxMessageQueueLength = Math.Max(1000, Subscribers)
         };
-        _broker = new MqttZeroBroker(options, TimeProvider.System);
+        _broker = MqttZeroBroker.Create(
+            options,
+            TimeProvider.System);
         _receivers = new MqttZeroSessionState[Subscribers];
         _connections = new MqttZeroClientConnection[Subscribers];
         _writers = new MemoryWriter[Subscribers];

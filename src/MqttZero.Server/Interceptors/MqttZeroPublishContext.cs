@@ -1,4 +1,5 @@
 using MqttZero.Protocol;
+using MqttZero.Events;
 using System.Buffers;
 using System.Collections.Concurrent;
 
@@ -41,6 +42,15 @@ public sealed class MqttZeroPublishContext
     /// </summary>
     public string? SenderClientId { get; internal set; }
 
+    /// <summary>Gets the originating client information.</summary>
+    public MqttZeroClientInfo? SenderClientInfo { get; internal set; }
+
+    /// <summary>Gets or sets the result reason code.</summary>
+    public MqttReasonCode ResultReasonCode { get; set; } = MqttReasonCode.Success;
+
+    /// <summary>Gets or sets an optional result reason string.</summary>
+    public string? ReasonString { get; set; }
+
     internal static MqttZeroPublishContext Rent()
     {
         if (ContextPool.TryDequeue(out MqttZeroPublishContext? context))
@@ -59,6 +69,9 @@ public sealed class MqttZeroPublishContext
         QualityOfServiceLevel = MqttQualityOfServiceLevel.AtMostOnce;
         Retain = false;
         SenderClientId = null;
+        SenderClientInfo = null;
+        ResultReasonCode = MqttReasonCode.Success;
+        ReasonString = null;
         ContextPool.Enqueue(this);
     }
 }

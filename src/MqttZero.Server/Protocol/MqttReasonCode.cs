@@ -8,6 +8,21 @@ public enum MqttReasonCode : byte
     /// <summary>The operation succeeded.</summary>
     Success = 0x00,
 
+    /// <summary>The server failed unexpectedly.</summary>
+    UnspecifiedError = 0x80,
+
+    /// <summary>The server encountered an implementation error.</summary>
+    ImplementationSpecificError = 0x83,
+
+    /// <summary>The server is unavailable.</summary>
+    ServerUnavailable = 0x88,
+
+    /// <summary>The client is banned.</summary>
+    Banned = 0x8A,
+
+    /// <summary>The user name or password is invalid.</summary>
+    BadUserNameOrPassword = 0x86,
+
     /// <summary>Subscription granted at QoS 1.</summary>
     GrantedQos1 = 0x01,
 

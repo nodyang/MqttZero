@@ -20,7 +20,9 @@ namespace MqttZero.Tests.Broker
         public async Task OfflineQueuePromotesBorrowedLeaseAndReleasesOwnedCopy()
         {
             MqttZeroBufferPool pool = new(1024 * 1024);
-            MqttZeroBroker broker = new(new MqttZeroOptions(), TimeProvider.System);
+            MqttZeroBroker broker = MqttZeroBroker.Create(
+                new MqttZeroOptions(),
+                TimeProvider.System);
             await broker.StartAsync(TestContext.Current.CancellationToken);
             FieldInfo bufferPoolField = typeof(MqttZeroBroker).GetField(
                 "_bufferPool",
@@ -202,7 +204,9 @@ namespace MqttZero.Tests.Broker
         [Fact]
         public async Task BrokerQosOnePublishAndPubAckDoNotAllocateAfterWarmup()
         {
-            MqttZeroBroker broker = new(new MqttZeroOptions(), TimeProvider.System);
+            MqttZeroBroker broker = MqttZeroBroker.Create(
+                new MqttZeroOptions(),
+                TimeProvider.System);
             MqttZeroSessionState receiver = new("qos-receiver");
             receiver.Subscriptions.Add(new MqttZeroSubscription(
                 "hot/#"u8.ToArray(),
@@ -349,7 +353,10 @@ namespace MqttZero.Tests.Broker
         private static async Task AssertBrokerPublishDoesNotAllocateAfterWarmup(
             IMqttZeroPublishInterceptor[] interceptors)
         {
-            MqttZeroBroker broker = new(new MqttZeroOptions(), TimeProvider.System, interceptors);
+            MqttZeroBroker broker = MqttZeroBroker.Create(
+                new MqttZeroOptions(),
+                TimeProvider.System,
+                interceptors);
             FieldInfo sessionsField = typeof(MqttZeroBroker).GetField(
                 "_sessions",
                 BindingFlags.Instance | BindingFlags.NonPublic)!;

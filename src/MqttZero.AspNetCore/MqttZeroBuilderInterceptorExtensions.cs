@@ -1,5 +1,6 @@
 using MqttZero.Broker;
 using MqttZero.Interceptors;
+using MqttZero.Observers;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
@@ -15,19 +16,80 @@ public static class MqttZeroBuilderInterceptorExtensions
     /// </summary>
     /// <typeparam name="TInterceptor">The interceptor implementation.</typeparam>
     /// <param name="builder">The MQTTZero builder.</param>
-    /// <param name="order">The registration order hint.</param>
     /// <returns>The same builder.</returns>
     public static IMqttZeroBuilder AddInterceptor<TInterceptor>(
-        this IMqttZeroBuilder builder,
-        int order = 0)
+        this IMqttZeroBuilder builder)
         where TInterceptor : class, IMqttZeroPublishInterceptor
     {
         ArgumentNullException.ThrowIfNull(builder);
         builder.Services.TryAddSingleton<TInterceptor>();
         builder.Services.AddSingleton<IMqttZeroPublishInterceptor>(
-            provider => new MqttZeroOrderedPublishInterceptor(
-                provider.GetRequiredService<TInterceptor>(),
-                order));
+            provider => provider.GetRequiredService<TInterceptor>());
         return builder;
+    }
+
+    /// <summary>Registers a publish interceptor.</summary>
+    public static IMqttZeroBuilder AddPublishInterceptor<T>(this IMqttZeroBuilder builder)
+        where T : class, IMqttZeroPublishInterceptor
+    {
+        return AddInterceptor<T>(builder);
+    }
+
+    /// <summary>Registers a CONNECT interceptor.</summary>
+    public static IMqttZeroBuilder AddConnectionInterceptor<T>(this IMqttZeroBuilder builder)
+        where T : class, IMqttZeroConnectionInterceptor
+    {
+        AddExtension<IMqttZeroConnectionInterceptor, T>(builder);
+        return builder;
+    }
+
+    /// <summary>Registers a subscribe interceptor.</summary>
+    public static IMqttZeroBuilder AddSubscribeInterceptor<T>(this IMqttZeroBuilder builder)
+        where T : class, IMqttZeroSubscribeInterceptor
+    {
+        AddExtension<IMqttZeroSubscribeInterceptor, T>(builder);
+        return builder;
+    }
+
+    /// <summary>Registers an unsubscribe interceptor.</summary>
+    public static IMqttZeroBuilder AddUnsubscribeInterceptor<T>(this IMqttZeroBuilder builder)
+        where T : class, IMqttZeroUnsubscribeInterceptor
+    {
+        AddExtension<IMqttZeroUnsubscribeInterceptor, T>(builder);
+        return builder;
+    }
+
+    /// <summary>Registers an enqueue interceptor.</summary>
+    public static IMqttZeroBuilder AddEnqueueInterceptor<T>(this IMqttZeroBuilder builder)
+        where T : class, IMqttZeroEnqueueInterceptor
+    {
+        AddExtension<IMqttZeroEnqueueInterceptor, T>(builder);
+        return builder;
+    }
+
+    /// <summary>Registers a connection observer.</summary>
+    public static IMqttZeroBuilder AddConnectionObserver<T>(this IMqttZeroBuilder builder)
+        where T : class, IMqttZeroConnectionObserver
+    {
+        AddExtension<IMqttZeroConnectionObserver, T>(builder);
+        return builder;
+    }
+
+    /// <summary>Registers a delivery observer.</summary>
+    public static IMqttZeroBuilder AddDeliveryObserver<T>(this IMqttZeroBuilder builder)
+        where T : class, IMqttZeroDeliveryObserver
+    {
+        AddExtension<IMqttZeroDeliveryObserver, T>(builder);
+        return builder;
+    }
+
+    private static void AddExtension<TService, TImplementation>(IMqttZeroBuilder builder)
+        where TService : class
+        where TImplementation : class, TService
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        builder.Services.TryAddSingleton<TImplementation>();
+        builder.Services.AddSingleton<TService>(
+            provider => provider.GetRequiredService<TImplementation>());
     }
 }

@@ -36,13 +36,13 @@ namespace MqttZero.Tests.Interceptors
         }
 
         [Fact]
-        public async Task RegisteredPublishInterceptorsRunInConfiguredOrder()
+        public async Task RegisteredPublishInterceptorsRunInRegistrationOrder()
         {
             ServiceCollection services = new();
             services.AddSingleton<InterceptorOrderRecorder>();
             services.AddMqttZero()
-                .AddInterceptor<SecondPublishInterceptor>(order: 20)
-                .AddInterceptor<FirstPublishInterceptor>(order: 10);
+                .AddInterceptor<FirstPublishInterceptor>()
+                .AddInterceptor<SecondPublishInterceptor>();
             await using ServiceProvider provider = services.BuildServiceProvider();
 
             InterceptorOrderRecorder recorder = provider.GetRequiredService<InterceptorOrderRecorder>();

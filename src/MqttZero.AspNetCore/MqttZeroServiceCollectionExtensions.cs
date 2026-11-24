@@ -1,8 +1,6 @@
 using MqttZero.Broker;
-using MqttZero.Interceptors;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
-using Microsoft.Extensions.Options;
 
 namespace MqttZero.AspNetCore;
 
@@ -31,14 +29,7 @@ public static class MqttZeroServiceCollectionExtensions
         }
 
         services.TryAddSingleton(TimeProvider.System);
-        services.TryAddSingleton(static provider =>
-        {
-            MqttZeroOptions options = provider.GetRequiredService<IOptions<MqttZeroOptions>>().Value;
-            TimeProvider timeProvider = provider.GetRequiredService<TimeProvider>();
-            IEnumerable<IMqttZeroPublishInterceptor> interceptors =
-                provider.GetServices<IMqttZeroPublishInterceptor>();
-            return new MqttZeroBroker(options, timeProvider, interceptors);
-        });
+        services.TryAddSingleton<MqttZeroBroker>();
         services.TryAddSingleton<MqttZeroConnectionHandler>();
         services.AddHostedService<MqttZeroHostedService>();
 

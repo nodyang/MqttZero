@@ -1,5 +1,7 @@
 using MqttZero.Interceptors;
 using MqttZero.Memory;
+using MqttZero.Events;
+using MqttZero.Observers;
 using MqttZero.Protocol;
 using MqttZero.Routing;
 using MqttZero.Sessions;
@@ -40,6 +42,7 @@ public sealed partial class MqttZeroBroker
                 qos,
                 retain,
                 subscriptionIdentifier,
+                null,
                 cancellationToken).ConfigureAwait(false);
         }
         finally
@@ -54,6 +57,7 @@ public sealed partial class MqttZeroBroker
         MqttQualityOfServiceLevel qos,
         bool retain,
         uint? subscriptionIdentifier,
+        MqttZeroClientConnection? senderConnection,
         CancellationToken cancellationToken)
     {
         DateTimeOffset now = _timeProvider.GetUtcNow();
@@ -62,7 +66,52 @@ public sealed partial class MqttZeroBroker
             : null;
         if (expiresAt <= now)
         {
+            await NotifyDroppedAsync(
+                senderConnection?.ClientInfo,
+                session,
+                lease,
+                MqttZeroMessageDropReason.Expired,
+                cancellationToken).ConfigureAwait(false);
             return;
+        }
+
+        MqttZeroEnqueueContext? enqueueContext = null;
+        if (_enqueueInterceptors.Length > 0)
+        {
+            enqueueContext = new MqttZeroEnqueueContext
+            {
+                Sender = senderConnection?.ClientInfo,
+                Receiver = session.Connection?.ClientInfo ?? CreateOfflineClientInfo(session),
+                Topic = new ReadOnlySequence<byte>(lease.Topic),
+                PayloadLength = lease.PayloadSequence.Length,
+                QualityOfServiceLevel = qos,
+                Retain = retain,
+                SubscriptionIdentifier = subscriptionIdentifier
+            };
+            foreach (IMqttZeroEnqueueInterceptor interceptor in _enqueueInterceptors)
+            {
+                MqttZeroEnqueueInterceptionResult result =
+                    await interceptor.InterceptAsync(enqueueContext, cancellationToken).ConfigureAwait(false);
+                if (result == MqttZeroEnqueueInterceptionResult.Drop)
+                {
+                    await NotifyDroppedAsync(
+                        senderConnection?.ClientInfo,
+                        session,
+                        lease,
+                        MqttZeroMessageDropReason.InterceptorRejected,
+                        cancellationToken).ConfigureAwait(false);
+                    return;
+                }
+
+                if (result == MqttZeroEnqueueInterceptionResult.CloseSenderConnection &&
+                    senderConnection != null)
+                {
+                    await senderConnection.CloseAsync(
+                        MqttReasonCode.NotAuthorized,
+                        cancellationToken).ConfigureAwait(false);
+                    return;
+                }
+            }
         }
 
         MqttZeroQueuedMessage? message = null;
@@ -108,9 +157,35 @@ public sealed partial class MqttZeroBroker
                         retain,
                         subscriptionIdentifier,
                         expiresAt);
-                    EnqueueMessage(session, message);
+                    if (_deliveryObservers.Length > 0)
+                    {
+                        EnqueueMessage(
+                            session,
+                            message,
+                            session.Connection?.ClientInfo ?? CreateOfflineClientInfo(session));
+                    }
+                    else
+                    {
+                        EnqueueMessage(session, message, null);
+                    }
                     messageHeld = true;
                 }
+            }
+
+            if (messageHeld && _deliveryObservers.Length > 0)
+            {
+                MqttZeroClientInfo receiver = enqueueContext?.Receiver ??
+                    session.Connection?.ClientInfo ??
+                    CreateOfflineClientInfo(session);
+                MqttZeroMessageEnqueuedContext observerContext = new()
+                {
+                    Sender = senderConnection?.ClientInfo,
+                    Receiver = receiver,
+                    Topic = new ReadOnlySequence<byte>(lease.Topic),
+                    PayloadLength = lease.PayloadSequence.Length,
+                    QualityOfServiceLevel = qos
+                };
+                await NotifyEnqueuedAsync(observerContext, cancellationToken).ConfigureAwait(false);
             }
 
             if (sendImmediately)
@@ -142,7 +217,10 @@ public sealed partial class MqttZeroBroker
         }
     }
 
-    private void EnqueueMessage(MqttZeroSessionState session, MqttZeroQueuedMessage message)
+    private void EnqueueMessage(
+        MqttZeroSessionState session,
+        MqttZeroQueuedMessage message,
+        MqttZeroClientInfo? receiver)
     {
         if (session.PendingMessages.Count >= _options.MaxMessageQueueLength)
         {
@@ -152,17 +230,132 @@ public sealed partial class MqttZeroBroker
             {
                 MqttZeroQueuedMessage evicted = session.PendingMessages[oldestQos0Index];
                 session.PendingMessages.RemoveAt(oldestQos0Index);
+                if (receiver != null)
+                {
+                    NotifyOverwritten(receiver, evicted);
+                }
                 evicted.Release();
             }
             else if (session.PendingMessages.Count > 0)
             {
                 MqttZeroQueuedMessage evicted = session.PendingMessages[0];
                 session.PendingMessages.RemoveAt(0);
+                if (receiver != null)
+                {
+                    NotifyOverwritten(receiver, evicted);
+                }
                 evicted.Release();
             }
         }
 
         session.PendingMessages.Add(message);
+    }
+
+    private static MqttZeroClientInfo CreateOfflineClientInfo(MqttZeroSessionState session)
+    {
+        return new MqttZeroClientInfo
+        {
+            ClientId = session.ClientId
+        };
+    }
+
+    private async ValueTask NotifyNotConsumedAsync(
+        MqttZeroClientInfo? sender,
+        MqttZeroMessageLease lease,
+        CancellationToken cancellationToken)
+    {
+        if (_deliveryObservers.Length == 0)
+        {
+            return;
+        }
+
+        MqttZeroMessageNotConsumedContext context = new()
+        {
+            Sender = sender,
+            Topic = new ReadOnlySequence<byte>(lease.Topic),
+            PayloadLength = lease.PayloadSequence.Length
+        };
+        foreach (IMqttZeroDeliveryObserver observer in _deliveryObservers)
+        {
+            try
+            {
+                await observer.OnMessageNotConsumedAsync(context, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception)
+            {
+            }
+        }
+    }
+
+    private async ValueTask NotifyDroppedAsync(
+        MqttZeroClientInfo? sender,
+        MqttZeroSessionState session,
+        MqttZeroMessageLease lease,
+        MqttZeroMessageDropReason reason,
+        CancellationToken cancellationToken)
+    {
+        if (_deliveryObservers.Length == 0)
+        {
+            return;
+        }
+
+        MqttZeroMessageDroppedContext context = new()
+        {
+            Sender = sender,
+            Receiver = session.Connection?.ClientInfo,
+            Topic = new ReadOnlySequence<byte>(lease.Topic),
+            Reason = reason
+        };
+        foreach (IMqttZeroDeliveryObserver observer in _deliveryObservers)
+        {
+            try
+            {
+                await observer.OnMessageDroppedAsync(context, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception)
+            {
+            }
+        }
+    }
+
+    private async ValueTask NotifyEnqueuedAsync(
+        MqttZeroMessageEnqueuedContext context,
+        CancellationToken cancellationToken)
+    {
+        foreach (IMqttZeroDeliveryObserver observer in _deliveryObservers)
+        {
+            try
+            {
+                await observer.OnMessageEnqueuedAsync(context, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception)
+            {
+            }
+        }
+    }
+
+    private void NotifyOverwritten(
+        MqttZeroClientInfo receiver,
+        MqttZeroQueuedMessage evicted)
+    {
+        MqttZeroQueueMessageOverwrittenContext context = new()
+        {
+            Receiver = receiver,
+            Topic = new ReadOnlySequence<byte>(evicted.Topic)
+        };
+        foreach (IMqttZeroDeliveryObserver observer in _deliveryObservers)
+        {
+            try
+            {
+                _ = observer.OnQueueMessageOverwrittenAsync(
+                    context,
+                    CancellationToken.None).AsTask();
+            }
+            catch (Exception)
+            {
+            }
+        }
     }
 
     private async ValueTask ResumeSessionAsync(

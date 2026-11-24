@@ -74,6 +74,11 @@ public sealed partial class MqttZeroBroker
                 sender,
                 _sharedSubscriptionCursors,
                 _routeScopes);
+            if (deliveries.Count == 0)
+            {
+                await NotifyNotConsumedAsync(null, lease, cancellationToken).ConfigureAwait(false);
+            }
+
             for (int index = 0; index < deliveries.Count; index++)
             {
                 MqttZeroDeliveryCandidate delivery = deliveries[index];
@@ -83,6 +88,7 @@ public sealed partial class MqttZeroBroker
                     delivery.QualityOfServiceLevel,
                     delivery.Subscription.RetainAsPublished && lease.RetainFlag,
                     delivery.Subscription.SubscriptionIdentifier,
+                    null,
                     cancellationToken).ConfigureAwait(false);
             }
 
@@ -173,6 +179,7 @@ public sealed partial class MqttZeroBroker
             context.QualityOfServiceLevel = lease.QualityOfServiceLevel;
             context.Retain = lease.RetainFlag;
             context.SenderClientId = sender.ClientId;
+            context.SenderClientInfo = senderConnection.ClientInfo;
             try
             {
                 foreach (IMqttZeroPublishInterceptor interceptor in _publishInterceptors)
@@ -186,7 +193,7 @@ public sealed partial class MqttZeroBroker
                         {
                             await senderConnection.SendPubAckAsync(
                                 lease.PacketIdentifier,
-                                MqttReasonCode.Success,
+                                context.ResultReasonCode,
                                 cancellationToken).ConfigureAwait(false);
                         }
 
@@ -227,6 +234,14 @@ public sealed partial class MqttZeroBroker
                 sender,
                 _sharedSubscriptionCursors,
                 _routeScopes);
+            if (deliveries.Count == 0)
+            {
+                await NotifyNotConsumedAsync(
+                    senderConnection.ClientInfo,
+                    effectiveLease,
+                    cancellationToken).ConfigureAwait(false);
+            }
+
             for (int index = 0; index < deliveries.Count; index++)
             {
                 MqttZeroDeliveryCandidate delivery = deliveries[index];
@@ -236,6 +251,7 @@ public sealed partial class MqttZeroBroker
                     delivery.QualityOfServiceLevel,
                     delivery.Subscription.RetainAsPublished && effectiveLease.RetainFlag,
                     delivery.Subscription.SubscriptionIdentifier,
+                    senderConnection,
                     cancellationToken).ConfigureAwait(false);
             }
 

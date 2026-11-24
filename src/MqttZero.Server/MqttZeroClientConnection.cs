@@ -1,4 +1,5 @@
 using MqttZero.Memory;
+using MqttZero.Events;
 using MqttZero.Protocol;
 using MqttZero.Sessions;
 using System.Buffers;
@@ -55,6 +56,12 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
     public uint MaximumPacketSize { get; }
 
     public bool AllowPacketFragmentation { get; }
+
+    public MqttZeroClientInfo ClientInfo { get; set; } = null!;
+
+    public MqttZeroDisconnectType DisconnectType { get; set; } = MqttZeroDisconnectType.ConnectionLost;
+
+    public MqttReasonCode? CloseReasonCode { get; private set; }
 
     public DateTimeOffset LastPacketReceivedAt { get; private set; }
 
@@ -435,6 +442,14 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
         MqttReasonCode reasonCode,
         CancellationToken cancellationToken)
     {
+        CloseReasonCode = reasonCode;
+        DisconnectType = reasonCode switch
+        {
+            MqttReasonCode.KeepAliveTimeout => MqttZeroDisconnectType.KeepAliveTimeout,
+            MqttReasonCode.SessionTakenOver => MqttZeroDisconnectType.SessionTakenOver,
+            MqttReasonCode.ServerShuttingDown => MqttZeroDisconnectType.ServerShutdown,
+            _ => MqttZeroDisconnectType.ProtocolError
+        };
         try
         {
             await SendDisconnectAsync(
