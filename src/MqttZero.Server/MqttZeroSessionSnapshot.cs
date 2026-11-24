@@ -46,9 +46,14 @@ public sealed class MqttZeroSessionSnapshot
     public int PendingMessageCount { get; init; }
 
     /// <summary>
-    /// Gets the in-flight QoS 1 message count.
+    /// Gets the in-flight QoS 1 and QoS 2 message count.
     /// </summary>
     public int InflightMessageCount { get; init; }
+
+    /// <summary>
+    /// Gets the inbound QoS 2 message count awaiting PUBREL.
+    /// </summary>
+    public int InboundQos2MessageCount { get; init; }
 
     /// <summary>
     /// Gets a value indicating whether the session stores a will message.

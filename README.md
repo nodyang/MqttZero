@@ -5,15 +5,16 @@ MQTTZero 是一个面向 ASP.NET Core Kestrel 的独立 MQTT 5 Broker。生产�
 ## 当前能力
 
 - Kestrel 原始 TCP、TLS 和 MQTT over WebSocket。
-- MQTT 5 CONNECT、PUBLISH、QoS 0/1、SUBSCRIBE、UNSUBSCRIBE、ACK、PING 和 DISCONNECT。
-- 持久 Session、Session Expiry、Session Present、客户端 ID 接管和离线 QoS 1 队列。
+- MQTT 5 CONNECT、PUBLISH、QoS 0/1/2、SUBSCRIBE、UNSUBSCRIBE、ACK、PING 和 DISCONNECT。
+- 完整 QoS 2 PUBREC/PUBREL/PUBCOMP 握手、重连恢复和 Broker 侧重发去重。
+- 持久 Session、Session Expiry、Session Present、客户端 ID 接管和离线 QoS 1/2 队列。
 - QoS 1 Inflight `DUP` 重发、KeepAlive 超时、Will/Will Delay 和 Message Expiry。
 - UTF-8 Topic 通配符、Topic Alias、共享订阅轮询、Retained 回放和内存 PayloadOwner。
 - CONNECT 认证、订阅/退订授权、发布和投递拦截，以及连接与投递 Observer。
 - Broker 生命周期、客户端快照和健康检查。
 - 统一 `MqttZeroPublishMessage` 发布入口，以及 `ReadOnlySequence<byte>`、PipeWriter 工厂和 Stream 便捷扩展。
 - Kestrel Accepted Socket、静态 TLS、分片策略和 Unix Domain Socket 原生承载配置。
-- 池化字节池、引用计数 Payload Lease、无分配 PUBLISH 解码/路由/QoS 1 队列/编码和内存 Transport 热路径。
+- 池化字节池、引用计数 Payload Lease、无分配 PUBLISH 解码/路由/QoS 1/2 队列/编码和内存 Transport 热路径。
 - 可选 Vue 3 + Element Plus 管理面板，构建资源内嵌在 NuGet 程序集中。
 
 ## 快速开始
@@ -149,7 +150,7 @@ WebSocket 未设置选择器时默认不允许分片，从而保持 MQTT PUBLISH
 - `MqttPublishPacketCodec` 直接解析 `ReadOnlySequence<byte>`，不创建完整报文或 Topic 数组。
 - Topic/Properties/Payload 由引用计数 `MqttZeroMessageLease` 共享；在线订阅者、离线队列和 Inflight 消息持有同一份内存。
 - 路由使用每 Broker 的池化 `MqttZeroRouteScope` 和不可变订阅快照，不为每条消息创建 `List`、`Dictionary` 或候选对象。
-- QoS 1 描述符、PubAck 和出站 PUBLISH 编码复用池化对象，并直接写入连接自己的 `IBufferWriter`。
+- QoS 1/2 描述符、确认包和出站 PUBLISH 编码复用池化对象，并直接写入连接自己的 `IBufferWriter`。
 - `MqttZeroBufferPool` 以 `ArrayPool<byte>` 为底层来源执行字节预算；耗尽时暂停读取并等待释放，不静默回退到普通数组。
 
 零分配口径仅包含预热后的单线程同步 Broker 核心热路径。Kestrel/TLS/WebSocket、连接建立、订阅变更、Retained 更新、管理 API、日志、异常、Observer 和异步拦截器续接允许分配。WebSocket 为维持单帧语义允许在边界复制一次 Payload。
@@ -198,4 +199,4 @@ npm run build
 
 ## 限制
 
-当前不包含 QoS 2、Enhanced Authentication、MQTT 3.1.1、跨进程持久化、集群、桥接和客户端 SDK。Session、Will、QoS 1 队列在进程重启后丢失。Dashboard、管理 API、异步拦截器续接和网络框架边界不属于 `0 B/op` 承诺。当前不提供完整 MQTT 5 属性语义或 Dashboard Live Events。
+当前不包含 Enhanced Authentication、MQTT 3.1.1、跨进程持久化、集群、桥接和客户端 SDK。Session、Will、QoS 1/2 队列和 QoS 2 握手状态在进程重启后丢失。Dashboard、管理 API、异步拦截器续接和网络框架边界不属于 `0 B/op` 承诺。当前不提供完整 MQTT 5 属性语义或 Dashboard Live Events。

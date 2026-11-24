@@ -31,6 +31,8 @@ internal sealed class MqttZeroSessionState
 
     public Dictionary<ushort, MqttZeroQueuedMessage> InflightMessages { get; } = [];
 
+    public Dictionary<ushort, MqttZeroMessageLease> InboundQos2Messages { get; } = [];
+
     public MqttZeroClientConnection? Connection { get; set; }
 
     public bool CleanStart { get; set; }
@@ -62,6 +64,7 @@ internal sealed class MqttZeroSessionState
         int subscriptionCount;
         int pendingCount;
         int inflightCount;
+        int inboundQos2Count;
         bool isConnected;
         bool cleanStart;
         uint expiryInterval;
@@ -72,6 +75,7 @@ internal sealed class MqttZeroSessionState
             subscriptionCount = Subscriptions.Count;
             pendingCount = PendingMessages.Count;
             inflightCount = InflightMessages.Count;
+            inboundQos2Count = InboundQos2Messages.Count;
             isConnected = Connection != null;
             cleanStart = CleanStart;
             expiryInterval = ExpiryInterval;
@@ -92,6 +96,7 @@ internal sealed class MqttZeroSessionState
             SubscriptionCount = subscriptionCount,
             PendingMessageCount = pendingCount,
             InflightMessageCount = inflightCount,
+            InboundQos2MessageCount = inboundQos2Count,
             HasWill = willMessage != null,
             WillTopic = willMessage == null ? null : Encoding.UTF8.GetString(willMessage.Topic),
             SampledAt = now

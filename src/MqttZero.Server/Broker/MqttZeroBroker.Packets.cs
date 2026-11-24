@@ -41,15 +41,38 @@ public sealed partial class MqttZeroBroker
             case MqttPubAckPacket pubAckPacket:
                 lock (session.SyncRoot)
                 {
-                    if (session.InflightMessages.Remove(
-                        pubAckPacket.PacketIdentifier,
-                        out MqttZeroQueuedMessage? acknowledged))
+                    if (session.InflightMessages.TryGetValue(
+                            pubAckPacket.PacketIdentifier,
+                            out MqttZeroQueuedMessage? acknowledged) &&
+                        acknowledged.QualityOfServiceLevel ==
+                            MqttQualityOfServiceLevel.AtLeastOnce)
                     {
+                        session.InflightMessages.Remove(pubAckPacket.PacketIdentifier);
                         acknowledged.Release();
                     }
                 }
 
                 await DrainSessionAsync(session, cancellationToken).ConfigureAwait(false);
+                break;
+            case MqttPubRecPacket pubRecPacket:
+                await ProcessOutboundPubRecAsync(
+                    session,
+                    connection,
+                    pubRecPacket,
+                    cancellationToken).ConfigureAwait(false);
+                break;
+            case MqttPubRelPacket pubRelPacket:
+                await ProcessInboundPubRelAsync(
+                    session,
+                    connection,
+                    pubRelPacket,
+                    cancellationToken).ConfigureAwait(false);
+                break;
+            case MqttPubCompPacket pubCompPacket:
+                await ProcessOutboundPubCompAsync(
+                    session,
+                    pubCompPacket,
+                    cancellationToken).ConfigureAwait(false);
                 break;
             case MqttDisconnectPacket:
                 if (packet is MqttDisconnectPacket disconnectPacket &&
@@ -84,12 +107,6 @@ public sealed partial class MqttZeroBroker
         for (int index = 0; index < packet.Subscriptions.Count; index++)
         {
             MqttSubscriptionRequest request = packet.Subscriptions[index];
-            if (request.QualityOfServiceLevel == MqttQualityOfServiceLevel.ExactlyOnce)
-            {
-                reasonCodes[index] = (byte)MqttReasonCode.QosNotSupported;
-                continue;
-            }
-
             MqttZeroSubscribeContext context = new()
             {
                 Client = connection.ClientInfo,
@@ -151,9 +168,14 @@ public sealed partial class MqttZeroBroker
                 }
             }
 
-            reasonCodes[index] = request.QualityOfServiceLevel == MqttQualityOfServiceLevel.AtLeastOnce
-                ? (byte)MqttReasonCode.GrantedQos1
-                : (byte)MqttReasonCode.Success;
+            reasonCodes[index] = request.QualityOfServiceLevel switch
+            {
+                MqttQualityOfServiceLevel.ExactlyOnce =>
+                    (byte)MqttReasonCode.GrantedQos2,
+                MqttQualityOfServiceLevel.AtLeastOnce =>
+                    (byte)MqttReasonCode.GrantedQos1,
+                _ => (byte)MqttReasonCode.Success
+            };
             changed = true;
         }
 

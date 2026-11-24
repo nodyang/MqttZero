@@ -29,6 +29,39 @@ namespace MqttZero.Tests.Protocol
             Assert.Equal((ushort)42, pubAckPacket.PacketIdentifier);
             Assert.Equal(MqttReasonCode.Success, pubAckPacket.ReasonCode);
         }
+
+        [Fact]
+        public void RoundTripsQos2AcknowledgementPackets()
+        {
+            MqttPacket[] packets =
+            [
+                new MqttPubRecPacket
+                {
+                    PacketIdentifier = 11,
+                    ReasonCode = MqttReasonCode.PacketIdentifierInUse
+                },
+                new MqttPubRelPacket
+                {
+                    PacketIdentifier = 12
+                },
+                new MqttPubCompPacket
+                {
+                    PacketIdentifier = 13,
+                    ReasonCode = MqttReasonCode.PacketIdentifierNotFound
+                }
+            ];
+
+            foreach (MqttPacket packet in packets)
+            {
+                byte[] bytes = ProtocolPacketTestHelper.Encode(packet);
+                Assert.True(MqttPacketCodec.TryDecode(
+                    new ReadOnlySequence<byte>(bytes),
+                    out MqttPacket? decoded,
+                    out long consumed));
+                Assert.Equal(bytes.Length, consumed);
+                Assert.Equal(packet.PacketType, decoded!.PacketType);
+            }
+        }
         [Fact]
         public void ReadsPacketLengthBeforeFullPacketArrives()
         {

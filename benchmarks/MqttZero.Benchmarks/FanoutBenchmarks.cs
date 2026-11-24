@@ -129,7 +129,7 @@ public class FanoutBenchmarks : IDisposable
             _writers[index].Reset();
         }
 
-        ValueTask route = _broker.RoutePublishLeaseAsync(
+        ValueTask<MqttReasonCode> route = _broker.RoutePublishLeaseAsync(
             _sender,
             _senderConnection,
             _lease,

@@ -36,7 +36,7 @@ public static partial class MqttPacketCodec
         bool hasWill = (connectFlags & 0x04) != 0;
 
         if ((!hasWill && (willRetain || willQos != MqttQualityOfServiceLevel.AtMostOnce)) ||
-            willQos == MqttQualityOfServiceLevel.ExactlyOnce)
+            (byte)willQos > (byte)MqttQualityOfServiceLevel.ExactlyOnce)
         {
             return false;
         }

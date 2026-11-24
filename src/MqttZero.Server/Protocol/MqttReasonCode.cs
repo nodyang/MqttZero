@@ -26,6 +26,9 @@ public enum MqttReasonCode : byte
     /// <summary>Subscription granted at QoS 1.</summary>
     GrantedQos1 = 0x01,
 
+    /// <summary>Subscription granted at QoS 2.</summary>
+    GrantedQos2 = 0x02,
+
     /// <summary>The requested QoS is not supported.</summary>
     QosNotSupported = 0x9B,
 
@@ -40,6 +43,15 @@ public enum MqttReasonCode : byte
 
     /// <summary>The client is not connected.</summary>
     NotConnected = 0x90,
+
+    /// <summary>The packet identifier is already in use.</summary>
+    PacketIdentifierInUse = 0x91,
+
+    /// <summary>The packet identifier was not found.</summary>
+    PacketIdentifierNotFound = 0x92,
+
+    /// <summary>The receive maximum was exceeded.</summary>
+    ReceiveMaximumExceeded = 0x93,
 
     /// <summary>The server is shutting down.</summary>
     ServerShuttingDown = 0x8B,

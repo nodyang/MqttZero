@@ -15,7 +15,7 @@ public static partial class MqttPacketCodec
     {
         packet = null;
         MqttQualityOfServiceLevel qos = (MqttQualityOfServiceLevel)((firstByte >> 1) & 0x03);
-        if (qos == MqttQualityOfServiceLevel.ExactlyOnce)
+        if ((byte)qos > (byte)MqttQualityOfServiceLevel.ExactlyOnce)
         {
             return false;
         }

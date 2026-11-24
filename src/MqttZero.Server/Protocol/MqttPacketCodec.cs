@@ -53,6 +53,9 @@ public static partial class MqttPacketCodec
             MqttPacketType.ConnAck => TryDecodeConnAck(firstByte, ref bodyReader, out packet),
             MqttPacketType.Publish => TryDecodePublish(firstByte, ref bodyReader, out packet),
             MqttPacketType.PubAck => TryDecodePubAck(firstByte, ref bodyReader, out packet),
+            MqttPacketType.PubRec => TryDecodePubRec(firstByte, ref bodyReader, out packet),
+            MqttPacketType.PubRel => TryDecodePubRel(firstByte, ref bodyReader, out packet),
+            MqttPacketType.PubComp => TryDecodePubComp(firstByte, ref bodyReader, out packet),
             MqttPacketType.Subscribe => TryDecodeSubscribe(firstByte, ref bodyReader, out packet),
             MqttPacketType.SubAck => TryDecodeSubAck(firstByte, ref bodyReader, out packet),
             MqttPacketType.Unsubscribe => TryDecodeUnsubscribe(firstByte, ref bodyReader, out packet),
@@ -128,6 +131,30 @@ public static partial class MqttPacketCodec
                 break;
             case MqttPubAckPacket pubAckPacket:
                 EncodePubAck(pubAckPacket, writer);
+                break;
+            case MqttPubRecPacket pubRecPacket:
+                EncodeAcknowledgement(
+                    0x50,
+                    pubRecPacket.PacketIdentifier,
+                    pubRecPacket.ReasonCode,
+                    pubRecPacket.Properties,
+                    writer);
+                break;
+            case MqttPubRelPacket pubRelPacket:
+                EncodeAcknowledgement(
+                    0x62,
+                    pubRelPacket.PacketIdentifier,
+                    pubRelPacket.ReasonCode,
+                    pubRelPacket.Properties,
+                    writer);
+                break;
+            case MqttPubCompPacket pubCompPacket:
+                EncodeAcknowledgement(
+                    0x70,
+                    pubCompPacket.PacketIdentifier,
+                    pubCompPacket.ReasonCode,
+                    pubCompPacket.Properties,
+                    writer);
                 break;
             case MqttSubscribePacket subscribePacket:
                 EncodeSubscribe(subscribePacket, writer);

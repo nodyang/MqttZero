@@ -129,7 +129,7 @@ public sealed partial class MqttZeroBroker
                     session.PendingMessages.Count == 0 &&
                     (qos == MqttQualityOfServiceLevel.AtMostOnce ||
                         session.InflightMessages.Count < inflightLimit);
-                if (sendImmediately && qos == MqttQualityOfServiceLevel.AtLeastOnce)
+                if (sendImmediately && qos != MqttQualityOfServiceLevel.AtMostOnce)
                 {
                     message = MqttZeroQueuedMessage.Rent(
                         lease,
@@ -335,6 +335,104 @@ public sealed partial class MqttZeroBroker
         }
     }
 
+    private async ValueTask ProcessOutboundPubRecAsync(
+        MqttZeroSessionState session,
+        MqttZeroClientConnection connection,
+        MqttPubRecPacket packet,
+        CancellationToken cancellationToken)
+    {
+        MqttZeroQueuedMessage? message;
+        lock (session.SyncRoot)
+        {
+            session.InflightMessages.TryGetValue(packet.PacketIdentifier, out message);
+        }
+
+        if (message == null ||
+            message.QualityOfServiceLevel != MqttQualityOfServiceLevel.ExactlyOnce)
+        {
+            return;
+        }
+
+        if (packet.ReasonCode >= MqttReasonCode.UnspecifiedError)
+        {
+            lock (session.SyncRoot)
+            {
+                if (session.InflightMessages.Remove(packet.PacketIdentifier, out MqttZeroQueuedMessage? failed))
+                {
+                    failed.Release();
+                }
+            }
+
+            await DrainSessionAsync(session, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        message.SetAwaitPubComp();
+        await connection.SendPubRelAsync(
+            packet.PacketIdentifier,
+            MqttReasonCode.Success,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask ProcessOutboundPubCompAsync(
+        MqttZeroSessionState session,
+        MqttPubCompPacket packet,
+        CancellationToken cancellationToken)
+    {
+        lock (session.SyncRoot)
+        {
+            if (session.InflightMessages.Remove(
+                packet.PacketIdentifier,
+                out MqttZeroQueuedMessage? completed))
+            {
+                completed.Release();
+            }
+        }
+
+        await DrainSessionAsync(session, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask ProcessInboundPubRelAsync(
+        MqttZeroSessionState session,
+        MqttZeroClientConnection connection,
+        MqttPubRelPacket packet,
+        CancellationToken cancellationToken)
+    {
+        MqttZeroMessageLease? lease;
+        lock (session.SyncRoot)
+        {
+            session.InboundQos2Messages.Remove(
+                packet.PacketIdentifier,
+                out lease);
+        }
+
+        if (lease == null)
+        {
+            await connection.SendPubCompAsync(
+                packet.PacketIdentifier,
+                MqttReasonCode.PacketIdentifierNotFound,
+                cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        try
+        {
+            MqttReasonCode result = await RoutePublishLeaseAsync(
+                session,
+                connection,
+                lease,
+                cancellationToken).ConfigureAwait(false);
+            await connection.SendPubCompAsync(
+                packet.PacketIdentifier,
+                result,
+                cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            lease.Release();
+        }
+    }
+
     private void NotifyOverwritten(
         MqttZeroClientInfo receiver,
         MqttZeroQueuedMessage evicted)
@@ -374,8 +472,18 @@ public sealed partial class MqttZeroBroker
 
             foreach (MqttZeroQueuedMessage message in inflight)
             {
-                await connection.SendAsync(message.CreatePacket(true), cancellationToken)
-                    .ConfigureAwait(false);
+                if (message.State == MqttZeroOutboundState.AwaitPubComp)
+                {
+                    await connection.SendPubRelAsync(
+                        message.PacketIdentifier,
+                        MqttReasonCode.Success,
+                        cancellationToken).ConfigureAwait(false);
+                }
+                else
+                {
+                    await connection.SendAsync(message.CreatePacket(true), cancellationToken)
+                        .ConfigureAwait(false);
+                }
             }
 
             await DrainQueuedMessagesAsync(session, connection, cancellationToken).ConfigureAwait(false);
@@ -428,15 +536,15 @@ public sealed partial class MqttZeroBroker
                 DateTimeOffset now = _timeProvider.GetUtcNow();
                 RemoveExpiredPendingMessages(session, now);
                 if (session.PendingMessages.Count == 0 ||
-                    (session.PendingMessages[0].QualityOfServiceLevel ==
-                        MqttQualityOfServiceLevel.AtLeastOnce &&
+                    (session.PendingMessages[0].QualityOfServiceLevel !=
+                        MqttQualityOfServiceLevel.AtMostOnce &&
                     session.InflightMessages.Count >= GetInflightLimit(connection)))
                 {
                     break;
                 }
 
                 next = session.PendingMessages.Dequeue();
-                if (next.QualityOfServiceLevel == MqttQualityOfServiceLevel.AtLeastOnce)
+                if (next.QualityOfServiceLevel != MqttQualityOfServiceLevel.AtMostOnce)
                 {
                     next.PacketIdentifier = session.GetNextPacketIdentifier();
                     session.InflightMessages[next.PacketIdentifier] = next;
@@ -476,6 +584,12 @@ public sealed partial class MqttZeroBroker
             }
 
             session.InflightMessages.Clear();
+            foreach (MqttZeroMessageLease inbound in session.InboundQos2Messages.Values)
+            {
+                inbound.Release();
+            }
+
+            session.InboundQos2Messages.Clear();
         }
     }
 

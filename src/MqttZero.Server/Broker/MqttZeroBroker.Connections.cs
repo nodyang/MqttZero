@@ -140,17 +140,34 @@ public sealed partial class MqttZeroBroker
                         try
                         {
                             MqttZeroMessageLease lease = CreateMessageLease(connection, publishView);
+                            bool transferred = false;
                             try
                             {
-                                await RoutePublishLeaseAsync(
-                                    session,
-                                    connection,
-                                    lease,
-                                    connectionLifetime.Token).ConfigureAwait(false);
+                                if (lease.QualityOfServiceLevel ==
+                                    MqttQualityOfServiceLevel.ExactlyOnce)
+                                {
+                                    transferred = await AcceptInboundQos2Async(
+                                        session,
+                                        connection,
+                                        lease,
+                                        publishView.PacketIdentifier,
+                                        connectionLifetime.Token).ConfigureAwait(false);
+                                }
+                                else
+                                {
+                                    await RoutePublishLeaseAsync(
+                                        session,
+                                        connection,
+                                        lease,
+                                        connectionLifetime.Token).ConfigureAwait(false);
+                                }
                             }
                             finally
                             {
-                                lease.Release();
+                                if (!transferred)
+                                {
+                                    lease.Release();
+                                }
                             }
                         }
                         catch (MqttZeroBufferPoolExhaustedException)

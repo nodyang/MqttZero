@@ -26,6 +26,126 @@ namespace MqttZero.Tests.Broker
     public sealed partial class BrokerIntegrationTests
     {
         [Fact(Timeout = 15_000)]
+        public async Task RoutesQos2MessageExactlyOnce()
+        {
+            int port = GetFreePort();
+            await using WebApplication app = await StartTcpBrokerAsync(port);
+            CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+            MqttClientFactory factory = new();
+            using IMqttClient subscriber = factory.CreateMqttClient();
+            using IMqttClient publisher = factory.CreateMqttClient();
+            System.Collections.Concurrent.ConcurrentQueue<string> received = new();
+            TaskCompletionSource<bool> firstReceived = new(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            subscriber.ApplicationMessageReceivedAsync += eventArgs =>
+            {
+                received.Enqueue(eventArgs.ApplicationMessage.ConvertPayloadToString());
+                firstReceived.TrySetResult(true);
+                return Task.CompletedTask;
+            };
+
+            await subscriber.ConnectAsync(
+                CreatePersistentClientOptions(port, "qos2-subscriber"),
+                cancellationToken);
+            await subscriber.SubscribeAsync(
+                new MqttClientSubscribeOptionsBuilder()
+                    .WithTopicFilter(
+                        "qos2/#",
+                        MQTTnet.Protocol.MqttQualityOfServiceLevel.ExactlyOnce)
+                    .Build(),
+                cancellationToken);
+            await publisher.ConnectAsync(
+                CreateClientOptions(port, "qos2-publisher"),
+                cancellationToken);
+            await publisher.PublishStringAsync(
+                "qos2/value",
+                "exactly-once",
+                MQTTnet.Protocol.MqttQualityOfServiceLevel.ExactlyOnce,
+                cancellationToken: cancellationToken);
+
+            _ = await firstReceived.Task.WaitAsync(
+                TimeSpan.FromSeconds(5),
+                cancellationToken);
+            await Task.Delay(
+                TimeSpan.FromMilliseconds(250),
+                cancellationToken);
+            Assert.Equal(["exactly-once"], received.ToArray());
+
+            await publisher.DisconnectAsync(cancellationToken: cancellationToken);
+            await subscriber.DisconnectAsync(cancellationToken: cancellationToken);
+            await app.StopAsync(cancellationToken);
+        }
+
+        [Fact(Timeout = 15_000)]
+        public async Task DeduplicatesInboundQos2PublishUntilPubRel()
+        {
+            int port = GetFreePort();
+            await using WebApplication app = await StartTcpBrokerAsync(port);
+            CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+            MqttClientFactory factory = new();
+            using IMqttClient subscriber = factory.CreateMqttClient();
+            System.Collections.Concurrent.ConcurrentQueue<string> received = new();
+            TaskCompletionSource<bool> delivered = new(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            subscriber.ApplicationMessageReceivedAsync += eventArgs =>
+            {
+                received.Enqueue(eventArgs.ApplicationMessage.ConvertPayloadToString());
+                delivered.TrySetResult(true);
+                return Task.CompletedTask;
+            };
+            await subscriber.ConnectAsync(
+                CreateClientOptions(port, "qos2-dedup-subscriber"),
+                cancellationToken);
+            await subscriber.SubscribeAsync(
+                new MqttClientSubscribeOptionsBuilder()
+                    .WithTopicFilter("qos2-dedup/#")
+                    .Build(),
+                cancellationToken);
+
+            using TcpClient publisher = new();
+            await publisher.ConnectAsync(IPAddress.Loopback, port, cancellationToken);
+            NetworkStream stream = publisher.GetStream();
+            await SendPacketAsync(
+                stream,
+                new MqttConnectPacket
+                {
+                    ClientId = new ReadOnlySequence<byte>("qos2-dedup-publisher"u8.ToArray()),
+                    CleanStart = true
+                },
+                cancellationToken);
+            _ = Assert.IsType<MqttConnAckPacket>(await ReadPacketAsync(stream, cancellationToken));
+            MqttPublishPacket publish = new()
+            {
+                TopicName = new ReadOnlySequence<byte>("qos2-dedup/value"u8.ToArray()),
+                Payload = new ReadOnlySequence<byte>("once"u8.ToArray()),
+                QualityOfServiceLevel = MqttQualityOfServiceLevel.ExactlyOnce,
+                PacketIdentifier = 77
+            };
+            await SendPacketAsync(stream, publish, cancellationToken);
+            _ = Assert.IsType<MqttPubRecPacket>(await ReadPacketAsync(stream, cancellationToken));
+            publish.Duplicate = true;
+            await SendPacketAsync(stream, publish, cancellationToken);
+            _ = Assert.IsType<MqttPubRecPacket>(await ReadPacketAsync(stream, cancellationToken));
+            await SendPacketAsync(
+                stream,
+                new MqttPubRelPacket
+                {
+                    PacketIdentifier = 77
+                },
+                cancellationToken);
+            _ = Assert.IsType<MqttPubCompPacket>(await ReadPacketAsync(stream, cancellationToken));
+            _ = await delivered.Task.WaitAsync(
+                TimeSpan.FromSeconds(5),
+                cancellationToken);
+            await Task.Delay(TimeSpan.FromMilliseconds(250), cancellationToken);
+            Assert.Equal(["once"], received.ToArray());
+
+            await subscriber.DisconnectAsync(cancellationToken: cancellationToken);
+            publisher.Client.Shutdown(SocketShutdown.Both);
+            await app.StopAsync(cancellationToken);
+        }
+
+        [Fact(Timeout = 15_000)]
         public async Task QueuesQos1MessageWhileSessionOffline()
         {
             int port = GetFreePort();

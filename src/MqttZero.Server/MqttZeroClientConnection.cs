@@ -228,6 +228,48 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
         }
     }
 
+    public ValueTask SendPubRecAsync(
+        ushort packetIdentifier,
+        MqttReasonCode reasonCode,
+        CancellationToken cancellationToken)
+    {
+        return SendAsync(
+            new MqttPubRecPacket
+            {
+                PacketIdentifier = packetIdentifier,
+                ReasonCode = reasonCode
+            },
+            cancellationToken);
+    }
+
+    public ValueTask SendPubRelAsync(
+        ushort packetIdentifier,
+        MqttReasonCode reasonCode,
+        CancellationToken cancellationToken)
+    {
+        return SendAsync(
+            new MqttPubRelPacket
+            {
+                PacketIdentifier = packetIdentifier,
+                ReasonCode = reasonCode
+            },
+            cancellationToken);
+    }
+
+    public ValueTask SendPubCompAsync(
+        ushort packetIdentifier,
+        MqttReasonCode reasonCode,
+        CancellationToken cancellationToken)
+    {
+        return SendAsync(
+            new MqttPubCompPacket
+            {
+                PacketIdentifier = packetIdentifier,
+                ReasonCode = reasonCode
+            },
+            cancellationToken);
+    }
+
     public async ValueTask SendPingRespAsync(CancellationToken cancellationToken)
     {
         await _writeLock.WaitAsync(cancellationToken).ConfigureAwait(false);

@@ -14,6 +14,60 @@ namespace MqttZero.Broker;
 /// </summary>
 public sealed partial class MqttZeroBroker
 {
+    private async ValueTask<bool> AcceptInboundQos2Async(
+        MqttZeroSessionState session,
+        MqttZeroClientConnection connection,
+        MqttZeroMessageLease lease,
+        ushort packetIdentifier,
+        CancellationToken cancellationToken)
+    {
+        bool duplicate = false;
+        bool receiveMaximumExceeded = false;
+        lock (session.SyncRoot)
+        {
+            if (session.InboundQos2Messages.ContainsKey(packetIdentifier))
+            {
+                duplicate = true;
+            }
+            else if (session.InboundQos2Messages.Count >= _options.MaxInflight)
+            {
+                receiveMaximumExceeded = true;
+            }
+            else
+            {
+                lease.EnsureOwned();
+                session.InboundQos2Messages[packetIdentifier] = lease;
+            }
+        }
+
+        if (duplicate)
+        {
+            await connection.SendPubRecAsync(
+                packetIdentifier,
+                MqttReasonCode.Success,
+                cancellationToken).ConfigureAwait(false);
+            return false;
+        }
+
+        if (receiveMaximumExceeded)
+        {
+            await connection.SendPubRecAsync(
+                packetIdentifier,
+                MqttReasonCode.ReceiveMaximumExceeded,
+                cancellationToken).ConfigureAwait(false);
+            await connection.CloseAsync(
+                MqttReasonCode.ReceiveMaximumExceeded,
+                cancellationToken).ConfigureAwait(false);
+            return false;
+        }
+
+        await connection.SendPubRecAsync(
+            packetIdentifier,
+            MqttReasonCode.Success,
+            cancellationToken).ConfigureAwait(false);
+        return true;
+    }
+
     private async ValueTask RoutePublishAsync(
         MqttZeroSessionState? sender,
         MqttPublishPacket packet,
@@ -82,10 +136,14 @@ public sealed partial class MqttZeroBroker
             for (int index = 0; index < deliveries.Count; index++)
             {
                 MqttZeroDeliveryCandidate delivery = deliveries[index];
+                MqttQualityOfServiceLevel deliveryQos =
+                    (MqttQualityOfServiceLevel)Math.Min(
+                        (byte)lease.QualityOfServiceLevel,
+                        (byte)delivery.QualityOfServiceLevel);
                 await DeliverLeaseAsync(
                     delivery.Session,
                     lease,
-                    delivery.QualityOfServiceLevel,
+                    deliveryQos,
                     delivery.Subscription.RetainAsPublished && lease.RetainFlag,
                     delivery.Subscription.SubscriptionIdentifier,
                     null,
@@ -160,7 +218,7 @@ public sealed partial class MqttZeroBroker
         return lease;
     }
 
-    internal async ValueTask RoutePublishLeaseAsync(
+    internal async ValueTask<MqttReasonCode> RoutePublishLeaseAsync(
         MqttZeroSessionState sender,
         MqttZeroClientConnection senderConnection,
         MqttZeroMessageLease lease,
@@ -197,7 +255,7 @@ public sealed partial class MqttZeroBroker
                                 cancellationToken).ConfigureAwait(false);
                         }
 
-                        return;
+                        return context.ResultReasonCode;
                     }
                 }
 
@@ -245,10 +303,14 @@ public sealed partial class MqttZeroBroker
             for (int index = 0; index < deliveries.Count; index++)
             {
                 MqttZeroDeliveryCandidate delivery = deliveries[index];
+                MqttQualityOfServiceLevel deliveryQos =
+                    (MqttQualityOfServiceLevel)Math.Min(
+                        (byte)effectiveLease.QualityOfServiceLevel,
+                        (byte)delivery.QualityOfServiceLevel);
                 await DeliverLeaseAsync(
                     delivery.Session,
                     effectiveLease,
-                    delivery.QualityOfServiceLevel,
+                    deliveryQos,
                     delivery.Subscription.RetainAsPublished && effectiveLease.RetainFlag,
                     delivery.Subscription.SubscriptionIdentifier,
                     senderConnection,
@@ -262,6 +324,8 @@ public sealed partial class MqttZeroBroker
                     MqttReasonCode.Success,
                     cancellationToken).ConfigureAwait(false);
             }
+
+            return MqttReasonCode.Success;
         }
         finally
         {

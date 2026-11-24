@@ -41,11 +41,6 @@ internal static class MqttPublishPacketCodec
         }
 
         MqttQualityOfServiceLevel qos = (MqttQualityOfServiceLevel)((firstByte >> 1) & 0x03);
-        if (qos == MqttQualityOfServiceLevel.ExactlyOnce)
-        {
-            return false;
-        }
-
         ushort packetIdentifier = 0;
         if (qos > MqttQualityOfServiceLevel.AtMostOnce &&
             !TryReadUInt16(ref bodyReader, out packetIdentifier))

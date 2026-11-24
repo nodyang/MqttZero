@@ -75,6 +75,138 @@ public static partial class MqttPacketCodec
         return reader.Remaining == 0;
     }
 
+    private static bool TryDecodePubRec(
+        byte firstByte,
+        ref SequenceReader<byte> reader,
+        out MqttPacket? packet)
+    {
+        packet = null;
+        if ((firstByte & 0x0F) != 0 ||
+            !TryReadAcknowledgement(
+                ref reader,
+                out ushort packetIdentifier,
+                out MqttReasonCode reasonCode,
+                out ReadOnlySequence<byte> properties))
+        {
+            return false;
+        }
+
+        packet = new MqttPubRecPacket
+        {
+            PacketIdentifier = packetIdentifier,
+            ReasonCode = reasonCode,
+            Properties = properties
+        };
+        return true;
+    }
+
+    private static bool TryDecodePubRel(
+        byte firstByte,
+        ref SequenceReader<byte> reader,
+        out MqttPacket? packet)
+    {
+        packet = null;
+        if ((firstByte & 0x0F) != 0x02 ||
+            !TryReadAcknowledgement(
+                ref reader,
+                out ushort packetIdentifier,
+                out MqttReasonCode reasonCode,
+                out ReadOnlySequence<byte> properties))
+        {
+            return false;
+        }
+
+        packet = new MqttPubRelPacket
+        {
+            PacketIdentifier = packetIdentifier,
+            ReasonCode = reasonCode,
+            Properties = properties
+        };
+        return true;
+    }
+
+    private static bool TryDecodePubComp(
+        byte firstByte,
+        ref SequenceReader<byte> reader,
+        out MqttPacket? packet)
+    {
+        packet = null;
+        if ((firstByte & 0x0F) != 0 ||
+            !TryReadAcknowledgement(
+                ref reader,
+                out ushort packetIdentifier,
+                out MqttReasonCode reasonCode,
+                out ReadOnlySequence<byte> properties))
+        {
+            return false;
+        }
+
+        packet = new MqttPubCompPacket
+        {
+            PacketIdentifier = packetIdentifier,
+            ReasonCode = reasonCode,
+            Properties = properties
+        };
+        return true;
+    }
+
+    private static bool TryReadAcknowledgement(
+        ref SequenceReader<byte> reader,
+        out ushort packetIdentifier,
+        out MqttReasonCode reasonCode,
+        out ReadOnlySequence<byte> properties)
+    {
+        reasonCode = MqttReasonCode.Success;
+        properties = ReadOnlySequence<byte>.Empty;
+        if (!TryReadUInt16(ref reader, out packetIdentifier))
+        {
+            return false;
+        }
+
+        if (reader.Remaining > 0)
+        {
+            if (!reader.TryRead(out byte encodedReasonCode))
+            {
+                return false;
+            }
+
+            reasonCode = (MqttReasonCode)encodedReasonCode;
+            if (reader.Remaining > 0 &&
+                !TryReadProperties(ref reader, out properties))
+            {
+                return false;
+            }
+        }
+
+        return reader.Remaining == 0;
+    }
+
+    private static void EncodeAcknowledgement(
+        byte firstByte,
+        ushort packetIdentifier,
+        MqttReasonCode reasonCode,
+        ReadOnlySequence<byte> properties,
+        IBufferWriter<byte> writer)
+    {
+        bool includeReason =
+            reasonCode != MqttReasonCode.Success || !properties.IsEmpty;
+        int bodyLength = includeReason
+            ? 3 +
+                GetVariableByteIntegerSize(properties.Length) +
+                (int)properties.Length
+            : 2;
+        Span<byte> fixedHeader = writer.GetSpan(5);
+        fixedHeader[0] = firstByte;
+        int lengthBytes = WriteVariableByteInteger(fixedHeader[1..], bodyLength);
+        writer.Advance(1 + lengthBytes);
+        WriteUInt16(writer, packetIdentifier);
+        if (includeReason)
+        {
+            WriteByte(writer, (byte)reasonCode);
+            WriteProperties(writer, properties);
+        }
+    }
+
     private static bool TryDecodePingReq(
         byte firstByte,
         ref SequenceReader<byte> reader,

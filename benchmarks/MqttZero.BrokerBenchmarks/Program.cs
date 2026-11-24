@@ -100,7 +100,7 @@ static async Task ServeAsync(Dictionary<string, string> arguments)
 static async Task CompareAsync(Dictionary<string, string> arguments)
 {
     string[] brokers = ["mqttzero", "mqttnet"];
-    int[] qosLevels = GetIntArray(arguments, "qos", [0, 1]);
+    int[] qosLevels = GetIntArray(arguments, "qos", [0, 1, 2]);
     int[] subscriberCounts = GetIntArray(arguments, "subscribers", [1, 100, 1000]);
     int[] payloadSizes = GetIntArray(arguments, "payload", [32, 8 * 1024, 64 * 1024]);
     int warmup = GetInt(arguments, "warmup", 15);
@@ -205,9 +205,13 @@ static async Task<object> RunLoadAsync(
     int measurementSeconds)
 {
     MqttClientFactory factory = new();
-    MqttQualityOfServiceLevel qualityOfServiceLevel = qos == 0
-        ? MqttQualityOfServiceLevel.AtMostOnce
-        : MqttQualityOfServiceLevel.AtLeastOnce;
+    MqttQualityOfServiceLevel qualityOfServiceLevel = qos switch
+    {
+        0 => MqttQualityOfServiceLevel.AtMostOnce,
+        1 => MqttQualityOfServiceLevel.AtLeastOnce,
+        2 => MqttQualityOfServiceLevel.ExactlyOnce,
+        _ => throw new ArgumentOutOfRangeException(nameof(qos))
+    };
     List<IMqttClient> subscriberClients = [];
     List<IMqttClient> publisherClients = [];
     long receivedMessages = 0;

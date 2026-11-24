@@ -32,7 +32,7 @@ public static partial class MqttPacketCodec
 
             MqttQualityOfServiceLevel qos = (MqttQualityOfServiceLevel)(options & 0x03);
             byte encodedRetainHandling = (byte)((options >> 4) & 0x03);
-            if (qos == MqttQualityOfServiceLevel.ExactlyOnce ||
+            if ((byte)qos > (byte)MqttQualityOfServiceLevel.ExactlyOnce ||
                 encodedRetainHandling == 3)
             {
                 return false;

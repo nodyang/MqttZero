@@ -145,7 +145,7 @@ public class MemoryTransportBenchmarks : IDisposable
         MqttZeroMessageLease lease = _broker.CreateMessageLease(_receiverConnection, view);
         try
         {
-            ValueTask route = _broker.RoutePublishLeaseAsync(
+            ValueTask<MqttReasonCode> route = _broker.RoutePublishLeaseAsync(
                 _sender,
                 _receiverConnection,
                 lease,

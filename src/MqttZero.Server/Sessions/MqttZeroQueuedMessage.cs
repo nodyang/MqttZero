@@ -57,6 +57,8 @@ internal sealed class MqttZeroQueuedMessage
 
     public ushort PacketIdentifier { get; set; }
 
+    public MqttZeroOutboundState State { get; private set; }
+
     public static MqttZeroQueuedMessage Rent(
         MqttZeroMessageLease lease,
         MqttQualityOfServiceLevel qualityOfServiceLevel,
@@ -77,7 +79,18 @@ internal sealed class MqttZeroQueuedMessage
         message.SubscriptionIdentifier = subscriptionIdentifier;
         message.ExpiresAt = expiresAt;
         message.PacketIdentifier = 0;
+        message.State = qualityOfServiceLevel switch
+        {
+            MqttQualityOfServiceLevel.ExactlyOnce => MqttZeroOutboundState.AwaitPubRec,
+            MqttQualityOfServiceLevel.AtLeastOnce => MqttZeroOutboundState.AwaitPubAck,
+            _ => MqttZeroOutboundState.AwaitPubAck
+        };
         return message;
+    }
+
+    public void SetAwaitPubComp()
+    {
+        State = MqttZeroOutboundState.AwaitPubComp;
     }
 
     public bool IsExpired(DateTimeOffset now)
@@ -125,6 +138,7 @@ internal sealed class MqttZeroQueuedMessage
         SubscriptionIdentifier = null;
         ExpiresAt = null;
         PacketIdentifier = 0;
+        State = MqttZeroOutboundState.AwaitPubAck;
         MessagePool.Enqueue(this);
     }
 }
