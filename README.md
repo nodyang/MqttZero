@@ -57,7 +57,7 @@ await app.RunAsync();
 
 ## 发布 API
 
-`MqttZeroBroker.PublishAsync` 接收单个消息实体，后续消息字段扩展不会改变核心方法签名：
+业务代码注入 `IMqttZeroBroker`。`PublishAsync` 接收单个消息实体，后续消息字段扩展不会改变核心方法签名：
 
 ```csharp
 using MqttZero.Broker;
@@ -65,7 +65,7 @@ using MqttZero.Protocol;
 using MqttZero.Publishing;
 using System.Buffers;
 
-MqttZeroBroker broker = app.Services.GetRequiredService<MqttZeroBroker>();
+IMqttZeroBroker broker = app.Services.GetRequiredService<IMqttZeroBroker>();
 await broker.PublishAsync(
     new MqttZeroPublishMessage
     {
@@ -93,6 +93,8 @@ await broker.PublishAsync(
 ```
 
 Stream 由调用方拥有；扩展会在发布前将内容收集到池化多段 Payload，并执行最大包大小限制。
+
+具体 `MqttZeroBroker` 仍注册为 singleton，供宿主生命周期和 Kestrel 连接接入使用；普通业务代码应依赖 `IMqttZeroBroker`。
 
 ## 拦截器与 Observer
 

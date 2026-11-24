@@ -144,7 +144,10 @@ public sealed partial class MqttZeroBroker
         await RoutePublishAsync(null, packet, cancellationToken).ConfigureAwait(false);
     }
 
-    internal int MaximumPublishPayloadSize
+    /// <summary>
+    /// Gets the maximum MQTT packet size accepted by the broker.
+    /// </summary>
+    public int MaximumPacketSize
     {
         get
         {

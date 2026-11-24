@@ -22,7 +22,7 @@ public static class MqttZeroBrokerExtensions
     /// <param name="cancellationToken">A token that cancels the operation.</param>
     /// <returns>A task representing the publish operation.</returns>
     public static ValueTask PublishAsync(
-        this MqttZeroBroker broker,
+        this IMqttZeroBroker broker,
         string topic,
         ReadOnlySequence<byte> payload,
         MqttQualityOfServiceLevel qualityOfServiceLevel,
@@ -52,7 +52,7 @@ public static class MqttZeroBrokerExtensions
     /// <param name="cancellationToken">A token that cancels the operation.</param>
     /// <returns>A task representing the publish operation.</returns>
     public static async ValueTask PublishAsync(
-        this MqttZeroBroker broker,
+        this IMqttZeroBroker broker,
         string topic,
         Func<PipeWriter, ValueTask> payloadFactory,
         MqttQualityOfServiceLevel qualityOfServiceLevel,
@@ -81,7 +81,7 @@ public static class MqttZeroBrokerExtensions
         {
             MqttZeroLimitedPipeWriter limitedWriter = new(
                 writer,
-                broker.MaximumPublishPayloadSize);
+                broker.MaximumPacketSize);
             await payloadFactory(limitedWriter).ConfigureAwait(false);
             await limitedWriter.FlushAsync(cancellationToken).ConfigureAwait(false);
         }
@@ -98,7 +98,7 @@ public static class MqttZeroBrokerExtensions
     /// <param name="cancellationToken">A token that cancels the operation.</param>
     /// <returns>A task representing the publish operation.</returns>
     public static ValueTask PublishAsync(
-        this MqttZeroBroker broker,
+        this IMqttZeroBroker broker,
         string topic,
         Stream payload,
         MqttQualityOfServiceLevel qualityOfServiceLevel,

@@ -16,7 +16,7 @@ namespace MqttZero.Broker;
 /// <summary>
 /// Provides the in-memory MQTT 5 broker pipeline.
 /// </summary>
-public sealed partial class MqttZeroBroker : IAsyncDisposable
+public sealed partial class MqttZeroBroker : IMqttZeroBroker, IAsyncDisposable
 {
     private readonly object _sessionGate = new();
     private readonly MqttZeroBufferPool _bufferPool;

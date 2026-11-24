@@ -75,14 +75,14 @@ public static class MqttZeroDashboardEndpointRouteBuilderExtensions
         }
     }
 
-    private static IResult GetOverview(MqttZeroBroker broker)
+    private static IResult GetOverview(IMqttZeroBroker broker)
     {
         return Results.Json(
             new DashboardOverviewDto(broker.State.ToString(), broker.ConnectedClientCount),
             DashboardJsonSerializerContext.Default.DashboardOverviewDto);
     }
 
-    private static IResult GetClients(MqttZeroBroker broker)
+    private static IResult GetClients(IMqttZeroBroker broker)
     {
         DashboardClientDto[] clients = broker.GetClients()
             .Select(static client => new DashboardClientDto(
@@ -95,7 +95,7 @@ public static class MqttZeroDashboardEndpointRouteBuilderExtensions
         return Results.Json(clients, DashboardJsonSerializerContext.Default.DashboardClientDtoArray);
     }
 
-    private static IResult GetSessions(MqttZeroBroker broker)
+    private static IResult GetSessions(IMqttZeroBroker broker)
     {
         DashboardSessionDto[] sessions = broker.GetSessions()
             .Select(static session => new DashboardSessionDto(
@@ -123,7 +123,7 @@ public static class MqttZeroDashboardEndpointRouteBuilderExtensions
     private static async Task<IResult> PublishAsync(
         HttpContext context,
         IAntiforgery antiforgery,
-        MqttZeroBroker broker,
+        IMqttZeroBroker broker,
         DashboardPublishRequest request,
         CancellationToken cancellationToken)
     {

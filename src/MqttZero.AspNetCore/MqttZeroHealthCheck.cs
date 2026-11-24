@@ -9,13 +9,13 @@ namespace MqttZero.AspNetCore;
 /// </summary>
 public sealed class MqttZeroHealthCheck : IHealthCheck
 {
-    private readonly MqttZeroBroker _broker;
+    private readonly IMqttZeroBroker _broker;
 
     /// <summary>
     /// Initializes a new health check.
     /// </summary>
     /// <param name="broker">The MQTTZero broker.</param>
-    public MqttZeroHealthCheck(MqttZeroBroker broker)
+    public MqttZeroHealthCheck(IMqttZeroBroker broker)
     {
         _broker = broker;
     }
