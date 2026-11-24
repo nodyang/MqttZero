@@ -9,7 +9,8 @@ MQTTZero 是一个面向 ASP.NET Core Kestrel 的独立 MQTT 5 Broker。生产�
 - 持久 Session、Session Expiry、Session Present、客户端 ID 接管和离线 QoS 1 队列。
 - QoS 1 Inflight `DUP` 重发、KeepAlive 超时、Will/Will Delay 和 Message Expiry。
 - UTF-8 Topic 通配符、Topic Alias、共享订阅轮询、Retained 回放和内存 PayloadOwner。
-- DI 发布拦截器、Broker 生命周期、客户端快照和健康检查。
+- CONNECT 认证、订阅/退订授权、发布和投递拦截，以及连接与投递 Observer。
+- Broker 生命周期、客户端快照和健康检查。
 - 统一 `MqttZeroPublishMessage` 发布入口，以及 `ReadOnlySequence<byte>`、PipeWriter 工厂和 Stream 便捷扩展。
 - Kestrel Accepted Socket、静态 TLS、分片策略和 Unix Domain Socket 原生承载配置。
 - 池化字节池、引用计数 Payload Lease、无分配 PUBLISH 解码/路由/QoS 1 队列/编码和内存 Transport 热路径。
@@ -141,57 +142,9 @@ app.MapMqttZero("/mqtt", options =>
 
 WebSocket 未设置选择器时默认不允许分片，从而保持 MQTT PUBLISH 单帧语义；TCP/TLS 端点未设置选择器时仍允许分片。
 
-## 0.4.0 命名空间迁移
-
-`0.4.0-alpha.1` 将大型源码按职责拆分到 Server 项目子目录。`MqttZeroOptions`、Snapshot、PayloadOwner、ClientConnection、RetainedMessage，以及 `AddMqttZero`、`MapMqttZero`、`UseMqttZero` 等入口保持原 namespace。
-
-| 类型 | 新 namespace |
-|---|---|
-| MQTT Packet、Codec、QoS、ReasonCode | `MqttZero.Protocol` |
-| `MqttZeroBroker`、`MqttZeroBrokerState` | `MqttZero.Broker` |
-| Session、Subscription、Will、QueuedMessage | `MqttZero.Sessions` |
-| TopicMatcher、RouteScope、RouteSelector | `MqttZero.Routing` |
-| BufferPool、MessageLease | `MqttZero.Memory` |
-| Publish Interceptor API | `MqttZero.Interceptors` |
-
-引用迁移后的类型时需要增加对应 `using`。本版本不提供旧 namespace 转发类型。
-
-## 0.5.0 属性强类型迁移
-
-`0.5.0-alpha.1` 删除了以下原始类型 API，不提供字符串或字节兼容重载：
-
-| 属性 | 0.4 API | 0.5 API |
-|---|---|---|
-| 客户端远端地址 | `string? RemoteEndPoint` | `EndPoint? RemoteEndPoint` |
-| Retain Handling | `byte RetainHandling` | `MqttRetainHandling RetainHandling` |
-| MQTT 协议版本 | `byte ProtocolVersion` | `MqttProtocolVersion ProtocolVersion` |
-
-```csharp
-using System.Net;
-using MqttZero.Protocol;
-
-EndPoint? remoteEndPoint = client.RemoteEndPoint;
-MqttRetainHandling retainHandling = request.RetainHandling;
-MqttProtocolVersion protocolVersion = packet.ProtocolVersion;
-```
-
-Broker 的高级接入 API 现在接收原始 `EndPoint?`：
-
-```csharp
-await broker.AcceptConnectionAsync(
-    input,
-    output,
-    remoteEndPoint,
-    isSecure: false,
-    isWebSocket: false,
-    cancellationToken);
-```
-
-Dashboard REST JSON 保持不变：`remoteEndPoint` 仍是 `"host:port"` 字符串，UI 不需要迁移。
-
 ## 性能与分配
 
-阶段二的硬门禁覆盖 Broker 稳态同步热路径：
+性能与分配约束覆盖 Broker 稳态同步热路径：
 
 - `MqttPublishPacketCodec` 直接解析 `ReadOnlySequence<byte>`，不创建完整报文或 Topic 数组。
 - Topic/Properties/Payload 由引用计数 `MqttZeroMessageLease` 共享；在线订阅者、离线队列和 Inflight 消息持有同一份内存。
@@ -214,9 +167,9 @@ dotnet run -c Release --project benchmarks/MqttZero.Benchmarks -- `
   --filter '*' --job short --exporters csv json
 ```
 
-已提交的基准数据和解释位于 `perf/baseline`。当前实测中，fast PUBLISH 解码、Header 编码、Topic 路由、共享订阅、QoS 1 队列、扇出和内存端到端均达到 `0 B/op`。8 KiB 内存端到端约 `317 ns`，约为 MQTTnet 同工作负载 codec+匹配基线的 `1.46x`。Header-only 小报文仍约为 MQTTnet 的 `1.07–1.14x`，公平 Full Writer 和所有路由对比也尚未达到全部计划门槛；这些缺口保留在基线文档中，不应被解释为已经达成。
+当前基准结果、机器信息和解释统一记录在 `perf/baseline`。fast PUBLISH 解码、Header 编码、Topic 路由、共享订阅、QoS 1 队列、扇出和内存端到端均经过 `0 B/op` 分配验证。
 
-全局 Packet Writer 池经顺序和 128 并发基准验证后未引入，原因和结果见 `perf/baseline/packet-writer-pool-0.5.0-alpha.1.md`。完整 Broker 对 Broker 的 TCP/QoS/多连接比较方法见 `perf/baseline/broker-comparison-methodology.md`。
+全局 Packet Writer 池经顺序和 128 并发基准验证后决定不引入，结论见 `perf/baseline/packet-writer-pool-0.5.0-alpha.1.md`。完整 Broker 对 Broker 的 TCP/QoS/多连接比较方法见 `perf/baseline/broker-comparison-methodology.md`。
 
 ## 构建与测试
 
@@ -245,4 +198,4 @@ npm run build
 
 ## 限制
 
-当前不包含 QoS 2、Enhanced Authentication、MQTT 3.1.1、跨进程持久化、集群、桥接和客户端 SDK。Session、Will、QoS 1 队列在进程重启后丢失。Dashboard、管理 API、异步拦截器续接和网络框架边界不属于 `0 B/op` 承诺。完整 MQTT 5 属性语义与 Dashboard Live Events 仍在后续范围内。
+当前不包含 QoS 2、Enhanced Authentication、MQTT 3.1.1、跨进程持久化、集群、桥接和客户端 SDK。Session、Will、QoS 1 队列在进程重启后丢失。Dashboard、管理 API、异步拦截器续接和网络框架边界不属于 `0 B/op` 承诺。当前不提供完整 MQTT 5 属性语义或 Dashboard Live Events。
