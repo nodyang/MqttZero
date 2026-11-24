@@ -86,7 +86,8 @@ public static partial class MqttPacketCodec
         };
 
         if (!Mqtt5PropertyReader.TryReadConnect(properties, (MqttConnectPacket)packet) ||
-            !Mqtt5PropertyReader.TryReadWill(willProperties, (MqttConnectPacket)packet))
+            !Mqtt5PropertyReader.TryReadWill(willProperties, (MqttConnectPacket)packet) ||
+            (hasWill && !MqttZeroProtocolValidator.IsValidTopicName(willTopic)))
         {
             packet = null;
             return false;
@@ -97,6 +98,12 @@ public static partial class MqttPacketCodec
 
     private static void EncodeConnect(MqttConnectPacket packet, IBufferWriter<byte> writer)
     {
+        if (packet.HasWill &&
+            !MqttZeroProtocolValidator.IsValidTopicName(packet.WillTopic))
+        {
+            throw new ArgumentException("The MQTT Will topic is invalid.", nameof(packet));
+        }
+
         int connectPropertiesLength =
             Mqtt5PropertyWriter.GetConnectPropertiesLength(packet);
         int willPropertiesLength = packet.HasWill
@@ -160,6 +167,12 @@ public static partial class MqttPacketCodec
 
     private static void EncodeConnAck(MqttConnAckPacket packet, IBufferWriter<byte> writer)
     {
+        if (!MqttZeroProtocolValidator.IsValidConnAckReasonCode(packet.ReasonCode) ||
+            (packet.SessionPresent && packet.ReasonCode != MqttReasonCode.Success))
+        {
+            throw new ArgumentException("The MQTT CONNACK packet is invalid.", nameof(packet));
+        }
+
         int propertiesLength = Mqtt5PropertyWriter.GetConnAckPropertiesLength(packet);
         int bodyLength =
             2 +

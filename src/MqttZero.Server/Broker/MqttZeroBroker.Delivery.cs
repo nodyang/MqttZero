@@ -106,12 +106,15 @@ public sealed partial class MqttZeroBroker
                     return;
                 }
 
-                if (result == MqttZeroEnqueueInterceptionResult.CloseSenderConnection &&
-                    senderConnection != null)
+                if (result == MqttZeroEnqueueInterceptionResult.CloseSenderConnection)
                 {
-                    await senderConnection.CloseAsync(
-                        MqttReasonCode.NotAuthorized,
-                        cancellationToken).ConfigureAwait(false);
+                    if (senderConnection != null)
+                    {
+                        await senderConnection.CloseAsync(
+                            MqttReasonCode.NotAuthorized,
+                            cancellationToken).ConfigureAwait(false);
+                    }
+
                     return;
                 }
             }
@@ -197,13 +200,10 @@ public sealed partial class MqttZeroBroker
                 {
                     if (evicted != null)
                     {
-                        await _messageStore.ReplaceQueuedAsync(
+                        await ReplaceQueuedAsync(
                             session.ClientId,
                             evicted.MessageId,
-                            CreatePersistedMessage(
-                                message!,
-                                session.ClientId,
-                                MqttZeroPersistedMessageKind.Queued),
+                            message!,
                             cancellationToken).ConfigureAwait(false);
                     }
                     else if (sendImmediately)
@@ -365,8 +365,9 @@ public sealed partial class MqttZeroBroker
                 await observer.OnMessageNotConsumedAsync(context, cancellationToken)
                     .ConfigureAwait(false);
             }
-            catch (Exception)
+            catch (Exception exception)
             {
+                MqttZeroBrokerLogging.LogObserverFailure(_logger, exception);
             }
         }
     }
@@ -397,8 +398,9 @@ public sealed partial class MqttZeroBroker
             {
                 await observer.OnMessageDroppedAsync(context, cancellationToken).ConfigureAwait(false);
             }
-            catch (Exception)
+            catch (Exception exception)
             {
+                MqttZeroBrokerLogging.LogObserverFailure(_logger, exception);
             }
         }
     }
@@ -413,8 +415,9 @@ public sealed partial class MqttZeroBroker
             {
                 await observer.OnMessageEnqueuedAsync(context, cancellationToken).ConfigureAwait(false);
             }
-            catch (Exception)
+            catch (Exception exception)
             {
+                MqttZeroBrokerLogging.LogObserverFailure(_logger, exception);
             }
         }
     }
@@ -449,7 +452,7 @@ public sealed partial class MqttZeroBroker
             {
                 try
                 {
-                    await DeleteOutboundAsync(
+                    await DeleteMessageAsync(
                         session.ClientId,
                         failed.MessageId,
                         cancellationToken).ConfigureAwait(false);
@@ -506,7 +509,7 @@ public sealed partial class MqttZeroBroker
         {
             try
             {
-                await DeleteOutboundAsync(
+                await DeleteMessageAsync(
                     session.ClientId,
                     completed.MessageId,
                     cancellationToken).ConfigureAwait(false);
@@ -534,11 +537,15 @@ public sealed partial class MqttZeroBroker
         CancellationToken cancellationToken)
     {
         MqttZeroMessageLease? lease;
+        MqttReasonCode completionReason = MqttReasonCode.Success;
+        bool routeCompleted;
+        bool stateRemoved = false;
         lock (session.SyncRoot)
         {
-            session.InboundQos2Messages.Remove(
+            session.InboundQos2Messages.TryGetValue(packet.PacketIdentifier, out lease);
+            routeCompleted = session.RoutedInboundQos2Messages.TryGetValue(
                 packet.PacketIdentifier,
-                out lease);
+                out completionReason);
         }
 
         if (lease == null)
@@ -550,39 +557,41 @@ public sealed partial class MqttZeroBroker
             return;
         }
 
-        bool leaseRestored = false;
         try
         {
+            if (!routeCompleted)
+            {
+                completionReason = await RoutePublishLeaseWithResultAsync(
+                    session,
+                    connection,
+                    lease,
+                    cancellationToken).ConfigureAwait(false);
+                lock (session.SyncRoot)
+                {
+                    session.RoutedInboundQos2Messages[packet.PacketIdentifier] =
+                        completionReason;
+                }
+            }
+
             await DeleteInboundQos2Async(
                 session.ClientId,
                 packet.PacketIdentifier,
                 cancellationToken).ConfigureAwait(false);
-        }
-        catch
-        {
             lock (session.SyncRoot)
             {
-                session.InboundQos2Messages[packet.PacketIdentifier] = lease;
+                session.InboundQos2Messages.Remove(packet.PacketIdentifier);
+                session.RoutedInboundQos2Messages.Remove(packet.PacketIdentifier);
+                stateRemoved = true;
             }
 
-            leaseRestored = true;
-            throw;
-        }
-        try
-        {
-            MqttReasonCode result = await RoutePublishLeaseWithResultAsync(
-                session,
-                connection,
-                lease,
-                cancellationToken).ConfigureAwait(false);
             await connection.SendPubCompAsync(
                 packet.PacketIdentifier,
-                result,
+                completionReason,
                 cancellationToken).ConfigureAwait(false);
         }
         finally
         {
-            if (!leaseRestored)
+            if (stateRemoved)
             {
                 lease.Release();
             }
@@ -609,8 +618,9 @@ public sealed partial class MqttZeroBroker
                     context,
                     cancellationToken).ConfigureAwait(false);
             }
-            catch (Exception)
+            catch (Exception exception)
             {
+                MqttZeroBrokerLogging.LogObserverFailure(_logger, exception);
             }
         }
     }
@@ -640,7 +650,7 @@ public sealed partial class MqttZeroBroker
                 }
                 else
                 {
-                    await connection.SendAsync(message.CreatePacket(true), cancellationToken)
+                    await connection.SendPublishAsync(message, true, cancellationToken)
                         .ConfigureAwait(false);
                 }
             }
@@ -712,17 +722,34 @@ public sealed partial class MqttZeroBroker
                 }
             }
 
-            foreach (MqttZeroQueuedMessage expiredMessage in expired)
+            for (int index = 0; index < expired.Count; index++)
             {
+                MqttZeroQueuedMessage expiredMessage = expired[index];
+                try
+                {
+                    await DeleteMessageAsync(
+                        session.ClientId,
+                        expiredMessage.MessageId,
+                        cancellationToken).ConfigureAwait(false);
+                }
+                catch
+                {
+                    lock (session.SyncRoot)
+                    {
+                        for (int restore = expired.Count - 1; restore >= index; restore--)
+                        {
+                            session.PendingMessages.Prepend(expired[restore]);
+                        }
+                    }
+
+                    throw;
+                }
+
                 await NotifyDroppedAsync(
                     null,
                     session,
                     expiredMessage.Lease,
                     MqttZeroMessageDropReason.Expired,
-                    cancellationToken).ConfigureAwait(false);
-                await DeleteOutboundAsync(
-                    session.ClientId,
-                    expiredMessage.MessageId,
                     cancellationToken).ConfigureAwait(false);
                 expiredMessage.Release();
             }
@@ -734,17 +761,30 @@ public sealed partial class MqttZeroBroker
 
             if (nextHeld)
             {
-                await SaveOutboundAsync(
-                    next!,
-                    session.ClientId,
-                    cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    await TransitionQueuedToOutboundAsync(
+                        next!,
+                        session.ClientId,
+                        cancellationToken).ConfigureAwait(false);
+                }
+                catch
+                {
+                    lock (session.SyncRoot)
+                    {
+                        session.InflightMessages.Remove(next!.PacketIdentifier);
+                        session.PendingMessages.Prepend(next);
+                    }
+
+                    throw;
+                }
             }
 
-            await connection.SendAsync(next!.CreatePacket(false), cancellationToken)
+            await connection.SendPublishAsync(next!, false, cancellationToken)
                 .ConfigureAwait(false);
             if (!nextHeld)
             {
-                next.Release();
+                next!.Release();
             }
         }
     }
@@ -771,6 +811,7 @@ public sealed partial class MqttZeroBroker
             }
 
             session.InboundQos2Messages.Clear();
+            session.RoutedInboundQos2Messages.Clear();
         }
     }
 

@@ -94,5 +94,67 @@ namespace MqttZero.Tests.Protocol
             Assert.True(decoded);
             Assert.Equal(0U, disconnectPacket.SessionExpiryInterval!.Value);
         }
+
+        [Theory]
+        [InlineData(0x40)]
+        [InlineData(0x50)]
+        [InlineData(0x62)]
+        [InlineData(0x70)]
+        public void AcknowledgementDecodersRejectZeroPacketIdentifier(byte firstByte)
+        {
+            byte[] bytes = [firstByte, 0x02, 0x00, 0x00];
+
+            Assert.False(MqttPacketCodec.TryDecode(
+                new ReadOnlySequence<byte>(bytes),
+                out _,
+                out _));
+        }
+
+        [Fact]
+        public void AcknowledgementEncodersRejectZeroPacketIdentifier()
+        {
+            MqttPacket[] packets =
+            [
+                new MqttPubAckPacket(),
+                new MqttPubRecPacket(),
+                new MqttPubRelPacket(),
+                new MqttPubCompPacket()
+            ];
+
+            foreach (MqttPacket packet in packets)
+            {
+                Assert.Throws<ArgumentException>(
+                    () => ProtocolPacketTestHelper.Encode(packet));
+            }
+        }
+
+        [Theory]
+        [InlineData("2003020000")]
+        [InlineData("2003018000")]
+        [InlineData("2003000100")]
+        public void ConnAckDecoderRejectsInvalidFlagsOrReasonCode(string hex)
+        {
+            byte[] bytes = Convert.FromHexString(hex);
+            Assert.False(MqttPacketCodec.TryDecode(
+                new ReadOnlySequence<byte>(bytes),
+                out _,
+                out _));
+        }
+
+        [Theory]
+        [InlineData("900400000000")]
+        [InlineData("900400010003")]
+        [InlineData("9003000100")]
+        [InlineData("B00400000000")]
+        [InlineData("B00400010001")]
+        [InlineData("B003000100")]
+        public void SubscriptionAcknowledgementDecodersRejectInvalidPackets(string hex)
+        {
+            byte[] bytes = Convert.FromHexString(hex);
+            Assert.False(MqttPacketCodec.TryDecode(
+                new ReadOnlySequence<byte>(bytes),
+                out _,
+                out _));
+        }
     }
 }

@@ -1,3 +1,4 @@
+using MqttZero.Server;
 using MqttZero.Server.Broker;
 using MqttZero.Server.Interceptors;
 using MqttZero.Memory;
@@ -298,6 +299,73 @@ namespace MqttZero.Tests.Broker
         }
 
         [Fact(Timeout = 15_000)]
+        public async Task CleanStartSaveFailureRestoresExistingSession()
+        {
+            int port = GetFreePort();
+            ControllableSessionStore sessionStore = new();
+            WebApplicationBuilder builder = WebApplication.CreateBuilder();
+            builder.Logging.ClearProviders();
+            builder.WebHost.ConfigureKestrel(kestrel =>
+                kestrel.Listen(IPAddress.Loopback, port, listen => listen.UseMqttZero()));
+            builder.Services.AddSingleton<IMqttZeroSessionStore>(sessionStore);
+            builder.Services.AddMqttZero();
+            await using WebApplication app = builder.Build();
+            await app.StartAsync(TestContext.Current.CancellationToken);
+            MqttClientFactory factory = new();
+
+            using (IMqttClient initial = factory.CreateMqttClient())
+            {
+                await initial.ConnectAsync(
+                    CreatePersistentClientOptions(port, "clean-rollback"),
+                    TestContext.Current.CancellationToken);
+                await initial.SubscribeAsync(
+                    new MqttClientSubscribeOptionsBuilder()
+                        .WithTopicFilter("clean-rollback/#")
+                        .Build(),
+                    TestContext.Current.CancellationToken);
+                await initial.DisconnectAsync(
+                    cancellationToken: TestContext.Current.CancellationToken);
+            }
+
+            MqttZeroBroker broker = app.Services.GetRequiredService<MqttZeroBroker>();
+            await WaitForSessionDisconnectedAsync(
+                broker,
+                "clean-rollback",
+                TestContext.Current.CancellationToken);
+            sessionStore.FailNextSave = true;
+
+            using TcpClient rejected = new();
+            await rejected.ConnectAsync(
+                IPAddress.Loopback,
+                port,
+                TestContext.Current.CancellationToken);
+            NetworkStream stream = rejected.GetStream();
+            await SendPacketAsync(
+                stream,
+                new MqttConnectPacket
+                {
+                    ClientId = new ReadOnlySequence<byte>("clean-rollback"u8.ToArray()),
+                    CleanStart = true,
+                    SessionExpiryInterval = 60
+                },
+                TestContext.Current.CancellationToken);
+            using CancellationTokenSource closeTimeout =
+                CancellationTokenSource.CreateLinkedTokenSource(
+                    TestContext.Current.CancellationToken);
+            closeTimeout.CancelAfter(TimeSpan.FromSeconds(2));
+            byte[] buffer = new byte[1];
+            Assert.Equal(0, await stream.ReadAsync(buffer, closeTimeout.Token));
+
+            MqttZeroSessionSnapshot restored = Assert.Single(
+                broker.GetSessions(),
+                session => session.ClientId == "clean-rollback");
+            Assert.Equal(1, restored.SubscriptionCount);
+            Assert.False(restored.CleanStart);
+            Assert.True(sessionStore.Sessions.ContainsKey("clean-rollback"));
+            await app.StopAsync(TestContext.Current.CancellationToken);
+        }
+
+        [Fact(Timeout = 15_000)]
         public async Task ReturnsAssignedClientIdentifierForEmptyClientId()
         {
             int port = GetFreePort();
@@ -383,6 +451,61 @@ namespace MqttZero.Tests.Broker
                 string clientId,
                 CancellationToken cancellationToken)
             {
+                return ValueTask.CompletedTask;
+            }
+        }
+
+        private sealed class ControllableSessionStore : IMqttZeroSessionStore
+        {
+            private int _failNextSave;
+
+            public bool FailNextSave
+            {
+                get
+                {
+                    return Volatile.Read(ref _failNextSave) != 0;
+                }
+                set
+                {
+                    Volatile.Write(ref _failNextSave, value ? 1 : 0);
+                }
+            }
+
+            public Dictionary<string, MqttZeroPersistedSession> Sessions { get; } = [];
+
+            public bool IsEnabled
+            {
+                get
+                {
+                    return true;
+                }
+            }
+
+            public ValueTask<IReadOnlyList<MqttZeroPersistedSession>> LoadAllAsync(
+                CancellationToken cancellationToken)
+            {
+                return ValueTask.FromResult<IReadOnlyList<MqttZeroPersistedSession>>(
+                    Sessions.Values.ToArray());
+            }
+
+            public ValueTask SaveAsync(
+                MqttZeroPersistedSession session,
+                CancellationToken cancellationToken)
+            {
+                if (Interlocked.Exchange(ref _failNextSave, 0) != 0)
+                {
+                    throw new InvalidOperationException("Save failed.");
+                }
+
+                Sessions[session.ClientId] = session;
+                return ValueTask.CompletedTask;
+            }
+
+            public ValueTask DeleteAsync(
+                string clientId,
+                CancellationToken cancellationToken)
+            {
+                Sessions.Remove(clientId);
                 return ValueTask.CompletedTask;
             }
         }

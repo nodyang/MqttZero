@@ -3,6 +3,7 @@ using MqttZero.Memory;
 using MqttZero.Protocol;
 using MqttZero.Server.Routing;
 using MqttZero.Server.Sessions;
+using MqttZero.Server.Storage;
 using System.Buffers;
 using System.Collections.Concurrent;
 using System.IO.Pipelines;
@@ -50,11 +51,8 @@ public sealed partial class MqttZeroBroker
                         {
                             if (session.WillMessage != null)
                             {
-                                _dueWills.Add(session.WillMessage);
+                                _dueWills.Add((session, session.WillMessage));
                             }
-
-                            session.WillMessage = null;
-                            session.WillDueAt = null;
                         }
 
                         if (IsSessionExpired(session, now) && !session.WillDueAt.HasValue)
@@ -71,15 +69,46 @@ public sealed partial class MqttZeroBroker
                         await connection.CloseAsync(MqttReasonCode.KeepAliveTimeout, cancellationToken)
                             .ConfigureAwait(false);
                     }
-                    catch (Exception)
+                    catch (Exception exception)
                     {
+                        MqttZeroBrokerLogging.LogConnectionCleanupFailure(_logger, exception);
                     }
                 }
 
-                foreach (MqttZeroWillMessage will in _dueWills)
+                foreach ((MqttZeroSessionState session, MqttZeroWillMessage will) in _dueWills)
                 {
-                    await RoutePublishAsync(null, will.CreatePacket(), cancellationToken).ConfigureAwait(false);
-                    Interlocked.Increment(ref _publishedWillCount);
+                    using SessionMutationLease mutation = await AcquireSessionMutationAsync(
+                        session.ClientId,
+                        cancellationToken).ConfigureAwait(false);
+                    try
+                    {
+                        lock (session.SyncRoot)
+                        {
+                            if (!ReferenceEquals(session.WillMessage, will) ||
+                                !session.WillDueAt.HasValue ||
+                                session.WillDueAt.Value > _timeProvider.GetUtcNow())
+                            {
+                                continue;
+                            }
+                        }
+
+                        await RoutePublishAsync(null, will.CreatePacket(), cancellationToken)
+                            .ConfigureAwait(false);
+                        lock (session.SyncRoot)
+                        {
+                            if (ReferenceEquals(session.WillMessage, will))
+                            {
+                                session.WillMessage = null;
+                                session.WillDueAt = null;
+                            }
+                        }
+
+                        Interlocked.Increment(ref _publishedWillCount);
+                    }
+                    catch (Exception exception)
+                    {
+                        MqttZeroBrokerLogging.LogMaintenanceFailure(_logger, exception);
+                    }
                 }
 
                 foreach (KeyValuePair<string, MqttZeroRetainedMessage> pair in _retainedMessages)
@@ -92,18 +121,34 @@ public sealed partial class MqttZeroBroker
 
                 foreach (string topic in _expiredRetainedTopics)
                 {
-                    await _retainedMessageStore.DeleteAsync(topic, cancellationToken)
-                        .ConfigureAwait(false);
-                    RemoveRetainedMessage(topic);
+                    try
+                    {
+                        await DeleteRetainedAsync(topic, cancellationToken)
+                            .ConfigureAwait(false);
+                        RemoveRetainedMessage(topic);
+                    }
+                    catch (Exception exception)
+                    {
+                        MqttZeroBrokerLogging.LogPersistenceFailure(
+                            _logger,
+                            nameof(IMqttZeroRetainedMessageStore.DeleteAsync),
+                            topic,
+                            exception);
+                    }
                 }
 
                 foreach (MqttZeroSessionState session in _expiredSessions)
                 {
+                    using SessionMutationLease mutation = await AcquireSessionMutationAsync(
+                        session.ClientId,
+                        cancellationToken).ConfigureAwait(false);
                     bool removed = false;
                     lock (_sessionGate)
                     {
                         if (_sessions.TryGetValue(session.ClientId, out MqttZeroSessionState? current) &&
-                            ReferenceEquals(current, session))
+                            ReferenceEquals(current, session) &&
+                            IsSessionExpired(session, _timeProvider.GetUtcNow()) &&
+                            !session.WillDueAt.HasValue)
                         {
                             _sessions.TryRemove(session.ClientId, out _);
                             RebuildSubscriptionRouteSnapshot();
@@ -119,11 +164,16 @@ public sealed partial class MqttZeroBroker
                                 session.ClientId,
                                 cancellationToken).ConfigureAwait(false);
                         }
-                        catch
+                        catch (Exception exception)
                         {
                             _sessions[session.ClientId] = session;
                             RebuildSubscriptionRouteSnapshot();
-                            throw;
+                            MqttZeroBrokerLogging.LogPersistenceFailure(
+                                _logger,
+                                nameof(DeleteClientPersistenceAsync),
+                                session.ClientId,
+                                exception);
+                            continue;
                         }
 
                         ReleaseSessionMessages(session);
@@ -134,8 +184,9 @@ public sealed partial class MqttZeroBroker
             {
                 break;
             }
-            catch (Exception)
+            catch (Exception exception)
             {
+                MqttZeroBrokerLogging.LogMaintenanceFailure(_logger, exception);
             }
         }
     }

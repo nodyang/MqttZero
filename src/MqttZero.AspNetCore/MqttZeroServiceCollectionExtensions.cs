@@ -23,6 +23,7 @@ public static class MqttZeroServiceCollectionExtensions
     {
         ArgumentNullException.ThrowIfNull(services);
 
+        services.AddLogging();
         services.AddOptions();
         services.AddConnections();
         if (configure != null)

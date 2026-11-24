@@ -29,11 +29,6 @@ export async function getOverview(): Promise<OverviewDto> {
   return request<OverviewDto>('overview')
 }
 
-export async function getClients(): Promise<ClientDto[]> {
-  const page = await getClientPage(1)
-  return page.items
-}
-
 export async function getClientPage(page: number, pageSize?: number): Promise<PageDto<ClientDto>> {
   const query = new URLSearchParams({ page: page.toString() })
   if (pageSize !== undefined) {

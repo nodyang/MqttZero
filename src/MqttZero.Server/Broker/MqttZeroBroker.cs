@@ -6,6 +6,8 @@ using MqttZero.Server.Routing;
 using MqttZero.Server.Sessions;
 using MqttZero.Server.Storage;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using System.Buffers;
 using System.Collections.Concurrent;
 using System.IO.Pipelines;
@@ -38,13 +40,21 @@ public sealed partial class MqttZeroBroker : IMqttZeroBroker, IAsyncDisposable
         MqttZeroSubscriptionRouteSnapshot.Empty;
     private readonly MqttZeroRouteScopePool _routeScopes = new();
     private readonly List<MqttZeroClientConnection> _keepAliveExpired = [];
-    private readonly List<MqttZeroWillMessage> _dueWills = [];
+    private readonly List<(MqttZeroSessionState Session, MqttZeroWillMessage Will)> _dueWills = [];
     private readonly List<MqttZeroSessionState> _expiredSessions = [];
     private readonly List<string> _expiredRetainedTopics = [];
     private readonly ConcurrentDictionary<string, int> _sharedSubscriptionCursors =
         new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<long, CancellationTokenSource> _acceptedConnections = new();
+    private readonly Dictionary<string, SessionMutationLock> _sessionMutationLocks = [];
+    private readonly SemaphoreSlim _lifecycleGate = new(1, 1);
+    private readonly SemaphoreSlim _retainedMutationGate = new(1, 1);
     private readonly MqttZeroOptions _options;
     private readonly TimeProvider _timeProvider;
+    private readonly ILogger<MqttZeroBroker> _logger;
+    private TaskCompletionSource _connectionsDrained =
+        CreateCompletedDrainSignal();
+    private long _nextAcceptedConnectionId;
     private CancellationTokenSource? _maintenanceCancellation;
     private Task? _maintenanceTask;
     private int _connectionCount;
@@ -63,6 +73,7 @@ public sealed partial class MqttZeroBroker : IMqttZeroBroker, IAsyncDisposable
     /// <summary>Initializes a broker and its extension pipeline.</summary>
     /// <param name="options">The broker options accessor.</param>
     /// <param name="timeProvider">The time provider.</param>
+    /// <param name="logger">The broker logger.</param>
     /// <param name="publishInterceptors">The ordered publish interceptors.</param>
     /// <param name="connectionInterceptors">The ordered CONNECT interceptors.</param>
     /// <param name="subscribeInterceptors">The ordered subscribe interceptors.</param>
@@ -76,6 +87,7 @@ public sealed partial class MqttZeroBroker : IMqttZeroBroker, IAsyncDisposable
     public MqttZeroBroker(
         IOptions<MqttZeroOptions> options,
         TimeProvider timeProvider,
+        ILogger<MqttZeroBroker> logger,
         IEnumerable<IMqttZeroPublishInterceptor> publishInterceptors,
         IEnumerable<IMqttZeroConnectionInterceptor> connectionInterceptors,
         IEnumerable<IMqttZeroSubscribeInterceptor> subscribeInterceptors,
@@ -91,6 +103,7 @@ public sealed partial class MqttZeroBroker : IMqttZeroBroker, IAsyncDisposable
         _options = options.Value ?? throw new ArgumentNullException(nameof(options));
         MqttZeroOptionsValidator.Validate(_options);
         _timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         ArgumentNullException.ThrowIfNull(publishInterceptors);
         _bufferPool = new MqttZeroBufferPool(_options.MaxBufferedBytes);
         _publishInterceptors = publishInterceptors.ToArray();
@@ -114,6 +127,7 @@ public sealed partial class MqttZeroBroker : IMqttZeroBroker, IAsyncDisposable
         return new MqttZeroBroker(
             Options.Create(options),
             timeProvider,
+            NullLogger<MqttZeroBroker>.Instance,
             publishInterceptors ?? [],
             [],
             [],
@@ -181,8 +195,28 @@ public sealed partial class MqttZeroBroker : IMqttZeroBroker, IAsyncDisposable
             return;
         }
 
-        await StopAsync().ConfigureAwait(false);
-        _routeScopes.Dispose();
-        _bufferPool.Dispose();
+        try
+        {
+            await StopAsync().ConfigureAwait(false);
+            _routeScopes.Dispose();
+            _bufferPool.Dispose();
+        }
+        catch
+        {
+            Volatile.Write(ref _disposed, 0);
+            throw;
+        }
+    }
+
+    private static TaskCompletionSource CreateDrainSignal()
+    {
+        return new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
+
+    private static TaskCompletionSource CreateCompletedDrainSignal()
+    {
+        TaskCompletionSource signal = CreateDrainSignal();
+        signal.SetResult();
+        return signal;
     }
 }

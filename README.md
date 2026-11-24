@@ -1,6 +1,6 @@
 # MQTTZero
 
-MQTTZero 是一个面向 ASP.NET Core Kestrel 的独立 MQTT 5 Broker。生产代码不依赖 MQTTnet，目标框架为 .NET 10。当前版本为 `0.7.0-alpha.1`。
+MQTTZero 是一个面向 ASP.NET Core Kestrel 的独立 MQTT 5 Broker。生产代码不依赖 MQTTnet，目标框架为 .NET 10。当前版本为 `0.8.0-alpha.1`。
 
 ## 当前能力
 
@@ -13,7 +13,7 @@ MQTTZero 是一个面向 ASP.NET Core Kestrel 的独立 MQTT 5 Broker。生产�
 - CONNECT 认证、订阅/退订授权、发布和投递拦截，以及连接与投递 Observer。
 - Broker 生命周期、客户端快照和健康检查。
 - 统一 `MqttZeroPublishMessage` 发布入口，以及 `ReadOnlySequence<byte>`、PipeWriter 工厂和 Stream 便捷扩展。
-- Kestrel Accepted Socket、静态 TLS、分片策略和 Unix Domain Socket 原生承载配置。
+- Kestrel Accepted Socket、静态 TLS 和 WebSocket 分片策略。
 - 池化字节池、引用计数 Payload Lease、无分配 PUBLISH 解码/路由/QoS 1/2 队列/编码和内存 Transport 热路径。
 - 可选 Vue 3 + Element Plus 管理面板，构建资源内嵌在 NuGet 程序集中。
 
@@ -161,7 +161,7 @@ builder.Services.AddSingleton<IMqttZeroRetainedMessageStore, MyRetainedMessageSt
 builder.Services.AddMqttZero();
 ```
 
-Store 采用严格 Write-Through：Save/Delete 成功后才发送对应 ACK；失败时 Broker 回滚内存状态并关闭相关连接。外部 Store 在保存二进制字段时必须复制数据，不能引用 Broker 的池化 Lease。默认无操作模式仍执行零分配热路径检查。
+Store 采用严格 Write-Through：Save/Delete 成功后才发送对应 ACK；失败时 Broker 回滚内存状态并关闭相关连接。Message Store 的 `TransitionQueuedToOutboundAsync` 必须原子地把 queued 记录替换为 outbound 记录，queued、outbound 和过期消息统一通过 `DeleteMessageAsync` 删除。外部 Store 在保存二进制字段时必须复制数据，不能引用 Broker 的池化 Lease。默认无操作模式仍执行零分配热路径检查。
 
 Dashboard 的客户端和 Session 列表支持 `page`、`pageSize` 参数，默认值和上限由 `MqttZeroDashboardOptions` 控制。
 

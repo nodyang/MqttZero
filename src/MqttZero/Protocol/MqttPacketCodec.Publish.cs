@@ -71,6 +71,14 @@ public static partial class MqttPacketCodec
 
     private static void EncodePublish(MqttPublishPacket packet, IBufferWriter<byte> writer)
     {
+        if ((byte)packet.QualityOfServiceLevel >
+                (byte)MqttQualityOfServiceLevel.ExactlyOnce ||
+            (packet.QualityOfServiceLevel != MqttQualityOfServiceLevel.AtMostOnce &&
+                packet.PacketIdentifier == 0))
+        {
+            throw new ArgumentException("The MQTT PUBLISH QoS or packet identifier is invalid.");
+        }
+
         if ((!packet.TopicName.IsEmpty &&
                 !MqttZeroProtocolValidator.IsValidTopicName(packet.TopicName)) ||
             (packet.TopicName.IsEmpty && !packet.TopicAlias.HasValue))

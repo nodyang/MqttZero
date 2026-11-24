@@ -20,6 +20,7 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private readonly PipeWriter _writer;
     private readonly DateTimeOffset _connectedAt;
+    private readonly TimeProvider _timeProvider;
     private long _packetsReceived;
     private long _packetsSent;
     private long _bytesReceived;
@@ -41,6 +42,7 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
     {
         _bufferPool = bufferPool ?? MqttZeroBufferPool.Shared;
         _writer = writer;
+        _timeProvider = timeProvider;
         RemoteEndPoint = remoteEndPoint;
         IsSecure = isSecure;
         IsWebSocket = isWebSocket;
@@ -216,7 +218,7 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
                 message.PacketIdentifier,
                 duplicate,
                 message.Retain,
-                message.Lease.MessageExpiryInterval,
+                message.ExpiresAt,
                 message.SubscriptionIdentifier,
                 cancellationToken).ConfigureAwait(false);
         }
@@ -246,7 +248,7 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
                 packetIdentifier,
                 duplicate,
                 retain,
-                lease.MessageExpiryInterval,
+                lease.ExpiresAt,
                 subscriptionIdentifier,
                 cancellationToken).ConfigureAwait(false);
         }
@@ -468,7 +470,7 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
         ushort packetIdentifier,
         bool duplicate,
         bool retain,
-        uint? messageExpiryInterval,
+        DateTimeOffset? expiresAt,
         uint? subscriptionIdentifier,
         CancellationToken cancellationToken)
     {
@@ -480,7 +482,7 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
             packetIdentifier,
             duplicate,
             retain,
-            messageExpiryInterval,
+            GetRemainingMessageExpiry(expiresAt),
             subscriptionIdentifier,
             null);
         int encodedLength = MqttPublishPacketCodec.GetEncodedLength(view);
@@ -517,6 +519,23 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
         {
             Interlocked.Increment(ref _messagesSent);
         }
+    }
+
+    private uint? GetRemainingMessageExpiry(DateTimeOffset? expiresAt)
+    {
+        if (!expiresAt.HasValue)
+        {
+            return null;
+        }
+
+        double remainingSeconds =
+            Math.Ceiling((expiresAt.Value - _timeProvider.GetUtcNow()).TotalSeconds);
+        if (remainingSeconds <= 0)
+        {
+            return 0;
+        }
+
+        return (uint)Math.Min(remainingSeconds, uint.MaxValue);
     }
 
     private async ValueTask SendControlPacketDirectAsync(

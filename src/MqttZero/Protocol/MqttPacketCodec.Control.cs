@@ -16,6 +16,7 @@ public static partial class MqttPacketCodec
         packet = null;
         if ((firstByte & 0x0F) != 0 ||
             !reader.TryRead(out byte acknowledgeFlags) ||
+            (acknowledgeFlags & 0xFE) != 0 ||
             !reader.TryRead(out byte reasonCode) ||
             !TryReadProperties(ref reader, out ReadOnlySequence<byte> properties) ||
             reader.Remaining != 0)
@@ -23,10 +24,17 @@ public static partial class MqttPacketCodec
             return false;
         }
 
+        MqttReasonCode connAckReason = (MqttReasonCode)reasonCode;
+        if (!MqttZeroProtocolValidator.IsValidConnAckReasonCode(connAckReason) ||
+            (connAckReason != MqttReasonCode.Success && (acknowledgeFlags & 0x01) != 0))
+        {
+            return false;
+        }
+
         packet = new MqttConnAckPacket
         {
             SessionPresent = (acknowledgeFlags & 0x01) != 0,
-            ReasonCode = (MqttReasonCode)reasonCode,
+            ReasonCode = connAckReason,
             Properties = properties
         };
         if (!Mqtt5PropertyReader.TryReadConnAck(properties, (MqttConnAckPacket)packet))
@@ -72,7 +80,8 @@ public static partial class MqttPacketCodec
             ReasonCode = reasonCode,
             Properties = properties
         };
-        return reader.Remaining == 0 &&
+        return packetIdentifier != 0 &&
+            reader.Remaining == 0 &&
             MqttZeroProtocolValidator.IsValidPubAckReasonCode(reasonCode);
     }
 
@@ -164,6 +173,11 @@ public static partial class MqttPacketCodec
             return false;
         }
 
+        if (packetIdentifier == 0)
+        {
+            return false;
+        }
+
         if (reader.Remaining > 0)
         {
             if (!reader.TryRead(out byte encodedReasonCode))
@@ -189,6 +203,19 @@ public static partial class MqttPacketCodec
         ReadOnlySequence<byte> properties,
         IBufferWriter<byte> writer)
     {
+        if (packetIdentifier == 0)
+        {
+            throw new ArgumentException("The MQTT acknowledgement packet identifier is invalid.");
+        }
+
+        if ((firstByte == 0x50 &&
+                !MqttZeroProtocolValidator.IsValidPubAckReasonCode(reasonCode)) ||
+            ((firstByte == 0x62 || firstByte == 0x70) &&
+                !MqttZeroProtocolValidator.IsValidPubRelReasonCode(reasonCode)))
+        {
+            throw new ArgumentException("The MQTT acknowledgement reason code is invalid.");
+        }
+
         bool includeReason =
             reasonCode != MqttReasonCode.Success || !properties.IsEmpty;
         int bodyLength = includeReason
@@ -266,6 +293,12 @@ public static partial class MqttPacketCodec
 
     private static void EncodePubAck(MqttPubAckPacket packet, IBufferWriter<byte> writer)
     {
+        if (packet.PacketIdentifier == 0 ||
+            !MqttZeroProtocolValidator.IsValidPubAckReasonCode(packet.ReasonCode))
+        {
+            throw new ArgumentException("The MQTT PUBACK packet is invalid.", nameof(packet));
+        }
+
         bool includeReason = packet.ReasonCode != MqttReasonCode.Success || !packet.Properties.IsEmpty;
         int bodyLength = includeReason
             ? 3 + GetVariableByteIntegerSize(packet.Properties.Length) + (int)packet.Properties.Length

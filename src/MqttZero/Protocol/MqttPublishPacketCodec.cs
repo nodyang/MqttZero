@@ -123,7 +123,11 @@ internal static class MqttPublishPacketCodec
         }
         else
         {
-            WriteSequence(writer, view.Properties);
+            MqttZeroPublishPropertyTransformer.WriteWithoutMessageExpiry(
+                writer,
+                view.Properties,
+                view.MessageExpiryInterval);
+            WriteAdditionalScalarProperties(writer, view);
         }
 
         WriteSequence(writer, view.Payload);
@@ -185,7 +189,11 @@ internal static class MqttPublishPacketCodec
         }
         else
         {
-            WriteSequence(destination, view.Properties, ref offset);
+            offset += MqttZeroPublishPropertyTransformer.WriteWithoutMessageExpiry(
+                destination[offset..],
+                view.Properties,
+                view.MessageExpiryInterval);
+            WriteAdditionalScalarProperties(destination, view, ref offset);
         }
 
         writer.Advance(headerLength);
@@ -199,7 +207,8 @@ internal static class MqttPublishPacketCodec
         MqttZeroPacketWriter headerWriter,
         IBufferWriter<byte> writer)
     {
-        if (view.Payload.Length >= 64 * 1024)
+        if (view.Payload.Length >= 64 * 1024 ||
+            !view.Properties.IsEmpty)
         {
             int encodedLength = GetEncodedLength(view);
             Encode(view, writer);
@@ -376,10 +385,11 @@ internal static class MqttPublishPacketCodec
         return identifier switch
         {
             0x01 or 0x17 or 0x19 or 0x24 or 0x25 or 0x28 or 0x29 or 0x2A => TryAdvance(ref reader, 1),
-            0x11 or 0x18 or 0x27 => TryAdvance(ref reader, 4),
+            0x11 or 0x27 => TryAdvance(ref reader, 4),
             0x13 or 0x21 or 0x22 or 0x23 => TryAdvance(ref reader, 2),
             0x09 or 0x16 => TrySkipBinary(ref reader),
-            0x03 or 0x08 or 0x12 or 0x15 or 0x1A or 0x1C or 0x1F => TrySkipBinary(ref reader),
+            0x03 or 0x08 or 0x12 or 0x15 or 0x18 or 0x1A or 0x1C or 0x1F =>
+                TrySkipBinary(ref reader),
             0x26 => TrySkipBinary(ref reader) && TrySkipBinary(ref reader),
             _ => false
         };
@@ -522,9 +532,87 @@ internal static class MqttPublishPacketCodec
 
     private static int GetPropertyLength(in MqttZeroPublishView view)
     {
-        return view.Properties.IsEmpty
-            ? GetScalarPropertyLength(view)
-            : (int)view.Properties.Length;
+        if (view.Properties.IsEmpty)
+        {
+            return GetScalarPropertyLength(view);
+        }
+
+        int length = MqttZeroPublishPropertyTransformer.GetLengthWithoutMessageExpiry(
+            view.Properties);
+        if (view.MessageExpiryInterval.HasValue)
+        {
+            length += 5;
+        }
+
+        if (view.SubscriptionIdentifier.HasValue &&
+            !MqttZeroPublishPropertyTransformer.ContainsProperty(
+                view.Properties,
+                SubscriptionIdentifierId))
+        {
+            length += 1 + GetVariableByteIntegerSize(view.SubscriptionIdentifier.Value);
+        }
+
+        if (view.TopicAlias.HasValue &&
+            !MqttZeroPublishPropertyTransformer.ContainsProperty(
+                view.Properties,
+                TopicAliasId))
+        {
+            length += 3;
+        }
+
+        return length;
+    }
+
+    private static void WriteAdditionalScalarProperties(
+        IBufferWriter<byte> writer,
+        in MqttZeroPublishView view)
+    {
+        if (view.SubscriptionIdentifier.HasValue &&
+            !MqttZeroPublishPropertyTransformer.ContainsProperty(
+                view.Properties,
+                SubscriptionIdentifierId))
+        {
+            WriteByte(writer, SubscriptionIdentifierId);
+            WriteVariableByteInteger(writer, view.SubscriptionIdentifier.Value);
+        }
+
+        if (view.TopicAlias.HasValue &&
+            !MqttZeroPublishPropertyTransformer.ContainsProperty(
+                view.Properties,
+                TopicAliasId))
+        {
+            WriteByte(writer, TopicAliasId);
+            WriteUInt16(writer, view.TopicAlias.Value);
+        }
+    }
+
+    private static void WriteAdditionalScalarProperties(
+        Span<byte> destination,
+        in MqttZeroPublishView view,
+        ref int offset)
+    {
+        if (view.SubscriptionIdentifier.HasValue &&
+            !MqttZeroPublishPropertyTransformer.ContainsProperty(
+                view.Properties,
+                SubscriptionIdentifierId))
+        {
+            destination[offset++] = SubscriptionIdentifierId;
+            offset += MqttZeroPacketWriter.WriteVariableByteInteger(
+                destination[offset..],
+                view.SubscriptionIdentifier.Value);
+        }
+
+        if (view.TopicAlias.HasValue &&
+            !MqttZeroPublishPropertyTransformer.ContainsProperty(
+                view.Properties,
+                TopicAliasId))
+        {
+            destination[offset++] = TopicAliasId;
+            BinaryPrimitives.WriteUInt16BigEndian(
+                destination[offset..],
+                view.TopicAlias.Value);
+            offset += sizeof(ushort);
+        }
     }
 
     private static void WriteScalarProperties(IBufferWriter<byte> writer, in MqttZeroPublishView view)

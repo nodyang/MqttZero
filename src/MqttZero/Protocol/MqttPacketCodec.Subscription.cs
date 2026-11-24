@@ -123,7 +123,19 @@ public static partial class MqttPacketCodec
             Properties = properties,
             ReasonCodes = reasonCodes
         };
-        return true;
+        bool validReasons = true;
+        foreach (byte reasonCode in reasonCodes.Span)
+        {
+            if (!MqttZeroProtocolValidator.IsValidSubAckReasonCode(reasonCode))
+            {
+                validReasons = false;
+                break;
+            }
+        }
+
+        return packetIdentifier != 0 &&
+            reasonCodes.Length > 0 &&
+            validReasons;
     }
 
     private static bool TryDecodeUnsubAck(
@@ -147,11 +159,28 @@ public static partial class MqttPacketCodec
             Properties = properties,
             ReasonCodes = reasonCodes
         };
-        return true;
+        bool validReasons = true;
+        foreach (byte reasonCode in reasonCodes.Span)
+        {
+            if (!MqttZeroProtocolValidator.IsValidUnsubAckReasonCode(reasonCode))
+            {
+                validReasons = false;
+                break;
+            }
+        }
+
+        return packetIdentifier != 0 &&
+            reasonCodes.Length > 0 &&
+            validReasons;
     }
 
     private static void EncodeSubscribe(MqttSubscribePacket packet, IBufferWriter<byte> writer)
     {
+        if (packet.PacketIdentifier == 0 || packet.Subscriptions.Count == 0)
+        {
+            throw new ArgumentException("The MQTT SUBSCRIBE packet is invalid.", nameof(packet));
+        }
+
         int propertiesLength = Mqtt5PropertyWriter.GetSubscribePropertiesLength(packet);
         int bodyLength = 2 +
             GetVariableByteIntegerSize(propertiesLength) +
@@ -196,6 +225,21 @@ public static partial class MqttPacketCodec
 
     private static void EncodeSubAck(MqttSubAckPacket packet, IBufferWriter<byte> writer)
     {
+        if (packet.PacketIdentifier == 0 || packet.ReasonCodes.IsEmpty)
+        {
+            throw new ArgumentException("The MQTT SUBACK packet is invalid.", nameof(packet));
+        }
+
+        foreach (byte reasonCode in packet.ReasonCodes.Span)
+        {
+            if (!MqttZeroProtocolValidator.IsValidSubAckReasonCode(reasonCode))
+            {
+                throw new ArgumentException(
+                    "The MQTT SUBACK reason code is invalid.",
+                    nameof(packet));
+            }
+        }
+
         int bodyLength = 2 +
             GetVariableByteIntegerSize(packet.Properties.Length) +
             (int)packet.Properties.Length +
@@ -215,6 +259,13 @@ public static partial class MqttPacketCodec
 
     private static void EncodeUnsubscribe(MqttUnsubscribePacket packet, IBufferWriter<byte> writer)
     {
+        if (packet.PacketIdentifier == 0 || packet.TopicFilters.Count == 0)
+        {
+            throw new ArgumentException(
+                "The MQTT UNSUBSCRIBE packet is invalid.",
+                nameof(packet));
+        }
+
         int bodyLength = 2 +
             GetVariableByteIntegerSize(packet.Properties.Length) +
             (int)packet.Properties.Length;
@@ -244,6 +295,21 @@ public static partial class MqttPacketCodec
 
     private static void EncodeUnsubAck(MqttUnsubAckPacket packet, IBufferWriter<byte> writer)
     {
+        if (packet.PacketIdentifier == 0 || packet.ReasonCodes.IsEmpty)
+        {
+            throw new ArgumentException("The MQTT UNSUBACK packet is invalid.", nameof(packet));
+        }
+
+        foreach (byte reasonCode in packet.ReasonCodes.Span)
+        {
+            if (!MqttZeroProtocolValidator.IsValidUnsubAckReasonCode(reasonCode))
+            {
+                throw new ArgumentException(
+                    "The MQTT UNSUBACK reason code is invalid.",
+                    nameof(packet));
+            }
+        }
+
         int bodyLength = 2 +
             GetVariableByteIntegerSize(packet.Properties.Length) +
             (int)packet.Properties.Length +

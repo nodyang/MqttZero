@@ -25,19 +25,28 @@ public sealed partial class MqttZeroBroker
             return;
         }
 
-        string topicKey = Encoding.UTF8.GetString(lease.Topic.Span);
-        if (lease.PayloadSequence.IsEmpty)
+        await _retainedMutationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            await _retainedMessageStore.DeleteAsync(topicKey, cancellationToken)
-                .ConfigureAwait(false);
-            RemoveRetainedMessage(topicKey);
-            return;
-        }
+            string topicKey = Encoding.UTF8.GetString(lease.Topic.Span);
+            if (lease.PayloadSequence.IsEmpty)
+            {
+                await DeleteRetainedAsync(topicKey, cancellationToken)
+                    .ConfigureAwait(false);
+                RemoveRetainedMessage(topicKey);
+                return;
+            }
 
-        lease.EnsureOwned();
-        DateTimeOffset? expiresAt = lease.ExpiresAt;
-        await SaveRetainedAsync(lease, expiresAt, cancellationToken).ConfigureAwait(false);
-        StoreRetainedMessageInMemory(lease, topicKey, expiresAt);
+            lease.EnsureOwned();
+            ValidateRetainedCapacity(topicKey, lease.TopicSequence.Length + lease.PayloadSequence.Length);
+            DateTimeOffset? expiresAt = lease.ExpiresAt;
+            await SaveRetainedAsync(lease, expiresAt, cancellationToken).ConfigureAwait(false);
+            StoreRetainedMessageInMemory(lease, topicKey, expiresAt);
+        }
+        finally
+        {
+            _retainedMutationGate.Release();
+        }
     }
 
     private void StoreRetainedMessageInMemory(MqttZeroMessageLease lease)
@@ -83,6 +92,24 @@ public sealed partial class MqttZeroBroker
             _retainedMessages[topicKey] = replacement;
             _retainedBytes = retainedBytes;
             existing?.Release();
+        }
+    }
+
+    private void ValidateRetainedCapacity(string topicKey, long replacementBytes)
+    {
+        lock (_sessionGate)
+        {
+            _retainedMessages.TryGetValue(topicKey, out MqttZeroRetainedMessage? existing);
+            if (existing == null && _retainedMessages.Count >= _options.MaxRetainedMessages)
+            {
+                throw new InvalidOperationException("The retained message count limit was reached.");
+            }
+
+            long previousBytes = existing?.ByteLength ?? 0;
+            if (_retainedBytes - previousBytes + replacementBytes > _options.MaxRetainedBytes)
+            {
+                throw new InvalidOperationException("The retained message byte limit was reached.");
+            }
         }
     }
 

@@ -147,6 +147,76 @@ namespace MqttZero.Tests.Broker
         }
 
         [Fact(Timeout = 15_000)]
+        public async Task ExpiredInboundQos2CompletesHandshakeWithoutRoutingOrRetaining()
+        {
+            int port = GetFreePort();
+            await using WebApplication app = await StartTcpBrokerAsync(port);
+            CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+            MqttClientFactory factory = new();
+            using IMqttClient subscriber = factory.CreateMqttClient();
+            TaskCompletionSource<bool> received = new(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            subscriber.ApplicationMessageReceivedAsync += eventArgs =>
+            {
+                received.TrySetResult(true);
+                return Task.CompletedTask;
+            };
+            await subscriber.ConnectAsync(
+                CreateClientOptions(port, "qos2-expiry-subscriber"),
+                cancellationToken);
+            await subscriber.SubscribeAsync(
+                new MqttClientSubscribeOptionsBuilder()
+                    .WithTopicFilter("qos2-expiry/#")
+                    .Build(),
+                cancellationToken);
+
+            using TcpClient publisher = new();
+            await publisher.ConnectAsync(IPAddress.Loopback, port, cancellationToken);
+            NetworkStream stream = publisher.GetStream();
+            await SendPacketAsync(
+                stream,
+                new MqttConnectPacket
+                {
+                    ClientId = new ReadOnlySequence<byte>("qos2-expiry-publisher"u8.ToArray()),
+                    CleanStart = true
+                },
+                cancellationToken);
+            _ = Assert.IsType<MqttConnAckPacket>(
+                await ReadPacketAsync(stream, cancellationToken));
+            await SendPacketAsync(
+                stream,
+                new MqttPublishPacket
+                {
+                    TopicName = new ReadOnlySequence<byte>("qos2-expiry/value"u8.ToArray()),
+                    Payload = new ReadOnlySequence<byte>("expired"u8.ToArray()),
+                    QualityOfServiceLevel = MqttQualityOfServiceLevel.ExactlyOnce,
+                    PacketIdentifier = 88,
+                    Retain = true,
+                    MessageExpiryInterval = 1
+                },
+                cancellationToken);
+            _ = Assert.IsType<MqttPubRecPacket>(
+                await ReadPacketAsync(stream, cancellationToken));
+            await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
+            await SendPacketAsync(
+                stream,
+                new MqttPubRelPacket
+                {
+                    PacketIdentifier = 88
+                },
+                cancellationToken);
+            _ = Assert.IsType<MqttPubCompPacket>(
+                await ReadPacketAsync(stream, cancellationToken));
+            await Task.Delay(TimeSpan.FromMilliseconds(250), cancellationToken);
+
+            MqttZeroBroker broker = app.Services.GetRequiredService<MqttZeroBroker>();
+            Assert.False(received.Task.IsCompleted);
+            Assert.Empty(broker.GetRetainedMessages());
+            await subscriber.DisconnectAsync(cancellationToken: cancellationToken);
+            await app.StopAsync(cancellationToken);
+        }
+
+        [Fact(Timeout = 15_000)]
         public async Task QueuesQos1MessageWhileSessionOffline()
         {
             int port = GetFreePort();

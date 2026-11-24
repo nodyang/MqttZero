@@ -188,6 +188,52 @@ namespace MqttZero.Tests.Broker
                 recorder.DisconnectType);
         }
 
+        [Fact(Timeout = 15_000)]
+        public async Task EnqueueCloseWithoutSenderTerminatesCurrentDelivery()
+        {
+            int port = GetFreePort();
+            WebApplicationBuilder builder = WebApplication.CreateBuilder();
+            builder.Logging.ClearProviders();
+            builder.WebHost.ConfigureKestrel(kestrel =>
+                kestrel.Listen(IPAddress.Loopback, port, listen => listen.UseMqttZero()));
+            builder.Services.AddMqttZero().AddEnqueueInterceptor<CloseSenderInterceptor>();
+            await using WebApplication app = builder.Build();
+            await app.StartAsync(TestContext.Current.CancellationToken);
+            MqttClientFactory factory = new();
+
+            using (IMqttClient client = factory.CreateMqttClient())
+            {
+                await client.ConnectAsync(
+                    CreatePersistentClientOptions(port, "close-sender-client"),
+                    TestContext.Current.CancellationToken);
+                await client.SubscribeAsync(
+                    new MqttClientSubscribeOptionsBuilder()
+                        .WithTopicFilter("close-sender/#")
+                        .Build(),
+                    TestContext.Current.CancellationToken);
+                await client.DisconnectAsync(
+                    cancellationToken: TestContext.Current.CancellationToken);
+            }
+
+            MqttZeroBroker broker = app.Services.GetRequiredService<MqttZeroBroker>();
+            await WaitForSessionDisconnectedAsync(
+                broker,
+                "close-sender-client",
+                TestContext.Current.CancellationToken);
+            await broker.PublishAsync(
+                "close-sender/value",
+                new ReadOnlySequence<byte>("dropped"u8.ToArray()),
+                MqttQualityOfServiceLevel.AtLeastOnce,
+                false,
+                TestContext.Current.CancellationToken);
+
+            MqttZeroSessionSnapshot session = Assert.Single(
+                broker.GetSessions(),
+                item => item.ClientId == "close-sender-client");
+            Assert.Equal(0, session.PendingMessageCount);
+            Assert.Equal(0, session.InflightMessageCount);
+        }
+
         private sealed class RejectingConnectionInterceptor : IMqttZeroConnectionInterceptor
         {
             public ValueTask<MqttZeroConnectionInterceptionResult> InterceptAsync(
@@ -265,6 +311,18 @@ namespace MqttZero.Tests.Broker
             {
                 _recorder.SetDisconnected(context.DisconnectType);
                 return ValueTask.CompletedTask;
+            }
+        }
+
+        private sealed class CloseSenderInterceptor : IMqttZeroEnqueueInterceptor
+        {
+            public ValueTask<MqttZeroEnqueueInterceptionResult> InterceptAsync(
+                MqttZeroEnqueueContext context,
+                CancellationToken cancellationToken)
+            {
+                Assert.Null(context.Sender);
+                return ValueTask.FromResult(
+                    MqttZeroEnqueueInterceptionResult.CloseSenderConnection);
             }
         }
     }

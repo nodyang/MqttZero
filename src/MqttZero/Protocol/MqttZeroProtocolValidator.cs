@@ -66,6 +66,37 @@ internal static class MqttZeroProtocolValidator
             MqttReasonCode.PacketIdentifierNotFound;
     }
 
+    public static bool IsValidConnAckReasonCode(MqttReasonCode reasonCode)
+    {
+        return reasonCode is
+            MqttReasonCode.Success or
+            MqttReasonCode.UnspecifiedError or
+            (MqttReasonCode)0x81 or
+            MqttReasonCode.ImplementationSpecificError or
+            (MqttReasonCode)0x84 or
+            (MqttReasonCode)0x85 or
+            MqttReasonCode.BadUserNameOrPassword or
+            MqttReasonCode.NotAuthorized or
+            MqttReasonCode.ServerUnavailable or
+            (MqttReasonCode)0x89 or
+            MqttReasonCode.Banned or
+            MqttReasonCode.UseAnotherServer or
+            MqttReasonCode.ServerMoved or
+            MqttReasonCode.ConnectionRateExceeded;
+    }
+
+    public static bool IsValidSubAckReasonCode(byte reasonCode)
+    {
+        return reasonCode is
+            0x00 or 0x01 or 0x02 or 0x80 or 0x83 or 0x87 or 0x8F or 0x91 or 0x97 or
+            0x9E or 0xA1 or 0xA2;
+    }
+
+    public static bool IsValidUnsubAckReasonCode(byte reasonCode)
+    {
+        return reasonCode is 0x00 or 0x11 or 0x80 or 0x83 or 0x87 or 0x8F or 0x91;
+    }
+
     private static bool IsValidTopicFilterBuffer(ReadOnlySpan<byte> topicFilter)
     {
         if (topicFilter.StartsWith("$share/"u8))

@@ -20,6 +20,9 @@ public sealed partial class MqttZeroBroker
         MqttZeroClientConnection connection,
         bool cleanDisconnect)
     {
+        using SessionMutationLease mutation = await AcquireSessionMutationAsync(
+            session.ClientId,
+            CancellationToken.None).ConfigureAwait(false);
         DateTimeOffset now = _timeProvider.GetUtcNow();
         bool removeSession = false;
 
@@ -83,8 +86,13 @@ public sealed partial class MqttZeroBroker
                         session.ClientId,
                         CancellationToken.None).ConfigureAwait(false);
                 }
-                catch
+                catch (Exception exception)
                 {
+                    MqttZeroBrokerLogging.LogPersistenceFailure(
+                        _logger,
+                        nameof(DeleteClientPersistenceAsync),
+                        session.ClientId,
+                        exception);
                 }
 
                 throw;
@@ -113,7 +121,7 @@ public sealed partial class MqttZeroBroker
                         session.ClientId,
                         CancellationToken.None).ConfigureAwait(false);
                 }
-                catch
+                catch (Exception)
                 {
                     _sessions[session.ClientId] = session;
                     RebuildSubscriptionRouteSnapshot();

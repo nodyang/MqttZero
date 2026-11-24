@@ -39,6 +39,7 @@ public sealed partial class MqttZeroBroker
             {
                 lease.EnsureOwned();
                 session.InboundQos2Messages[packetIdentifier] = lease;
+                session.RoutedInboundQos2Messages.Remove(packetIdentifier);
             }
         }
 
@@ -67,8 +68,10 @@ public sealed partial class MqttZeroBroker
         {
             try
             {
-                await _messageStore.SaveInboundQos2Async(
-                    CreateInboundPersistedMessage(lease, session.ClientId, packetIdentifier),
+                await SaveInboundQos2Async(
+                    lease,
+                    session.ClientId,
+                    packetIdentifier,
                     cancellationToken).ConfigureAwait(false);
             }
             catch

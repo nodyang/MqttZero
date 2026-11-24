@@ -24,16 +24,30 @@ public sealed partial class MqttZeroBroker
     {
         cancellationToken.ThrowIfCancellationRequested();
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-        if (State == MqttZeroBrokerState.Running)
+        await _lifecycleGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            return;
-        }
+            if (State == MqttZeroBrokerState.Running)
+            {
+                return;
+            }
 
-        await RestorePersistenceAsync(cancellationToken).ConfigureAwait(false);
-        Volatile.Write(ref _stopping, 0);
-        Volatile.Write(ref _state, (int)MqttZeroBrokerState.Running);
-        _maintenanceCancellation = new CancellationTokenSource();
-        _maintenanceTask = RunMaintenanceAsync(_maintenanceCancellation.Token);
+            if (State == MqttZeroBrokerState.Stopping)
+            {
+                throw new InvalidOperationException("The MQTTZero broker is stopping.");
+            }
+
+            await RestorePersistenceAsync(cancellationToken).ConfigureAwait(false);
+            _connectionsDrained = CreateDrainSignal();
+            Volatile.Write(ref _stopping, 0);
+            Volatile.Write(ref _state, (int)MqttZeroBrokerState.Running);
+            _maintenanceCancellation = new CancellationTokenSource();
+            _maintenanceTask = RunMaintenanceAsync(_maintenanceCancellation.Token);
+        }
+        finally
+        {
+            _lifecycleGate.Release();
+        }
     }
 
     /// <summary>
@@ -43,69 +57,99 @@ public sealed partial class MqttZeroBroker
     /// <returns>A task representing shutdown.</returns>
     public async ValueTask StopAsync(CancellationToken cancellationToken = default)
     {
-        if (State is MqttZeroBrokerState.Stopped or MqttZeroBrokerState.Created)
+        await _lifecycleGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            return;
-        }
-
-        Volatile.Write(ref _stopping, 1);
-        Volatile.Write(ref _state, (int)MqttZeroBrokerState.Stopping);
-        if (_maintenanceCancellation != null)
-        {
-            await _maintenanceCancellation.CancelAsync().ConfigureAwait(false);
-        }
-
-        if (_maintenanceTask != null)
-        {
-            try
+            if (State is MqttZeroBrokerState.Stopped or MqttZeroBrokerState.Created)
             {
-                await _maintenanceTask.ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-            }
-        }
-
-        _maintenanceCancellation?.Dispose();
-        _maintenanceCancellation = null;
-        _maintenanceTask = null;
-
-        foreach (MqttZeroSessionState session in _sessions.Values)
-        {
-            MqttZeroClientConnection? connection;
-            lock (session.SyncRoot)
-            {
-                connection = session.Connection;
+                return;
             }
 
-            if (connection == null)
+            Volatile.Write(ref _stopping, 1);
+            Volatile.Write(ref _state, (int)MqttZeroBrokerState.Stopping);
+            CancellationTokenSource[] acceptedConnections;
+            lock (_sessionGate)
             {
-                continue;
+                acceptedConnections = _acceptedConnections.Values.ToArray();
             }
 
-            try
+            foreach (CancellationTokenSource accepted in acceptedConnections)
             {
-                await connection.CloseAsync(MqttReasonCode.ServerShuttingDown, cancellationToken)
-                    .ConfigureAwait(false);
+                try
+                {
+                    await accepted.CancelAsync().ConfigureAwait(false);
+                }
+                catch (ObjectDisposedException)
+                {
+                }
             }
-            catch (Exception) when (cancellationToken.IsCancellationRequested)
+
+            if (_maintenanceCancellation != null)
             {
+                await _maintenanceCancellation.CancelAsync().ConfigureAwait(false);
             }
+
+            if (_maintenanceTask != null)
+            {
+                try
+                {
+                    await _maintenanceTask.ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                }
+            }
+
+            _maintenanceCancellation?.Dispose();
+            _maintenanceCancellation = null;
+            _maintenanceTask = null;
+
+            foreach (MqttZeroSessionState session in _sessions.Values)
+            {
+                MqttZeroClientConnection? connection;
+                lock (session.SyncRoot)
+                {
+                    connection = session.Connection;
+                }
+
+                if (connection == null)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    await connection.CloseAsync(MqttReasonCode.ServerShuttingDown, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception) when (cancellationToken.IsCancellationRequested)
+                {
+                }
+            }
+
+            Task drained = _connectionsDrained.Task;
+            if (Volatile.Read(ref _connectionCount) > 0)
+            {
+                await drained.WaitAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            foreach (MqttZeroSessionState session in _sessions.Values)
+            {
+                ReleaseSessionMessages(session);
+            }
+
+            foreach (string topic in _retainedMessages.Keys)
+            {
+                RemoveRetainedMessage(topic);
+            }
+
+            _sessions.Clear();
+            _subscriptionRouteSnapshot = MqttZeroSubscriptionRouteSnapshot.Empty;
+            Volatile.Write(ref _state, (int)MqttZeroBrokerState.Stopped);
         }
-
-        foreach (MqttZeroSessionState session in _sessions.Values)
+        finally
         {
-            ReleaseSessionMessages(session);
+            _lifecycleGate.Release();
         }
-
-        foreach (string topic in _retainedMessages.Keys)
-        {
-            RemoveRetainedMessage(topic);
-        }
-
-        _sessions.Clear();
-        _subscriptionRouteSnapshot = MqttZeroSubscriptionRouteSnapshot.Empty;
-        Volatile.Write(ref _connectionCount, 0);
-        Volatile.Write(ref _state, (int)MqttZeroBrokerState.Stopped);
     }
 }

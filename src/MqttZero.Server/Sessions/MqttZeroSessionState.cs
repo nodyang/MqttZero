@@ -36,6 +36,8 @@ internal sealed class MqttZeroSessionState
 
     public Dictionary<ushort, MqttZeroMessageLease> InboundQos2Messages { get; } = [];
 
+    public Dictionary<ushort, MqttReasonCode> RoutedInboundQos2Messages { get; } = [];
+
     public MqttZeroClientConnection? Connection { get; set; }
 
     public bool CleanStart { get; set; }

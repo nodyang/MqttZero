@@ -20,6 +20,15 @@ public enum MqttReasonCode : byte
     /// <summary>The client is banned.</summary>
     Banned = 0x8A,
 
+    /// <summary>The client should use another server.</summary>
+    UseAnotherServer = 0x9C,
+
+    /// <summary>The server has moved.</summary>
+    ServerMoved = 0x9D,
+
+    /// <summary>The connection rate limit was exceeded.</summary>
+    ConnectionRateExceeded = 0x9F,
+
     /// <summary>The user name or password is invalid.</summary>
     BadUserNameOrPassword = 0x86,
 

@@ -1,7 +1,7 @@
 {
   "name": "mqttzero-dashboard",
   "private": true,
-  "version": "0.7.0-alpha.1",
+  "version": "0.8.0-alpha.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,11 +9,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "echarts": "latest",
     "element-plus": "latest",
-    "pinia": "latest",
-    "vue": "latest",
-    "vue-router": "latest"
+    "vue": "latest"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",

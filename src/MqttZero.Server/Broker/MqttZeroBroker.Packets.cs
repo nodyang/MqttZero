@@ -56,7 +56,7 @@ public sealed partial class MqttZeroBroker
                 {
                     try
                     {
-                        await DeleteOutboundAsync(
+                        await DeleteMessageAsync(
                             session.ClientId,
                             acknowledgedMessage.MessageId,
                             cancellationToken).ConfigureAwait(false);

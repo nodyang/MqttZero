@@ -29,7 +29,19 @@ internal sealed class MqttZeroNoopMessageStore : IMqttZeroMessageStore
         return ValueTask.CompletedTask;
     }
 
-    public ValueTask DeleteOutboundAsync(string clientId, long messageId, CancellationToken cancellationToken)
+    public ValueTask TransitionQueuedToOutboundAsync(
+        string clientId,
+        long messageId,
+        MqttZeroPersistedMessage message,
+        CancellationToken cancellationToken)
+    {
+        return ValueTask.CompletedTask;
+    }
+
+    public ValueTask DeleteMessageAsync(
+        string clientId,
+        long messageId,
+        CancellationToken cancellationToken)
     {
         return ValueTask.CompletedTask;
     }

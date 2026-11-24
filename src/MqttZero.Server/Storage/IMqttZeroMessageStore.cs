@@ -13,8 +13,14 @@ public interface IMqttZeroMessageStore
     ValueTask SaveOutboundAsync(MqttZeroPersistedMessage message, CancellationToken cancellationToken);
     /// <summary>Saves an inbound QoS 2 message.</summary>
     ValueTask SaveInboundQos2Async(MqttZeroPersistedMessage message, CancellationToken cancellationToken);
-    /// <summary>Deletes an outbound message.</summary>
-    ValueTask DeleteOutboundAsync(string clientId, long messageId, CancellationToken cancellationToken);
+    /// <summary>Atomically promotes one queued message to outbound in-flight state.</summary>
+    ValueTask TransitionQueuedToOutboundAsync(
+        string clientId,
+        long messageId,
+        MqttZeroPersistedMessage message,
+        CancellationToken cancellationToken);
+    /// <summary>Deletes a queued or outbound message.</summary>
+    ValueTask DeleteMessageAsync(string clientId, long messageId, CancellationToken cancellationToken);
     /// <summary>Deletes an inbound QoS 2 message.</summary>
     ValueTask DeleteInboundQos2Async(string clientId, ushort packetIdentifier, CancellationToken cancellationToken);
     /// <summary>Deletes all messages owned by one client.</summary>
