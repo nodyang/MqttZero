@@ -158,12 +158,12 @@ public sealed partial class MqttZeroBroker
 
                     MqttZeroMessageLease lease = MqttZeroMessageLease.CopyFrom(
                         new ReadOnlySequence<byte>(persisted.Topic),
-                        new ReadOnlySequence<byte>(persisted.Properties),
+                        NormalizePersistedMessageProperties(persisted.Properties),
                         new ReadOnlySequence<byte>(persisted.Payload),
                         persisted.QualityOfServiceLevel,
                         persisted.Retain,
                         null,
-                        persisted.SubscriptionIdentifier,
+                        null,
                         _bufferPool);
                     lease.SetExpiresAt(persisted.ExpiresAt);
                     lease.PacketIdentifier = persisted.PacketIdentifier;
@@ -193,21 +193,21 @@ public sealed partial class MqttZeroBroker
 
                 MqttZeroMessageLease queuedLease = MqttZeroMessageLease.CopyFrom(
                     new ReadOnlySequence<byte>(persisted.Topic),
-                    new ReadOnlySequence<byte>(persisted.Properties),
+                    NormalizePersistedMessageProperties(persisted.Properties),
                     new ReadOnlySequence<byte>(persisted.Payload),
                     persisted.QualityOfServiceLevel,
                     persisted.Retain,
                     null,
-                    persisted.SubscriptionIdentifier,
+                    null,
                     _bufferPool);
                 MqttZeroQueuedMessage message;
                 try
                 {
-                    message = MqttZeroQueuedMessage.Rent(
+                    message = MqttZeroQueuedMessage.RentWithIdentifiers(
                         queuedLease,
                         persisted.QualityOfServiceLevel,
                         persisted.Retain,
-                        persisted.SubscriptionIdentifier,
+                        persisted.SubscriptionIdentifiers,
                         persisted.ExpiresAt);
                 }
                 finally
@@ -271,7 +271,9 @@ public sealed partial class MqttZeroBroker
                 }
 
                 long retainedBytes =
-                    persisted.Topic.Length + persisted.Payload.Length;
+                    persisted.Topic.Length +
+                    persisted.Properties.Length +
+                    persisted.Payload.Length;
                 if (stagedRetainedMessages.Count >= _options.MaxRetainedMessages ||
                     stagedRetainedBytes + retainedBytes > _options.MaxRetainedBytes)
                 {
@@ -283,7 +285,7 @@ public sealed partial class MqttZeroBroker
 
                 MqttZeroMessageLease lease = MqttZeroMessageLease.CopyFrom(
                     new ReadOnlySequence<byte>(persisted.Topic),
-                    new ReadOnlySequence<byte>(persisted.Properties),
+                    NormalizePersistedMessageProperties(persisted.Properties),
                     new ReadOnlySequence<byte>(persisted.Payload),
                     persisted.QualityOfServiceLevel,
                     true,
@@ -422,8 +424,7 @@ public sealed partial class MqttZeroBroker
             !IsValidQualityOfService(message.QualityOfServiceLevel) ||
             !Enum.IsDefined(message.Kind) ||
             !Enum.IsDefined(message.State) ||
-            (message.SubscriptionIdentifier.HasValue &&
-                message.SubscriptionIdentifier.Value == 0))
+            message.SubscriptionIdentifiers.Span.IndexOf((uint)0) >= 0)
         {
             return false;
         }
@@ -883,7 +884,7 @@ public sealed partial class MqttZeroBroker
             Payload = message.Payload,
             QualityOfServiceLevel = message.QualityOfServiceLevel,
             Retain = message.Retain,
-            SubscriptionIdentifier = message.SubscriptionIdentifier,
+            SubscriptionIdentifiers = message.SubscriptionIdentifiers,
             ExpiresAt = message.ExpiresAt
         };
     }
@@ -907,6 +908,27 @@ public sealed partial class MqttZeroBroker
             Retain = lease.RetainFlag,
             ExpiresAt = lease.ExpiresAt
         };
+    }
+
+    private static ReadOnlySequence<byte> NormalizePersistedMessageProperties(
+        ReadOnlyMemory<byte> properties)
+    {
+        if (properties.IsEmpty)
+        {
+            return ReadOnlySequence<byte>.Empty;
+        }
+
+        if (!MqttPublishPropertiesCodec.TryDecode(
+                new ReadOnlySequence<byte>(properties),
+                out MqttPublishProperties publishProperties,
+                out _,
+                out _))
+        {
+            throw new InvalidOperationException(
+                "The persisted MQTT PUBLISH properties are invalid.");
+        }
+
+        return MqttPublishPropertiesCodec.Encode(publishProperties);
     }
 
     private DateTimeOffset? CalculateMessageExpiresAt(uint? expiryInterval)

@@ -164,6 +164,34 @@ namespace MqttZero.Tests.Broker
             }
         }
 
+        [Fact]
+        public async Task ServerPublishRejectsInvalidUtf8WhenPayloadFormatDeclared()
+        {
+            MqttZeroBroker broker = MqttZeroBroker.Create(
+                new MqttZeroOptions(),
+                TimeProvider.System);
+            await broker.StartAsync(TestContext.Current.CancellationToken);
+            try
+            {
+                await Assert.ThrowsAsync<ArgumentException>(
+                    async () => await broker.PublishAsync(
+                        new MqttZeroPublishMessage
+                        {
+                            Topic = "api/invalid-utf8",
+                            Payload = new ReadOnlySequence<byte>([0xFF]),
+                            Properties = new MqttPublishProperties
+                            {
+                                PayloadFormatIndicator = MqttPayloadFormatIndicator.Utf8
+                            }
+                        },
+                        TestContext.Current.CancellationToken));
+            }
+            finally
+            {
+                await broker.DisposeAsync();
+            }
+        }
+
         private sealed class TrackingReadStream : MemoryStream
         {
             public TrackingReadStream(byte[] buffer)

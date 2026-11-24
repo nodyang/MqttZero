@@ -21,10 +21,12 @@ public sealed class MqttUnsubAckPacket : MqttPacket
     /// </summary>
     public ushort PacketIdentifier { get; set; }
 
-    /// <summary>
-    /// Gets or sets the UNSUBACK properties payload section.
-    /// </summary>
-    public ReadOnlySequence<byte> Properties { get; set; }
+    /// <summary>Gets or sets the optional reason string.</summary>
+    public string? ReasonString { get; set; }
+
+    /// <summary>Gets or sets the ordered acknowledgement user properties.</summary>
+    public IReadOnlyList<MqttUserProperty> UserProperties { get; set; } =
+        Array.Empty<MqttUserProperty>();
 
     /// <summary>
     /// Gets or sets one reason code per unsubscribed filter.

@@ -59,6 +59,7 @@ internal static class MqttPublishPacketCodec
             out ReadOnlySequence<byte> properties,
             out uint? messageExpiryInterval,
             out uint? subscriptionIdentifier,
+            out ReadOnlyMemory<uint> subscriptionIdentifiers,
             out ushort? topicAlias))
         {
             return false;
@@ -75,6 +76,7 @@ internal static class MqttPublishPacketCodec
             (firstByte & 0x01) != 0,
             messageExpiryInterval,
             subscriptionIdentifier,
+            subscriptionIdentifiers,
             topicAlias);
         if ((!topic.IsEmpty && !MqttZeroProtocolValidator.IsValidTopicName(topic)) ||
             (topic.IsEmpty && !topicAlias.HasValue))
@@ -243,11 +245,13 @@ internal static class MqttPublishPacketCodec
         out ReadOnlySequence<byte> properties,
         out uint? messageExpiryInterval,
         out uint? subscriptionIdentifier,
+        out ReadOnlyMemory<uint> subscriptionIdentifiers,
         out ushort? topicAlias)
     {
         properties = ReadOnlySequence<byte>.Empty;
         messageExpiryInterval = null;
         subscriptionIdentifier = null;
+        subscriptionIdentifiers = ReadOnlyMemory<uint>.Empty;
         topicAlias = null;
         if (!TryReadVariableByteInteger(ref reader, out int length) ||
             reader.Remaining < length)
@@ -281,14 +285,34 @@ internal static class MqttPublishPacketCodec
                     messageExpiryInterval = expiry;
                     break;
                 case SubscriptionIdentifierId:
-                    if (subscriptionIdentifier.HasValue ||
-                        !TryReadVariableByteInteger(ref propertyReader, out int subscriptionId) ||
+                    if (!TryReadVariableByteInteger(ref propertyReader, out int subscriptionId) ||
                         subscriptionId == 0)
                     {
                         return false;
                     }
 
-                    subscriptionIdentifier = (uint)subscriptionId;
+                    if (!subscriptionIdentifier.HasValue &&
+                        subscriptionIdentifiers.IsEmpty)
+                    {
+                        subscriptionIdentifier = (uint)subscriptionId;
+                    }
+                    else
+                    {
+                        uint first = subscriptionIdentifier ??
+                            subscriptionIdentifiers.Span[0];
+                        uint[] identifiers = subscriptionIdentifiers.IsEmpty
+                            ? new[] { first, (uint)subscriptionId }
+                            : new uint[subscriptionIdentifiers.Length + 1];
+                        if (!subscriptionIdentifiers.IsEmpty)
+                        {
+                            subscriptionIdentifiers.Span.CopyTo(identifiers);
+                            identifiers[^1] = (uint)subscriptionId;
+                        }
+
+                        subscriptionIdentifier = null;
+                        subscriptionIdentifiers = identifiers;
+                    }
+
                     break;
                 case TopicAliasId:
                     if (topicAlias.HasValue ||
@@ -301,7 +325,8 @@ internal static class MqttPublishPacketCodec
                     topicAlias = alias;
                     break;
                 default:
-                    if (!TrySkipProperty(identifier, ref propertyReader))
+                    if (!Mqtt5PropertySchema.IsAllowed(MqttPacketType.Publish, identifier) ||
+                        !TrySkipProperty(identifier, ref propertyReader))
                     {
                         return false;
                     }
@@ -430,6 +455,11 @@ internal static class MqttPublishPacketCodec
             length += 1 + GetVariableByteIntegerSize(view.SubscriptionIdentifier.Value);
         }
 
+        foreach (uint subscriptionIdentifier in view.SubscriptionIdentifiers.Span)
+        {
+            length += 1 + GetVariableByteIntegerSize(subscriptionIdentifier);
+        }
+
         if (view.TopicAlias.HasValue)
         {
             length += 3;
@@ -482,6 +512,12 @@ internal static class MqttPublishPacketCodec
             writer.WriteVariableByteInteger(view.SubscriptionIdentifier.Value);
         }
 
+        foreach (uint subscriptionIdentifier in view.SubscriptionIdentifiers.Span)
+        {
+            writer.WriteByte(SubscriptionIdentifierId);
+            writer.WriteVariableByteInteger(subscriptionIdentifier);
+        }
+
         if (view.TopicAlias.HasValue)
         {
             writer.WriteByte(TopicAliasId);
@@ -509,6 +545,14 @@ internal static class MqttPublishPacketCodec
             offset += MqttZeroPacketWriter.WriteVariableByteInteger(
                 destination[offset..],
                 view.SubscriptionIdentifier.Value);
+        }
+
+        foreach (uint subscriptionIdentifier in view.SubscriptionIdentifiers.Span)
+        {
+            destination[offset++] = SubscriptionIdentifierId;
+            offset += MqttZeroPacketWriter.WriteVariableByteInteger(
+                destination[offset..],
+                subscriptionIdentifier);
         }
 
         if (view.TopicAlias.HasValue)
@@ -544,12 +588,22 @@ internal static class MqttPublishPacketCodec
             length += 5;
         }
 
-        if (view.SubscriptionIdentifier.HasValue &&
-            !MqttZeroPublishPropertyTransformer.ContainsProperty(
+        bool hasEncodedSubscriptionIdentifiers =
+            MqttZeroPublishPropertyTransformer.ContainsProperty(
                 view.Properties,
-                SubscriptionIdentifierId))
+                SubscriptionIdentifierId);
+        if (view.SubscriptionIdentifier.HasValue &&
+            !hasEncodedSubscriptionIdentifiers)
         {
             length += 1 + GetVariableByteIntegerSize(view.SubscriptionIdentifier.Value);
+        }
+
+        if (!hasEncodedSubscriptionIdentifiers)
+        {
+            foreach (uint subscriptionIdentifier in view.SubscriptionIdentifiers.Span)
+            {
+                length += 1 + GetVariableByteIntegerSize(subscriptionIdentifier);
+            }
         }
 
         if (view.TopicAlias.HasValue &&
@@ -574,6 +628,19 @@ internal static class MqttPublishPacketCodec
         {
             WriteByte(writer, SubscriptionIdentifierId);
             WriteVariableByteInteger(writer, view.SubscriptionIdentifier.Value);
+        }
+
+        bool hasEncodedSubscriptionIdentifiers =
+            MqttZeroPublishPropertyTransformer.ContainsProperty(
+                view.Properties,
+                SubscriptionIdentifierId);
+        if (!hasEncodedSubscriptionIdentifiers)
+        {
+            foreach (uint subscriptionIdentifier in view.SubscriptionIdentifiers.Span)
+            {
+                WriteByte(writer, SubscriptionIdentifierId);
+                WriteVariableByteInteger(writer, subscriptionIdentifier);
+            }
         }
 
         if (view.TopicAlias.HasValue &&
@@ -602,6 +669,21 @@ internal static class MqttPublishPacketCodec
                 view.SubscriptionIdentifier.Value);
         }
 
+        bool hasEncodedSubscriptionIdentifiers =
+            MqttZeroPublishPropertyTransformer.ContainsProperty(
+                view.Properties,
+                SubscriptionIdentifierId);
+        if (!hasEncodedSubscriptionIdentifiers)
+        {
+            foreach (uint subscriptionIdentifier in view.SubscriptionIdentifiers.Span)
+            {
+                destination[offset++] = SubscriptionIdentifierId;
+                offset += MqttZeroPacketWriter.WriteVariableByteInteger(
+                    destination[offset..],
+                    subscriptionIdentifier);
+            }
+        }
+
         if (view.TopicAlias.HasValue &&
             !MqttZeroPublishPropertyTransformer.ContainsProperty(
                 view.Properties,
@@ -627,6 +709,12 @@ internal static class MqttPublishPacketCodec
         {
             WriteByte(writer, SubscriptionIdentifierId);
             WriteVariableByteInteger(writer, view.SubscriptionIdentifier.Value);
+        }
+
+        foreach (uint subscriptionIdentifier in view.SubscriptionIdentifiers.Span)
+        {
+            WriteByte(writer, SubscriptionIdentifierId);
+            WriteVariableByteInteger(writer, subscriptionIdentifier);
         }
 
         if (view.TopicAlias.HasValue)

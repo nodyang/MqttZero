@@ -8,6 +8,36 @@ namespace MqttZero.Tests.Sessions
     public sealed class QueuedMessageTests
     {
         [Fact]
+        public void CreatePacketIncludesAllSubscriptionIdentifiers()
+        {
+            MqttZeroMessageLease lease = MqttZeroMessageLease.CopyFrom(
+                new ReadOnlySequence<byte>("topic"u8.ToArray()),
+                ReadOnlySequence<byte>.Empty,
+                new ReadOnlySequence<byte>("payload"u8.ToArray()),
+                MqttQualityOfServiceLevel.AtLeastOnce,
+                false,
+                null,
+                null);
+            MqttZeroQueuedMessage message = MqttZeroQueuedMessage.RentWithIdentifiers(
+                lease,
+                MqttQualityOfServiceLevel.AtLeastOnce,
+                false,
+                new uint[] { 7, 9 },
+                null);
+
+            try
+            {
+                MqttPublishPacket packet = message.CreatePacket(false);
+
+                Assert.Equal(new uint[] { 7, 9 }, packet.SubscriptionIdentifiers);
+            }
+            finally
+            {
+                message.Release();
+            }
+        }
+
+        [Fact]
         public void PacketAndViewExposeMessageValues()
         {
             using MqttZeroMessageLease lease = MqttZeroMessageLease.CopyFrom(

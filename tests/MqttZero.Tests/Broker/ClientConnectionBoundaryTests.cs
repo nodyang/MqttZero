@@ -42,6 +42,202 @@ namespace MqttZero.Tests.Broker
         }
 
         [Fact]
+        public async Task ConnAckTrimsOptionalProblemInformationToFitMaximumPacketSize()
+        {
+            TrackingPipeWriter writer = new();
+            await using MqttZeroClientConnection connection = CreateConnection(
+                writer,
+                maximumPacketSize: 6);
+
+            await connection.SendConnAckAsync(
+                new MqttConnAckPacket
+                {
+                    ReasonCode = MqttReasonCode.NotAuthorized,
+                    ReasonString = "too long",
+                    UserProperties = [new MqttUserProperty("trace", "value")]
+                },
+                TestContext.Current.CancellationToken);
+
+            Assert.True(MqttPacketCodec.TryDecode(
+                new ReadOnlySequence<byte>(writer.WrittenBytes),
+                out MqttPacket? packet,
+                out _));
+            MqttConnAckPacket connAck = Assert.IsType<MqttConnAckPacket>(packet);
+            Assert.Equal(MqttReasonCode.NotAuthorized, connAck.ReasonCode);
+            Assert.Null(connAck.ReasonString);
+            Assert.Empty(connAck.UserProperties);
+        }
+
+        [Fact]
+        public async Task DisconnectTrimsOptionalProblemInformationToFitMaximumPacketSize()
+        {
+            TrackingPipeWriter writer = new();
+            await using MqttZeroClientConnection connection = CreateConnection(
+                writer,
+                maximumPacketSize: 6);
+
+            await connection.SendDisconnectAsync(
+                new MqttDisconnectPacket
+                {
+                    ReasonCode = MqttReasonCode.ServerShuttingDown,
+                    ReasonString = "too long",
+                    ServerReference = "backup.example",
+                    UserProperties = [new MqttUserProperty("trace", "value")]
+                },
+                TestContext.Current.CancellationToken);
+
+            Assert.True(MqttPacketCodec.TryDecode(
+                new ReadOnlySequence<byte>(writer.WrittenBytes),
+                out MqttPacket? packet,
+                out _));
+            MqttDisconnectPacket disconnect = Assert.IsType<MqttDisconnectPacket>(packet);
+            Assert.Equal(MqttReasonCode.ServerShuttingDown, disconnect.ReasonCode);
+            Assert.Null(disconnect.ReasonString);
+            Assert.Null(disconnect.ServerReference);
+            Assert.Empty(disconnect.UserProperties);
+        }
+
+        [Fact]
+        public async Task ConnAckTrimsReasonStringOnly()
+        {
+            TrackingPipeWriter writer = new();
+            await using MqttZeroClientConnection connection = CreateConnection(
+                writer,
+                maximumPacketSize: 6);
+
+            await connection.SendConnAckAsync(
+                new MqttConnAckPacket
+                {
+                    ReasonCode = MqttReasonCode.NotAuthorized,
+                    ReasonString = "too long"
+                },
+                TestContext.Current.CancellationToken);
+
+            Assert.True(MqttPacketCodec.TryDecode(
+                new ReadOnlySequence<byte>(writer.WrittenBytes),
+                out MqttPacket? packet,
+                out _));
+            Assert.Null(Assert.IsType<MqttConnAckPacket>(packet).ReasonString);
+        }
+
+        [Fact]
+        public async Task ConnAckTrimsUserPropertiesOnly()
+        {
+            TrackingPipeWriter writer = new();
+            await using MqttZeroClientConnection connection = CreateConnection(
+                writer,
+                maximumPacketSize: 5);
+
+            await connection.SendConnAckAsync(
+                new MqttConnAckPacket
+                {
+                    ReasonCode = MqttReasonCode.NotAuthorized,
+                    UserProperties = [new MqttUserProperty("trace", "value")]
+                },
+                TestContext.Current.CancellationToken);
+
+            Assert.True(MqttPacketCodec.TryDecode(
+                new ReadOnlySequence<byte>(writer.WrittenBytes),
+                out MqttPacket? packet,
+                out _));
+            Assert.Empty(Assert.IsType<MqttConnAckPacket>(packet).UserProperties);
+        }
+
+        [Fact]
+        public async Task SubAckTrimsReasonStringToFitMaximumPacketSize()
+        {
+            TrackingPipeWriter writer = new();
+            await using MqttZeroClientConnection connection = CreateConnection(
+                writer,
+                maximumPacketSize: 6);
+
+            await connection.SendSubAckAsync(
+                new MqttSubAckPacket
+                {
+                    PacketIdentifier = 1,
+                    ReasonCodes = new ReadOnlyMemory<byte>([0x00]),
+                    ReasonString = "too long"
+                },
+                TestContext.Current.CancellationToken);
+
+            Assert.True(MqttPacketCodec.TryDecode(
+                new ReadOnlySequence<byte>(writer.WrittenBytes),
+                out MqttPacket? packet,
+                out _));
+            Assert.Null(Assert.IsType<MqttSubAckPacket>(packet).ReasonString);
+        }
+
+        [Fact]
+        public async Task UnsubAckTrimsUserPropertiesToFitMaximumPacketSize()
+        {
+            TrackingPipeWriter writer = new();
+            await using MqttZeroClientConnection connection = CreateConnection(
+                writer,
+                maximumPacketSize: 6);
+
+            await connection.SendUnsubAckAsync(
+                new MqttUnsubAckPacket
+                {
+                    PacketIdentifier = 1,
+                    ReasonCodes = new ReadOnlyMemory<byte>([0x00]),
+                    UserProperties = [new MqttUserProperty("trace", "value")]
+                },
+                TestContext.Current.CancellationToken);
+
+            Assert.True(MqttPacketCodec.TryDecode(
+                new ReadOnlySequence<byte>(writer.WrittenBytes),
+                out MqttPacket? packet,
+                out _));
+            Assert.Empty(Assert.IsType<MqttUnsubAckPacket>(packet).UserProperties);
+        }
+
+        [Fact]
+        public async Task DisconnectTrimsReasonStringOnly()
+        {
+            TrackingPipeWriter writer = new();
+            await using MqttZeroClientConnection connection = CreateConnection(
+                writer,
+                maximumPacketSize: 4);
+
+            await connection.SendDisconnectAsync(
+                new MqttDisconnectPacket
+                {
+                    ReasonCode = MqttReasonCode.ServerShuttingDown,
+                    ReasonString = "too long"
+                },
+                TestContext.Current.CancellationToken);
+
+            Assert.True(MqttPacketCodec.TryDecode(
+                new ReadOnlySequence<byte>(writer.WrittenBytes),
+                out MqttPacket? packet,
+                out _));
+            Assert.Null(Assert.IsType<MqttDisconnectPacket>(packet).ReasonString);
+        }
+
+        [Fact]
+        public async Task DisconnectTrimsServerReferenceOnly()
+        {
+            TrackingPipeWriter writer = new();
+            await using MqttZeroClientConnection connection = CreateConnection(
+                writer,
+                maximumPacketSize: 4);
+
+            await connection.SendDisconnectAsync(
+                new MqttDisconnectPacket
+                {
+                    ReasonCode = MqttReasonCode.ServerShuttingDown,
+                    ServerReference = "backup.example"
+                },
+                TestContext.Current.CancellationToken);
+
+            Assert.True(MqttPacketCodec.TryDecode(
+                new ReadOnlySequence<byte>(writer.WrittenBytes),
+                out MqttPacket? packet,
+                out _));
+            Assert.Null(Assert.IsType<MqttDisconnectPacket>(packet).ServerReference);
+        }
+
+        [Fact]
         public async Task DisposeIsIdempotent()
         {
             MqttZeroClientConnection connection = CreateConnection(

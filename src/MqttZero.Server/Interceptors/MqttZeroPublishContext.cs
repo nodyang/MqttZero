@@ -23,9 +23,9 @@ public sealed class MqttZeroPublishContext
     public ReadOnlySequence<byte> Payload { get; set; }
 
     /// <summary>
-    /// Gets or sets the MQTT 5 property section.
+    /// Gets or sets the end-to-end MQTT 5 publish properties.
     /// </summary>
-    public ReadOnlySequence<byte> Properties { get; set; }
+    public MqttPublishProperties Properties { get; set; } = MqttPublishProperties.Empty;
 
     /// <summary>
     /// Gets or sets the quality of service.
@@ -60,7 +60,7 @@ public sealed class MqttZeroPublishContext
     {
         Topic = ReadOnlySequence<byte>.Empty;
         Payload = ReadOnlySequence<byte>.Empty;
-        Properties = ReadOnlySequence<byte>.Empty;
+        Properties = MqttPublishProperties.Empty;
         QualityOfServiceLevel = MqttQualityOfServiceLevel.AtMostOnce;
         Retain = false;
         Sender = null;

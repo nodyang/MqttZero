@@ -237,6 +237,60 @@ namespace MqttZero.Tests.Broker
             await subscriber.DisconnectAsync(cancellationToken: cancellationToken);
             await app.StopAsync(cancellationToken);
         }
+
+        [Fact(Timeout = 15_000)]
+        public async Task IncludesAllMatchingSubscriptionIdentifiersInSinglePublish()
+        {
+            int port = GetFreePort();
+            await using WebApplication app = await StartTcpBrokerAsync(port);
+            CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+            MqttClientFactory factory = new();
+            using IMqttClient subscriber = factory.CreateMqttClient();
+            using IMqttClient publisher = factory.CreateMqttClient();
+            TaskCompletionSource<uint[]> identifiers = new(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            int deliveryCount = 0;
+            subscriber.ApplicationMessageReceivedAsync += eventArgs =>
+            {
+                Interlocked.Increment(ref deliveryCount);
+                identifiers.TrySetResult(
+                    eventArgs.ApplicationMessage.SubscriptionIdentifiers?.ToArray() ?? []);
+                return Task.CompletedTask;
+            };
+            await subscriber.ConnectAsync(
+                CreateClientOptions(port, "overlapping-subscriber"),
+                cancellationToken);
+            await subscriber.SubscribeAsync(
+                new MqttClientSubscribeOptionsBuilder()
+                    .WithTopicFilter("overlap/#")
+                    .WithSubscriptionIdentifier(11)
+                    .Build(),
+                cancellationToken);
+            await subscriber.SubscribeAsync(
+                new MqttClientSubscribeOptionsBuilder()
+                    .WithTopicFilter("overlap/+")
+                    .WithSubscriptionIdentifier(22)
+                    .Build(),
+                cancellationToken);
+            await publisher.ConnectAsync(
+                CreateClientOptions(port, "overlapping-publisher"),
+                cancellationToken);
+
+            await publisher.PublishStringAsync(
+                "overlap/value",
+                "payload",
+                cancellationToken: cancellationToken);
+
+            uint[] received = await identifiers.Task.WaitAsync(
+                TimeSpan.FromSeconds(5),
+                cancellationToken);
+            Assert.Equal([11U, 22U], received);
+            Assert.Equal(1, deliveryCount);
+
+            await subscriber.DisconnectAsync(cancellationToken: cancellationToken);
+            await publisher.DisconnectAsync(cancellationToken: cancellationToken);
+            await app.StopAsync(cancellationToken);
+        }
         [Fact(Timeout = 15_000)]
         public async Task HonorsRetainHandlingDoNotSendOnSubscribe()
         {

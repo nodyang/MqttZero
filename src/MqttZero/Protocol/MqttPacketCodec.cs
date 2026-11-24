@@ -137,7 +137,8 @@ public static partial class MqttPacketCodec
                     0x50,
                     pubRecPacket.PacketIdentifier,
                     pubRecPacket.ReasonCode,
-                    pubRecPacket.Properties,
+                    pubRecPacket.ReasonString,
+                    pubRecPacket.UserProperties,
                     writer);
                 break;
             case MqttPubRelPacket pubRelPacket:
@@ -145,7 +146,8 @@ public static partial class MqttPacketCodec
                     0x62,
                     pubRelPacket.PacketIdentifier,
                     pubRelPacket.ReasonCode,
-                    pubRelPacket.Properties,
+                    pubRelPacket.ReasonString,
+                    pubRelPacket.UserProperties,
                     writer);
                 break;
             case MqttPubCompPacket pubCompPacket:
@@ -153,7 +155,8 @@ public static partial class MqttPacketCodec
                     0x70,
                     pubCompPacket.PacketIdentifier,
                     pubCompPacket.ReasonCode,
-                    pubCompPacket.Properties,
+                    pubCompPacket.ReasonString,
+                    pubCompPacket.UserProperties,
                     writer);
                 break;
             case MqttSubscribePacket subscribePacket:

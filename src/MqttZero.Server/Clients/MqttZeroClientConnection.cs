@@ -38,7 +38,9 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
         uint maximumPacketSize,
         TimeProvider timeProvider,
         MqttZeroBufferPool? bufferPool = null,
-        bool allowPacketFragmentation = true)
+        bool allowPacketFragmentation = true,
+        bool requestProblemInformation = true,
+        bool requestResponseInformation = false)
     {
         _bufferPool = bufferPool ?? MqttZeroBufferPool.Shared;
         _writer = writer;
@@ -50,6 +52,8 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
         ReceiveMaximum = receiveMaximum;
         MaximumPacketSize = maximumPacketSize;
         AllowPacketFragmentation = allowPacketFragmentation;
+        RequestProblemInformation = requestProblemInformation;
+        RequestResponseInformation = requestResponseInformation;
         LastPacketReceivedAt = timeProvider.GetUtcNow();
         _connectedAt = LastPacketReceivedAt;
     }
@@ -67,6 +71,10 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
     public uint MaximumPacketSize { get; }
 
     public bool AllowPacketFragmentation { get; }
+
+    public bool RequestProblemInformation { get; }
+
+    public bool RequestResponseInformation { get; }
 
     public MqttZeroClientConnectionInfo ClientInfo { get; set; } = null!;
 
@@ -221,7 +229,7 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
                 duplicate,
                 message.Retain,
                 message.ExpiresAt,
-                message.SubscriptionIdentifier,
+                message.SubscriptionIdentifiers,
                 cancellationToken).ConfigureAwait(false);
         }
         finally
@@ -239,6 +247,27 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
         bool duplicate,
         CancellationToken cancellationToken)
     {
+        await SendPublishAsyncWithIdentifiers(
+            lease,
+            qualityOfServiceLevel,
+            retain,
+            subscriptionIdentifier.HasValue
+                ? new[] { subscriptionIdentifier.Value }
+                : ReadOnlyMemory<uint>.Empty,
+            packetIdentifier,
+            duplicate,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public async ValueTask SendPublishAsyncWithIdentifiers(
+        MqttZeroMessageLease lease,
+        MqttQualityOfServiceLevel qualityOfServiceLevel,
+        bool retain,
+        ReadOnlyMemory<uint> subscriptionIdentifiers,
+        ushort packetIdentifier,
+        bool duplicate,
+        CancellationToken cancellationToken)
+    {
         await _writeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -251,13 +280,34 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
                 duplicate,
                 retain,
                 lease.ExpiresAt,
-                subscriptionIdentifier,
+                subscriptionIdentifiers,
                 cancellationToken).ConfigureAwait(false);
         }
         finally
         {
             _writeLock.Release();
         }
+    }
+
+    internal bool IsPublishTooLarge(
+        MqttZeroMessageLease lease,
+        MqttQualityOfServiceLevel qualityOfServiceLevel,
+        bool retain,
+        ReadOnlyMemory<uint> subscriptionIdentifiers)
+    {
+        MqttZeroPublishView view = new(
+            lease.TopicSequence,
+            lease.PropertiesSequence,
+            lease.PayloadSequence,
+            qualityOfServiceLevel,
+            0,
+            false,
+            retain,
+            GetRemainingMessageExpiry(lease.ExpiresAt),
+            null,
+            subscriptionIdentifiers,
+            null);
+        return MqttPublishPacketCodec.GetEncodedLength(view) > MaximumPacketSize;
     }
 
     public async ValueTask SendPubAckAsync(
@@ -368,10 +418,30 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
         MqttSubAckPacket packet,
         CancellationToken cancellationToken)
     {
+        int propertiesLength = Mqtt5PropertyWriter.GetReasonPropertiesLength(
+            packet.ReasonString,
+            packet.UserProperties);
+        int bodyLength =
+            2 +
+            GetVariableByteIntegerSize(propertiesLength) +
+            propertiesLength +
+            packet.ReasonCodes.Length;
+        long encodedLength =
+            1 +
+            GetVariableByteIntegerSize(bodyLength) +
+            bodyLength;
+        if (encodedLength > MaximumPacketSize &&
+            (packet.ReasonString != null || packet.UserProperties.Count > 0))
+        {
+            packet.ReasonString = null;
+            packet.UserProperties = Array.Empty<MqttUserProperty>();
+            propertiesLength = 0;
+        }
+
         await SendControlPacketDirectAsync(
             packet,
             2 + packet.ReasonCodes.Length,
-            packet.Properties.Length,
+            propertiesLength,
             cancellationToken).ConfigureAwait(false);
     }
 
@@ -379,10 +449,30 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
         MqttUnsubAckPacket packet,
         CancellationToken cancellationToken)
     {
+        int propertiesLength = Mqtt5PropertyWriter.GetReasonPropertiesLength(
+            packet.ReasonString,
+            packet.UserProperties);
+        int bodyLength =
+            2 +
+            GetVariableByteIntegerSize(propertiesLength) +
+            propertiesLength +
+            packet.ReasonCodes.Length;
+        long encodedLength =
+            1 +
+            GetVariableByteIntegerSize(bodyLength) +
+            bodyLength;
+        if (encodedLength > MaximumPacketSize &&
+            (packet.ReasonString != null || packet.UserProperties.Count > 0))
+        {
+            packet.ReasonString = null;
+            packet.UserProperties = Array.Empty<MqttUserProperty>();
+            propertiesLength = 0;
+        }
+
         await SendControlPacketDirectAsync(
             packet,
             2 + packet.ReasonCodes.Length,
-            packet.Properties.Length,
+            propertiesLength,
             cancellationToken).ConfigureAwait(false);
     }
 
@@ -390,6 +480,12 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
         MqttConnAckPacket packet,
         CancellationToken cancellationToken)
     {
+        if (!RequestProblemInformation)
+        {
+            packet.ReasonString = null;
+            packet.UserProperties = Array.Empty<MqttUserProperty>();
+        }
+
         int propertiesLength = Mqtt5PropertyWriter.GetConnAckPropertiesLength(packet);
         int bodyLength =
             2 +
@@ -399,6 +495,22 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
             1 +
             GetVariableByteIntegerSize(bodyLength) +
             bodyLength;
+        if (encodedLength > MaximumPacketSize &&
+            (packet.ReasonString != null || packet.UserProperties.Count > 0))
+        {
+            packet.ReasonString = null;
+            packet.UserProperties = Array.Empty<MqttUserProperty>();
+            propertiesLength = Mqtt5PropertyWriter.GetConnAckPropertiesLength(packet);
+            bodyLength =
+                2 +
+                GetVariableByteIntegerSize(propertiesLength) +
+                propertiesLength;
+            encodedLength =
+                1 +
+                GetVariableByteIntegerSize(bodyLength) +
+                bodyLength;
+        }
+
         if (encodedLength > MaximumPacketSize)
         {
             throw new InvalidOperationException(
@@ -432,6 +544,13 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
         MqttDisconnectPacket packet,
         CancellationToken cancellationToken)
     {
+        if (!RequestProblemInformation)
+        {
+            packet.ReasonString = null;
+            packet.ServerReference = null;
+            packet.UserProperties = Array.Empty<MqttUserProperty>();
+        }
+
         int propertiesLength =
             Mqtt5PropertyWriter.GetDisconnectPropertiesLength(packet);
         bool includeDetail =
@@ -446,6 +565,30 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
             1 +
             GetVariableByteIntegerSize(bodyLength) +
             bodyLength;
+        if (encodedLength > MaximumPacketSize &&
+            (packet.ReasonString != null ||
+                packet.ServerReference != null ||
+                packet.UserProperties.Count > 0))
+        {
+            packet.ReasonString = null;
+            packet.ServerReference = null;
+            packet.UserProperties = Array.Empty<MqttUserProperty>();
+            propertiesLength =
+                Mqtt5PropertyWriter.GetDisconnectPropertiesLength(packet);
+            includeDetail =
+                packet.ReasonCode != MqttReasonCode.Success ||
+                propertiesLength > 0;
+            bodyLength = includeDetail
+                ? 1 +
+                    GetVariableByteIntegerSize(propertiesLength) +
+                    propertiesLength
+                : 0;
+            encodedLength =
+                1 +
+                GetVariableByteIntegerSize(bodyLength) +
+                bodyLength;
+        }
+
         if (encodedLength > MaximumPacketSize)
         {
             throw new InvalidOperationException(
@@ -486,7 +629,7 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
         bool duplicate,
         bool retain,
         DateTimeOffset? expiresAt,
-        uint? subscriptionIdentifier,
+        ReadOnlyMemory<uint> subscriptionIdentifiers,
         CancellationToken cancellationToken)
     {
         MqttZeroPublishView view = new(
@@ -498,7 +641,8 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
             duplicate,
             retain,
             GetRemainingMessageExpiry(expiresAt),
-            subscriptionIdentifier,
+            null,
+            subscriptionIdentifiers,
             null);
         int encodedLength = MqttPublishPacketCodec.GetEncodedLength(view);
         if (encodedLength > MaximumPacketSize)

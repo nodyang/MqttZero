@@ -21,6 +21,6 @@ public sealed class MqttZeroEnqueueContext
     public MqttQualityOfServiceLevel QualityOfServiceLevel { get; init; }
     /// <summary>Gets whether RETAIN is set.</summary>
     public bool Retain { get; init; }
-    /// <summary>Gets the subscription identifier.</summary>
-    public uint? SubscriptionIdentifier { get; init; }
+    /// <summary>Gets all subscription identifiers attached to the delivery.</summary>
+    public ReadOnlyMemory<uint> SubscriptionIdentifiers { get; init; }
 }

@@ -2,6 +2,7 @@ using MqttZero.Server.Broker;
 using MqttZero.Server.Interceptors;
 using MqttZero.Memory;
 using MqttZero.Protocol;
+using MqttZero.Publishing;
 using MqttZero.Server.Routing;
 using MqttZero.Server.Sessions;
 using System.Buffers;
@@ -58,6 +59,34 @@ namespace MqttZero.Tests.Interceptors
             Assert.Equal(["first", "second"], recorder.Names);
         }
 
+        [Fact]
+        public async Task PublishInterceptorReceivesTypedProperties()
+        {
+            ServiceCollection services = new();
+            services.AddMqttZero().AddInterceptor<RecordingPublishInterceptor>();
+            await using ServiceProvider provider = services.BuildServiceProvider();
+
+            RecordingPublishInterceptor interceptor =
+                provider.GetRequiredService<RecordingPublishInterceptor>();
+            MqttZeroBroker broker = provider.GetRequiredService<MqttZeroBroker>();
+            await broker.StartAsync(TestContext.Current.CancellationToken);
+            await broker.PublishAsync(
+                new MqttZeroPublishMessage
+                {
+                    Topic = "devices/a",
+                    Payload = new ReadOnlySequence<byte>("value"u8.ToArray()),
+                    Properties = new MqttPublishProperties
+                    {
+                        ContentType = "text/plain",
+                        UserProperties = [new MqttUserProperty("trace", "one")]
+                    }
+                },
+                TestContext.Current.CancellationToken);
+
+            Assert.Equal("text/plain", interceptor.ContentType);
+            Assert.Equal("one", interceptor.UserPropertyValue);
+        }
+
         private sealed class InterceptorOrderRecorder
         {
             public List<string> Names { get; } = [];
@@ -105,12 +134,20 @@ namespace MqttZero.Tests.Interceptors
 
             public string? Topic { get; private set; }
 
+            public string? ContentType { get; private set; }
+
+            public string? UserPropertyValue { get; private set; }
+
             public ValueTask<MqttZeroInterceptionResult> InterceptAsync(
                 MqttZeroPublishContext context,
                 CancellationToken cancellationToken)
             {
                 InvocationCount++;
                 Topic = System.Text.Encoding.UTF8.GetString(context.Topic.FirstSpan);
+                ContentType = context.Properties.ContentType;
+                UserPropertyValue = context.Properties.UserProperties.Count > 0
+                    ? context.Properties.UserProperties[0].Value
+                    : null;
                 return ValueTask.FromResult(MqttZeroInterceptionResult.Continue);
             }
         }

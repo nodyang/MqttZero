@@ -235,7 +235,7 @@
       "mqttzero.aspnetcore": {
         "type": "Project",
         "dependencies": {
-          "MqttZero.Server": "[0.9.0-alpha.1, )"
+          "MqttZero.Server": "[0.10.0-alpha.1, )"
         }
       },
       "mqttzero.server": {
@@ -243,7 +243,7 @@
         "dependencies": {
           "Microsoft.Extensions.Logging.Abstractions": "[10.0.0, )",
           "Microsoft.Extensions.Options": "[10.0.0, )",
-          "MqttZero": "[0.9.0-alpha.1, )"
+          "MqttZero": "[0.10.0-alpha.1, )"
         }
       },
       "Microsoft.Extensions.Logging.Abstractions": {

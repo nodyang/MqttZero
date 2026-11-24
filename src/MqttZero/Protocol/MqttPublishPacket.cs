@@ -22,19 +22,14 @@ public sealed class MqttPublishPacket : MqttPacket
     public ReadOnlySequence<byte> TopicName { get; set; }
 
     /// <summary>
-    /// Gets or sets the publish properties payload section.
+    /// Gets or sets the end-to-end publish properties.
     /// </summary>
-    public ReadOnlySequence<byte> Properties { get; set; }
+    public MqttPublishProperties Properties { get; set; } = MqttPublishProperties.Empty;
 
     /// <summary>
-    /// Gets or sets the message expiry interval in seconds.
+    /// Gets or sets the subscription identifiers attached to this delivery.
     /// </summary>
-    public uint? MessageExpiryInterval { get; set; }
-
-    /// <summary>
-    /// Gets or sets the subscription identifier attached to this delivery.
-    /// </summary>
-    public uint? SubscriptionIdentifier { get; set; }
+    public IReadOnlyList<uint> SubscriptionIdentifiers { get; set; } = Array.Empty<uint>();
 
     /// <summary>
     /// Gets or sets the MQTT 5 topic alias.
@@ -65,4 +60,42 @@ public sealed class MqttPublishPacket : MqttPacket
     /// Gets or sets a value indicating whether the retained flag is set.
     /// </summary>
     public bool Retain { get; set; }
+
+    internal uint? MessageExpiryInterval
+    {
+        get
+        {
+            return Properties.MessageExpiryInterval;
+        }
+
+        set
+        {
+            Properties = new MqttPublishProperties
+            {
+                PayloadFormatIndicator = Properties.PayloadFormatIndicator,
+                MessageExpiryInterval = value,
+                ContentType = Properties.ContentType,
+                ResponseTopic = Properties.ResponseTopic,
+                CorrelationData = Properties.CorrelationData,
+                UserProperties = Properties.UserProperties
+            };
+        }
+    }
+
+    internal uint? SubscriptionIdentifier
+    {
+        get
+        {
+            return SubscriptionIdentifiers.Count == 0
+                ? null
+                : SubscriptionIdentifiers[0];
+        }
+
+        set
+        {
+            SubscriptionIdentifiers = value.HasValue
+                ? [value.Value]
+                : Array.Empty<uint>();
+        }
+    }
 }

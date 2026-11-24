@@ -1,5 +1,3 @@
-using System.Buffers;
-
 namespace MqttZero.Protocol;
 
 /// <summary>Represents an MQTT 5 PUBCOMP packet.</summary>
@@ -14,6 +12,10 @@ public sealed class MqttPubCompPacket : MqttPacket
     /// <summary>Gets or sets the reason code.</summary>
     public MqttReasonCode ReasonCode { get; set; }
 
-    /// <summary>Gets or sets the raw public properties.</summary>
-    public ReadOnlySequence<byte> Properties { get; set; }
+    /// <summary>Gets or sets the optional reason string.</summary>
+    public string? ReasonString { get; set; }
+
+    /// <summary>Gets or sets the ordered acknowledgement user properties.</summary>
+    public IReadOnlyList<MqttUserProperty> UserProperties { get; set; } =
+        Array.Empty<MqttUserProperty>();
 }

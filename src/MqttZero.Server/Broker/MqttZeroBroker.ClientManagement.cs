@@ -406,15 +406,24 @@ public sealed partial class MqttZeroBroker
             throw new ArgumentException("The MQTT topic name is invalid.", nameof(message));
         }
 
+        MqttPublishProperties properties = message.Properties ?? MqttPublishProperties.Empty;
+        if (properties.PayloadFormatIndicator == MqttPayloadFormatIndicator.Utf8 &&
+            !MqttZeroProtocolValidator.IsValidUtf8(message.Payload))
+        {
+            throw new ArgumentException("The MQTT payload is not valid UTF-8.", nameof(message));
+        }
+
+        ReadOnlySequence<byte> encodedProperties = MqttPublishPropertiesCodec.Encode(properties);
         MqttZeroMessageLease lease = MqttZeroMessageLease.CopyFrom(
             topic,
-            ReadOnlySequence<byte>.Empty,
+            encodedProperties,
             message.Payload,
             message.QualityOfServiceLevel,
             message.Retain,
-            null,
+            properties.MessageExpiryInterval,
             null,
             _bufferPool);
+        lease.SetExpiresAt(CalculateMessageExpiresAt(properties.MessageExpiryInterval));
         try
         {
             MqttZeroPublishView view = new(
@@ -425,7 +434,7 @@ public sealed partial class MqttZeroBroker
                 0,
                 false,
                 lease.RetainFlag,
-                null,
+                lease.MessageExpiryInterval,
                 null,
                 null);
             if (MqttPublishPacketCodec.GetEncodedLength(view) > _options.MaxPacketSize)
@@ -439,7 +448,7 @@ public sealed partial class MqttZeroBroker
                 lease,
                 message.QualityOfServiceLevel,
                 message.Retain,
-                null,
+                ReadOnlyMemory<uint>.Empty,
                 null,
                 cancellationToken).ConfigureAwait(false);
             return true;

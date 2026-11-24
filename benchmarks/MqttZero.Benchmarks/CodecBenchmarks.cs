@@ -56,8 +56,11 @@ public class CodecBenchmarks
             Payload = new ReadOnlySequence<byte>(payload),
             QualityOfServiceLevel = MqttQualityOfServiceLevel.AtLeastOnce,
             PacketIdentifier = 1,
-            MessageExpiryInterval = 60,
-            SubscriptionIdentifier = 7
+            Properties = new MqttPublishProperties
+            {
+                MessageExpiryInterval = 60
+            },
+            SubscriptionIdentifiers = [7]
         };
         ArrayBufferWriter<byte> setupWriter = new();
         MqttPacketCodec.Encode(_mqttZeroPacket, setupWriter);
@@ -65,17 +68,17 @@ public class CodecBenchmarks
         _mqttZeroDecodeSource = CreateSegmentedSequence(encoded, Segments);
         _lease = MqttZeroMessageLease.CopyFrom(
             _mqttZeroPacket.TopicName,
-            _mqttZeroPacket.Properties,
+            MqttPublishPropertiesCodec.Encode(_mqttZeroPacket.Properties),
             _mqttZeroPacket.Payload,
             _mqttZeroPacket.QualityOfServiceLevel,
             false,
-            _mqttZeroPacket.MessageExpiryInterval,
-            _mqttZeroPacket.SubscriptionIdentifier);
+            _mqttZeroPacket.Properties.MessageExpiryInterval,
+            _mqttZeroPacket.SubscriptionIdentifiers[0]);
         _queuedMessage = MqttZeroQueuedMessage.Rent(
             _lease,
             MqttQualityOfServiceLevel.AtLeastOnce,
             false,
-            _mqttZeroPacket.SubscriptionIdentifier,
+            _mqttZeroPacket.SubscriptionIdentifiers[0],
             null);
 
         _mqttNetPacket = new MqttNetPublishPacket

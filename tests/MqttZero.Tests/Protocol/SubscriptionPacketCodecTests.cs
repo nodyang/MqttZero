@@ -14,6 +14,91 @@ namespace MqttZero.Tests.Protocol
     public sealed class SubscriptionPacketCodecTests
     {
         [Fact]
+        public void RoundTripsSubscriptionUserProperties()
+        {
+            MqttSubscribePacket subscribe = new()
+            {
+                PacketIdentifier = 1,
+                SubscriptionIdentifier = 77,
+                UserProperties = [new MqttUserProperty("tenant", "east")],
+                Subscriptions =
+                [
+                    new MqttSubscriptionRequest
+                    {
+                        TopicFilter = new ReadOnlySequence<byte>("a/b"u8.ToArray())
+                    }
+                ]
+            };
+            MqttUnsubscribePacket unsubscribe = new()
+            {
+                PacketIdentifier = 2,
+                UserProperties = [new MqttUserProperty("tenant", "east")],
+                TopicFilters = [new ReadOnlySequence<byte>("a/b"u8.ToArray())]
+            };
+
+            foreach (MqttPacket packet in new MqttPacket[] { subscribe, unsubscribe })
+            {
+                byte[] bytes = ProtocolPacketTestHelper.Encode(packet);
+                Assert.True(MqttPacketCodec.TryDecode(
+                    new ReadOnlySequence<byte>(bytes),
+                    out MqttPacket? decoded,
+                    out _));
+
+                IReadOnlyList<MqttUserProperty> properties = decoded switch
+                {
+                    MqttSubscribePacket value => value.UserProperties,
+                    MqttUnsubscribePacket value => value.UserProperties,
+                    _ => throw new InvalidOperationException("Unexpected packet type.")
+                };
+                Assert.Single(properties);
+                Assert.Equal("tenant", properties[0].Name);
+            }
+        }
+
+        [Fact]
+        public void RoundTripsSubscriptionAcknowledgementProblemInformation()
+        {
+            MqttPacket[] packets =
+            [
+                new MqttSubAckPacket
+                {
+                    PacketIdentifier = 3,
+                    ReasonCodes = new byte[] { (byte)MqttReasonCode.Success },
+                    ReasonString = "subscribed",
+                    UserProperties = [new MqttUserProperty("stage", "suback")]
+                },
+                new MqttUnsubAckPacket
+                {
+                    PacketIdentifier = 4,
+                    ReasonCodes = new byte[] { (byte)MqttReasonCode.Success },
+                    ReasonString = "unsubscribed",
+                    UserProperties = [new MqttUserProperty("stage", "unsuback")]
+                }
+            ];
+
+            foreach (MqttPacket packet in packets)
+            {
+                byte[] bytes = ProtocolPacketTestHelper.Encode(packet);
+                Assert.True(MqttPacketCodec.TryDecode(
+                    new ReadOnlySequence<byte>(bytes),
+                    out MqttPacket? decoded,
+                    out _));
+
+                (string? reasonString, IReadOnlyList<MqttUserProperty> properties) =
+                    decoded switch
+                    {
+                        MqttSubAckPacket value =>
+                            (value.ReasonString, value.UserProperties),
+                        MqttUnsubAckPacket value =>
+                            (value.ReasonString, value.UserProperties),
+                        _ => throw new InvalidOperationException("Unexpected packet type.")
+                    };
+                Assert.NotNull(reasonString);
+                Assert.Single(properties);
+            }
+        }
+
+        [Fact]
         public void RoundTripsSubscribePacketWithOptions()
         {
             MqttSubscribePacket packet = new()

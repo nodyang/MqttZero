@@ -2,6 +2,9 @@ namespace MqttZero.Server.Broker;
 
 internal static class MqttZeroOptionsValidator
 {
+    private static readonly System.Text.UTF8Encoding StrictUtf8 =
+        new(false, true);
+
     public static void Validate(MqttZeroOptions options)
     {
         ValidatePositive(
@@ -46,6 +49,10 @@ internal static class MqttZeroOptionsValidator
                 nameof(options),
                 "MqttZeroOptions.MaxSessionExpiryInterval cannot be negative.");
         }
+
+        ValidateUtf8String(
+            options.ResponseInformation,
+            nameof(options.ResponseInformation));
     }
 
     private static void ValidatePositive(int value, string propertyName)
@@ -65,6 +72,38 @@ internal static class MqttZeroOptionsValidator
             throw new ArgumentOutOfRangeException(
                 nameof(value),
                 $"MqttZeroOptions.{propertyName} must be positive.");
+        }
+    }
+
+    private static void ValidateUtf8String(string? value, string propertyName)
+    {
+        if (value == null)
+        {
+            return;
+        }
+
+        if (value.Contains('\0', StringComparison.Ordinal))
+        {
+            throw new ArgumentException(
+                $"MqttZeroOptions.{propertyName} cannot contain NUL.",
+                nameof(value));
+        }
+
+        try
+        {
+            if (StrictUtf8.GetByteCount(value) > ushort.MaxValue)
+            {
+                throw new ArgumentException(
+                    $"MqttZeroOptions.{propertyName} exceeds the MQTT UTF-8 length limit.",
+                    nameof(value));
+            }
+        }
+        catch (System.Text.EncoderFallbackException exception)
+        {
+            throw new ArgumentException(
+                $"MqttZeroOptions.{propertyName} contains invalid Unicode.",
+                nameof(value),
+                exception);
         }
     }
 }

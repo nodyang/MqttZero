@@ -123,22 +123,32 @@ public sealed partial class MqttZeroBroker
             throw new ArgumentException("The MQTT topic name is invalid.", nameof(message));
         }
 
+        if (message.Properties?.PayloadFormatIndicator ==
+                MqttPayloadFormatIndicator.Utf8 &&
+            !MqttZeroProtocolValidator.IsValidUtf8(message.Payload))
+        {
+            throw new ArgumentException("The MQTT payload is not valid UTF-8.", nameof(message));
+        }
+
         MqttPublishPacket packet = new()
         {
             TopicName = topic,
             Payload = message.Payload,
+            Properties = message.Properties ?? MqttPublishProperties.Empty,
             QualityOfServiceLevel = message.QualityOfServiceLevel,
             Retain = message.Retain
         };
+        ReadOnlySequence<byte> properties = MqttPublishPropertiesCodec.Encode(
+            packet.Properties);
         MqttZeroPublishView view = new(
             topic,
-            ReadOnlySequence<byte>.Empty,
+            properties,
             message.Payload,
             message.QualityOfServiceLevel,
             0,
             false,
             message.Retain,
-            null,
+            packet.Properties.MessageExpiryInterval,
             null,
             null);
         if (MqttPublishPacketCodec.GetEncodedLength(view) > _options.MaxPacketSize)

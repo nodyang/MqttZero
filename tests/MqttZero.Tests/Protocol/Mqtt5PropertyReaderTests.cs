@@ -53,5 +53,30 @@ namespace MqttZero.Tests.Protocol
                 new ReadOnlySequence<byte>(properties),
                 new MqttConnAckPacket()));
         }
+
+        [Theory]
+        [InlineData("0102")]
+        [InlineData("0300016A0300016B")]
+        [InlineData("080003612F23")]
+        [InlineData("26000161000001FF")]
+        public void PublishReaderRejectsInvalidPropertySemantics(string hex)
+        {
+            Assert.False(Mqtt5PropertyReader.TryReadPublish(
+                new ReadOnlySequence<byte>(Convert.FromHexString(hex)),
+                new MqttPublishPacket()));
+        }
+
+        [Theory]
+        [InlineData("1702")]
+        [InlineData("2502")]
+        [InlineData("2802")]
+        [InlineData("2A02")]
+        [InlineData("2402")]
+        public void ConnAckReaderRejectsInvalidBooleanProperties(string hex)
+        {
+            Assert.False(Mqtt5PropertyReader.TryReadConnAck(
+                new ReadOnlySequence<byte>(Convert.FromHexString(hex)),
+                new MqttConnAckPacket()));
+        }
     }
 }

@@ -167,6 +167,16 @@ public sealed partial class MqttZeroBroker
                 while (true)
                 {
                     if (session != null &&
+                        !buffer.IsEmpty &&
+                        (buffer.Slice(0, 1).FirstSpan[0] >> 4) == 0x0F)
+                    {
+                        await connection!.CloseAsync(
+                            MqttReasonCode.ProtocolError,
+                            connectionLifetime.Token).ConfigureAwait(false);
+                        return;
+                    }
+
+                    if (session != null &&
                         MqttPublishPacketCodec.TryDecode(
                             buffer,
                             out MqttZeroPublishView publishView,
@@ -178,7 +188,44 @@ public sealed partial class MqttZeroBroker
                             true);
                         try
                         {
-                            MqttZeroMessageLease lease = CreateMessageLease(connection, publishView);
+                            MqttZeroMessageLease lease;
+                            if (!TryCreateMessageLease(
+                                    connection,
+                                    publishView,
+                                    out MqttZeroMessageLease? candidate,
+                                    out MqttReasonCode reasonCode))
+                            {
+                                if (publishView.QualityOfServiceLevel ==
+                                        MqttQualityOfServiceLevel.AtLeastOnce &&
+                                    reasonCode == MqttReasonCode.PayloadFormatInvalid)
+                                {
+                                    await connection.SendPubAckAsync(
+                                        publishView.PacketIdentifier,
+                                        reasonCode,
+                                        connectionLifetime.Token).ConfigureAwait(false);
+                                }
+                                else if (publishView.QualityOfServiceLevel ==
+                                        MqttQualityOfServiceLevel.ExactlyOnce &&
+                                    reasonCode == MqttReasonCode.PayloadFormatInvalid)
+                                {
+                                    await connection.SendPubRecAsync(
+                                        publishView.PacketIdentifier,
+                                        reasonCode,
+                                        connectionLifetime.Token).ConfigureAwait(false);
+                                }
+                                else
+                                {
+                                    await connection.CloseAsync(
+                                        reasonCode,
+                                        connectionLifetime.Token).ConfigureAwait(false);
+                                    return;
+                                }
+
+                                buffer = buffer.Slice(publishConsumed);
+                                continue;
+                            }
+
+                            lease = candidate!;
                             bool transferred = false;
                             try
                             {
@@ -411,7 +458,9 @@ public sealed partial class MqttZeroBroker
             connectPacket.MaximumPacketSize,
             _timeProvider,
             _bufferPool,
-            allowPacketFragmentation);
+            allowPacketFragmentation,
+            connectPacket.RequestProblemInformation,
+            connectPacket.RequestResponseInformation);
         MqttZeroClientConnectionInfo clientInfo = new()
         {
             ClientId = clientId,
@@ -425,6 +474,47 @@ public sealed partial class MqttZeroBroker
             ClientCertificate = clientCertificate
         };
         newConnection.ClientInfo = clientInfo;
+        if (connectPacket.AuthenticationMethod != null)
+        {
+            try
+            {
+                await newConnection.SendConnAckAsync(
+                    new MqttConnAckPacket
+                    {
+                        ReasonCode = MqttReasonCode.BadAuthenticationMethod
+                    },
+                    CancellationToken.None).ConfigureAwait(false);
+            }
+            finally
+            {
+                await newConnection.DisposeAsync().ConfigureAwait(false);
+            }
+
+            return null!;
+        }
+
+        if (connectPacket.HasWill &&
+            connectPacket.WillProperties.PayloadFormatIndicator ==
+                MqttPayloadFormatIndicator.Utf8 &&
+            !MqttZeroProtocolValidator.IsValidUtf8(connectPacket.WillPayload))
+        {
+            try
+            {
+                await newConnection.SendConnAckAsync(
+                    new MqttConnAckPacket
+                    {
+                        ReasonCode = MqttReasonCode.PayloadFormatInvalid
+                    },
+                    CancellationToken.None).ConfigureAwait(false);
+            }
+            finally
+            {
+                await newConnection.DisposeAsync().ConfigureAwait(false);
+            }
+
+            return null!;
+        }
+
         MqttZeroConnectionContext connectionContext = new()
         {
             Client = clientInfo,
@@ -727,7 +817,11 @@ public sealed partial class MqttZeroBroker
                         ReceiveMaximum = (ushort)Math.Min(_options.MaxInflight, ushort.MaxValue),
                         MaximumPacketSize = (uint)_options.MaxPacketSize,
                         SessionExpiryInterval = effectiveExpiry,
-                        AssignedClientIdentifier = assignedClientIdentifier ? clientId : null
+                        AssignedClientIdentifier = assignedClientIdentifier ? clientId : null,
+                        ResponseInformation =
+                            connectPacket.RequestResponseInformation
+                                ? _options.ResponseInformation
+                                : null
                     },
                     CancellationToken.None).ConfigureAwait(false);
                 newConnection.IsConnectedClientCounted = true;

@@ -53,7 +53,6 @@ public static partial class MqttPacketCodec
         packet = new MqttSubscribePacket
         {
             PacketIdentifier = packetIdentifier,
-            Properties = properties,
             Subscriptions = subscriptions
         };
         if (!Mqtt5PropertyReader.TryReadSubscribe(properties, (MqttSubscribePacket)packet))
@@ -94,10 +93,12 @@ public static partial class MqttPacketCodec
         packet = new MqttUnsubscribePacket
         {
             PacketIdentifier = packetIdentifier,
-            Properties = properties,
             TopicFilters = topicFilters
         };
-        return topicFilters.Count > 0;
+        return topicFilters.Count > 0 &&
+            Mqtt5PropertyReader.TryReadUnsubscribe(
+                properties,
+                (MqttUnsubscribePacket)packet);
     }
 
     private static bool TryDecodeSubAck(
@@ -120,7 +121,6 @@ public static partial class MqttPacketCodec
         packet = new MqttSubAckPacket
         {
             PacketIdentifier = packetIdentifier,
-            Properties = properties,
             ReasonCodes = reasonCodes
         };
         bool validReasons = true;
@@ -135,7 +135,15 @@ public static partial class MqttPacketCodec
 
         return packetIdentifier != 0 &&
             reasonCodes.Length > 0 &&
-            validReasons;
+            validReasons &&
+            Mqtt5PropertyReader.TryReadReasonProperties(
+                properties,
+                out string? reasonString,
+                out IReadOnlyList<MqttUserProperty> userProperties) &&
+            AssignSubAckProperties(
+                (MqttSubAckPacket)packet,
+                reasonString,
+                userProperties);
     }
 
     private static bool TryDecodeUnsubAck(
@@ -156,7 +164,6 @@ public static partial class MqttPacketCodec
         packet = new MqttUnsubAckPacket
         {
             PacketIdentifier = packetIdentifier,
-            Properties = properties,
             ReasonCodes = reasonCodes
         };
         bool validReasons = true;
@@ -171,7 +178,15 @@ public static partial class MqttPacketCodec
 
         return packetIdentifier != 0 &&
             reasonCodes.Length > 0 &&
-            validReasons;
+            validReasons &&
+            Mqtt5PropertyReader.TryReadReasonProperties(
+                properties,
+                out string? reasonString,
+                out IReadOnlyList<MqttUserProperty> userProperties) &&
+            AssignUnsubAckProperties(
+                (MqttUnsubAckPacket)packet,
+                reasonString,
+                userProperties);
     }
 
     private static void EncodeSubscribe(MqttSubscribePacket packet, IBufferWriter<byte> writer)
@@ -240,9 +255,12 @@ public static partial class MqttPacketCodec
             }
         }
 
+        int propertiesLength = Mqtt5PropertyWriter.GetReasonPropertiesLength(
+            packet.ReasonString,
+            packet.UserProperties);
         int bodyLength = 2 +
-            GetVariableByteIntegerSize(packet.Properties.Length) +
-            (int)packet.Properties.Length +
+            GetVariableByteIntegerSize(propertiesLength) +
+            propertiesLength +
             packet.ReasonCodes.Length;
 
         Span<byte> fixedHeader = writer.GetSpan(1 + 4);
@@ -250,7 +268,10 @@ public static partial class MqttPacketCodec
         int lengthBytes = WriteVariableByteInteger(fixedHeader[1..], bodyLength);
         writer.Advance(1 + lengthBytes);
         WriteUInt16(writer, packet.PacketIdentifier);
-        WriteProperties(writer, packet.Properties);
+        Mqtt5PropertyWriter.WriteReasonProperties(
+            writer,
+            packet.ReasonString,
+            packet.UserProperties);
 
         Span<byte> reasonCodes = writer.GetSpan(packet.ReasonCodes.Length);
         packet.ReasonCodes.Span.CopyTo(reasonCodes);
@@ -266,9 +287,10 @@ public static partial class MqttPacketCodec
                 nameof(packet));
         }
 
+        int propertiesLength = Mqtt5PropertyWriter.GetUnsubscribePropertiesLength(packet);
         int bodyLength = 2 +
-            GetVariableByteIntegerSize(packet.Properties.Length) +
-            (int)packet.Properties.Length;
+            GetVariableByteIntegerSize(propertiesLength) +
+            propertiesLength;
         foreach (ReadOnlySequence<byte> topicFilter in packet.TopicFilters)
         {
             if (!MqttZeroProtocolValidator.IsValidTopicFilter(topicFilter))
@@ -286,7 +308,7 @@ public static partial class MqttPacketCodec
         int lengthBytes = WriteVariableByteInteger(fixedHeader[1..], bodyLength);
         writer.Advance(1 + lengthBytes);
         WriteUInt16(writer, packet.PacketIdentifier);
-        WriteProperties(writer, packet.Properties);
+        Mqtt5PropertyWriter.WriteUnsubscribeProperties(packet, writer);
         foreach (ReadOnlySequence<byte> topicFilter in packet.TopicFilters)
         {
             WriteUtf8(writer, topicFilter);
@@ -310,9 +332,12 @@ public static partial class MqttPacketCodec
             }
         }
 
+        int propertiesLength = Mqtt5PropertyWriter.GetReasonPropertiesLength(
+            packet.ReasonString,
+            packet.UserProperties);
         int bodyLength = 2 +
-            GetVariableByteIntegerSize(packet.Properties.Length) +
-            (int)packet.Properties.Length +
+            GetVariableByteIntegerSize(propertiesLength) +
+            propertiesLength +
             packet.ReasonCodes.Length;
 
         Span<byte> fixedHeader = writer.GetSpan(1 + 4);
@@ -320,10 +345,33 @@ public static partial class MqttPacketCodec
         int lengthBytes = WriteVariableByteInteger(fixedHeader[1..], bodyLength);
         writer.Advance(1 + lengthBytes);
         WriteUInt16(writer, packet.PacketIdentifier);
-        WriteProperties(writer, packet.Properties);
+        Mqtt5PropertyWriter.WriteReasonProperties(
+            writer,
+            packet.ReasonString,
+            packet.UserProperties);
         Span<byte> reasonCodes = writer.GetSpan(packet.ReasonCodes.Length);
         packet.ReasonCodes.Span.CopyTo(reasonCodes);
         writer.Advance(packet.ReasonCodes.Length);
+    }
+
+    private static bool AssignSubAckProperties(
+        MqttSubAckPacket packet,
+        string? reasonString,
+        IReadOnlyList<MqttUserProperty> userProperties)
+    {
+        packet.ReasonString = reasonString;
+        packet.UserProperties = userProperties;
+        return true;
+    }
+
+    private static bool AssignUnsubAckProperties(
+        MqttUnsubAckPacket packet,
+        string? reasonString,
+        IReadOnlyList<MqttUserProperty> userProperties)
+    {
+        packet.ReasonString = reasonString;
+        packet.UserProperties = userProperties;
+        return true;
     }
 
 }

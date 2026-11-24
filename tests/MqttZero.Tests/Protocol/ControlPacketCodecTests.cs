@@ -14,6 +14,82 @@ namespace MqttZero.Tests.Protocol
     public sealed class ControlPacketCodecTests
     {
         [Fact]
+        public void RoundTripsAcknowledgementProblemInformation()
+        {
+            MqttPacket[] packets =
+            [
+                new MqttPubAckPacket
+                {
+                    PacketIdentifier = 11,
+                    ReasonString = "ack",
+                    UserProperties = [new MqttUserProperty("stage", "puback")]
+                },
+                new MqttPubRecPacket
+                {
+                    PacketIdentifier = 12,
+                    ReasonString = "received",
+                    UserProperties = [new MqttUserProperty("stage", "pubrec")]
+                },
+                new MqttPubRelPacket
+                {
+                    PacketIdentifier = 13,
+                    ReasonString = "released",
+                    UserProperties = [new MqttUserProperty("stage", "pubrel")]
+                },
+                new MqttPubCompPacket
+                {
+                    PacketIdentifier = 14,
+                    ReasonString = "complete",
+                    UserProperties = [new MqttUserProperty("stage", "pubcomp")]
+                }
+            ];
+
+            foreach (MqttPacket packet in packets)
+            {
+                byte[] bytes = ProtocolPacketTestHelper.Encode(packet);
+                Assert.True(MqttPacketCodec.TryDecode(
+                    new ReadOnlySequence<byte>(bytes),
+                    out MqttPacket? decoded,
+                    out _),
+                    Convert.ToHexString(bytes));
+                Assert.NotNull(decoded);
+                Assert.Equal(packet.GetType(), decoded.GetType());
+                MqttPacket value = decoded;
+                string? reasonString = value switch
+                {
+                    MqttPubAckPacket value1 => value1.ReasonString,
+                    MqttPubRecPacket value2 => value2.ReasonString,
+                    MqttPubRelPacket value3 => value3.ReasonString,
+                    MqttPubCompPacket value4 => value4.ReasonString,
+                    _ => null
+                };
+                Assert.NotNull(reasonString);
+            }
+        }
+
+        [Fact]
+        public void RoundTripsDisconnectProblemInformation()
+        {
+            MqttDisconnectPacket packet = new()
+            {
+                ReasonString = "shutdown",
+                ServerReference = "backup.example",
+                UserProperties = [new MqttUserProperty("stage", "disconnect")]
+            };
+
+            byte[] bytes = ProtocolPacketTestHelper.Encode(packet);
+            Assert.True(MqttPacketCodec.TryDecode(
+                new ReadOnlySequence<byte>(bytes),
+                out MqttPacket? decoded,
+                out _));
+
+            MqttDisconnectPacket value = Assert.IsType<MqttDisconnectPacket>(decoded);
+            Assert.Equal("shutdown", value.ReasonString);
+            Assert.Equal("backup.example", value.ServerReference);
+            Assert.Single(value.UserProperties);
+        }
+
+        [Fact]
         public void DecodesShortQos1PubAck()
         {
             byte[] bytes = [0x40, 0x02, 0x00, 0x2A];
@@ -28,6 +104,36 @@ namespace MqttZero.Tests.Protocol
             Assert.Equal(bytes.Length, consumed);
             Assert.Equal((ushort)42, pubAckPacket.PacketIdentifier);
             Assert.Equal(MqttReasonCode.Success, pubAckPacket.ReasonCode);
+        }
+
+        [Fact]
+        public void DecodesBadAuthenticationMethodConnAckReason()
+        {
+            byte[] bytes = [0x20, 0x03, 0x00, 0x8C, 0x00];
+
+            Assert.True(MqttPacketCodec.TryDecode(
+                new ReadOnlySequence<byte>(bytes),
+                out MqttPacket? packet,
+                out _));
+
+            Assert.Equal(
+                MqttReasonCode.BadAuthenticationMethod,
+                Assert.IsType<MqttConnAckPacket>(packet).ReasonCode);
+        }
+
+        [Fact]
+        public void DecodesPacketTooLargeDisconnectReason()
+        {
+            byte[] bytes = [0xE0, 0x02, 0x95, 0x00];
+
+            Assert.True(MqttPacketCodec.TryDecode(
+                new ReadOnlySequence<byte>(bytes),
+                out MqttPacket? packet,
+                out _));
+
+            Assert.Equal(
+                MqttReasonCode.PacketTooLarge,
+                Assert.IsType<MqttDisconnectPacket>(packet).ReasonCode);
         }
 
         [Fact]

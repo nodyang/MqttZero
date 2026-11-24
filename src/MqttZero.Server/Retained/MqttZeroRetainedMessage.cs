@@ -41,7 +41,7 @@ internal sealed class MqttZeroRetainedMessage
     {
         get
         {
-            return Topic.Length + Payload.Length;
+            return Topic.Length + Lease.Properties.Length + Payload.Length;
         }
     }
 

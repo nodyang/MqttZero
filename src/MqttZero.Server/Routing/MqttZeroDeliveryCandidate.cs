@@ -6,15 +6,19 @@ internal readonly struct MqttZeroDeliveryCandidate
 {
     public MqttZeroDeliveryCandidate(
         MqttZeroSessionState session,
-        MqttZeroSubscription subscription)
+        MqttZeroSubscription subscription,
+        ReadOnlyMemory<uint> subscriptionIdentifiers)
     {
         Session = session;
         Subscription = subscription;
+        SubscriptionIdentifiers = subscriptionIdentifiers;
     }
 
     public MqttZeroSessionState Session { get; }
 
     public MqttZeroSubscription Subscription { get; }
+
+    public ReadOnlyMemory<uint> SubscriptionIdentifiers { get; }
 
     public MqttQualityOfServiceLevel QualityOfServiceLevel
     {

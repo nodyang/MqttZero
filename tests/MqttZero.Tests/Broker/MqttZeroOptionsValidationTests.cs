@@ -73,5 +73,29 @@ namespace MqttZero.Tests.Broker
 
             MqttZeroOptionsValidator.Validate(options);
         }
+
+        [Fact]
+        public void RejectsInvalidResponseInformation()
+        {
+            MqttZeroOptions options = new()
+            {
+                ResponseInformation = "invalid\0response"
+            };
+
+            Assert.Throws<ArgumentException>(
+                () => MqttZeroOptionsValidator.Validate(options));
+        }
+
+        [Fact]
+        public void RejectsOversizedResponseInformation()
+        {
+            MqttZeroOptions options = new()
+            {
+                ResponseInformation = new string('a', ushort.MaxValue + 1)
+            };
+
+            Assert.Throws<ArgumentException>(
+                () => MqttZeroOptionsValidator.Validate(options));
+        }
     }
 }

@@ -99,9 +99,16 @@ public sealed partial class MqttZeroBroker
                     pubCompPacket,
                     cancellationToken).ConfigureAwait(false);
                 break;
-            case MqttDisconnectPacket:
-                if (packet is MqttDisconnectPacket disconnectPacket &&
-                    disconnectPacket.SessionExpiryInterval.HasValue)
+            case MqttDisconnectPacket disconnectPacket:
+                if (disconnectPacket.ServerReference != null)
+                {
+                    await connection.CloseAsync(
+                        MqttReasonCode.ProtocolError,
+                        cancellationToken).ConfigureAwait(false);
+                    break;
+                }
+
+                if (disconnectPacket.SessionExpiryInterval.HasValue)
                 {
                     uint maximumExpiry = (uint)Math.Clamp(
                         _options.MaxSessionExpiryInterval.TotalSeconds,
@@ -278,16 +285,39 @@ public sealed partial class MqttZeroBroker
                 MqttQualityOfServiceLevel qos = (MqttQualityOfServiceLevel)Math.Min(
                     (byte)retainedMessage.QualityOfServiceLevel,
                     (byte)request.QualityOfServiceLevel);
+                ReadOnlySequence<byte> retainedProperties =
+                    retainedMessage.Lease.Properties.Length == 0
+                        ? ReadOnlySequence<byte>.Empty
+                        : new ReadOnlySequence<byte>(retainedMessage.Lease.Properties);
+                if (!MqttPublishPropertiesCodec.TryDecode(
+                        retainedProperties,
+                        out MqttPublishProperties properties,
+                        out _,
+                        out _))
+                {
+                    throw new InvalidOperationException(
+                        "The retained MQTT PUBLISH properties are invalid.");
+                }
+
+                properties = new MqttPublishProperties
+                {
+                    PayloadFormatIndicator = properties.PayloadFormatIndicator,
+                    MessageExpiryInterval =
+                        GetRemainingMessageExpiry(retainedMessage.ExpiresAt, now),
+                    ContentType = properties.ContentType,
+                    ResponseTopic = properties.ResponseTopic,
+                    CorrelationData = properties.CorrelationData,
+                    UserProperties = properties.UserProperties
+                };
                 MqttPublishPacket retainedPacket = new()
                 {
                     TopicName = new ReadOnlySequence<byte>(retainedMessage.Topic),
                     Payload = new ReadOnlySequence<byte>(retainedMessage.Payload),
+                    Properties = properties,
                     QualityOfServiceLevel = qos,
                     Retain = true,
                     SubscriptionIdentifier = packet.SubscriptionIdentifier
                 };
-                retainedPacket.MessageExpiryInterval =
-                    GetRemainingMessageExpiry(retainedMessage.ExpiresAt, now);
                 await DeliverAsync(
                     session,
                     retainedPacket,

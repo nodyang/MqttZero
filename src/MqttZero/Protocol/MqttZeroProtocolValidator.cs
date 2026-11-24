@@ -49,11 +49,11 @@ internal static class MqttZeroProtocolValidator
     {
         return reasonCode is
             MqttReasonCode.Success or
-            (MqttReasonCode)0x10 or
+            MqttReasonCode.NoMatchingSubscribers or
             MqttReasonCode.UnspecifiedError or
             MqttReasonCode.ImplementationSpecificError or
             MqttReasonCode.NotAuthorized or
-            (MqttReasonCode)0x90 or
+            MqttReasonCode.TopicNameInvalid or
             MqttReasonCode.PacketIdentifierInUse or
             MqttReasonCode.QuotaExceeded or
             MqttReasonCode.PayloadFormatInvalid;
@@ -71,18 +71,58 @@ internal static class MqttZeroProtocolValidator
         return reasonCode is
             MqttReasonCode.Success or
             MqttReasonCode.UnspecifiedError or
-            (MqttReasonCode)0x81 or
+            MqttReasonCode.MalformedPacket or
+            MqttReasonCode.ProtocolError or
             MqttReasonCode.ImplementationSpecificError or
-            (MqttReasonCode)0x84 or
-            (MqttReasonCode)0x85 or
+            MqttReasonCode.UnsupportedProtocolVersion or
+            MqttReasonCode.ClientIdentifierNotValid or
             MqttReasonCode.BadUserNameOrPassword or
             MqttReasonCode.NotAuthorized or
             MqttReasonCode.ServerUnavailable or
-            (MqttReasonCode)0x89 or
+            MqttReasonCode.ServerBusy or
             MqttReasonCode.Banned or
+            MqttReasonCode.BadAuthenticationMethod or
+            MqttReasonCode.TopicNameInvalid or
+            MqttReasonCode.PacketTooLarge or
+            MqttReasonCode.QuotaExceeded or
+            MqttReasonCode.PayloadFormatInvalid or
             MqttReasonCode.UseAnotherServer or
             MqttReasonCode.ServerMoved or
             MqttReasonCode.ConnectionRateExceeded;
+    }
+
+    public static bool IsValidDisconnectReasonCode(MqttReasonCode reasonCode)
+    {
+        return reasonCode is
+            MqttReasonCode.Success or
+            MqttReasonCode.DisconnectWithWill or
+            MqttReasonCode.UnspecifiedError or
+            MqttReasonCode.MalformedPacket or
+            MqttReasonCode.ProtocolError or
+            MqttReasonCode.ImplementationSpecificError or
+            MqttReasonCode.NotAuthorized or
+            MqttReasonCode.ServerBusy or
+            MqttReasonCode.ServerShuttingDown or
+            MqttReasonCode.KeepAliveTimeout or
+            MqttReasonCode.SessionTakenOver or
+            MqttReasonCode.TopicFilterInvalid or
+            MqttReasonCode.TopicNameInvalid or
+            MqttReasonCode.ReceiveMaximumExceeded or
+            MqttReasonCode.TopicAliasInvalid or
+            MqttReasonCode.PacketTooLarge or
+            MqttReasonCode.MessageRateTooHigh or
+            MqttReasonCode.QuotaExceeded or
+            MqttReasonCode.AdministrativeAction or
+            MqttReasonCode.PayloadFormatInvalid or
+            MqttReasonCode.RetainNotSupported or
+            MqttReasonCode.QosNotSupported or
+            MqttReasonCode.UseAnotherServer or
+            MqttReasonCode.ServerMoved or
+            MqttReasonCode.SharedSubscriptionsNotSupported or
+            MqttReasonCode.ConnectionRateExceeded or
+            (MqttReasonCode)0xA0 or
+            (MqttReasonCode)0xA1 or
+            (MqttReasonCode)0xA2;
     }
 
     public static bool IsValidSubAckReasonCode(byte reasonCode)

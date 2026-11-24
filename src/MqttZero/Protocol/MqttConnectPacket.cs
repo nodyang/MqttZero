@@ -38,9 +38,14 @@ public sealed class MqttConnectPacket : MqttPacket
     public ReadOnlySequence<byte> ClientId { get; set; }
 
     /// <summary>
-    /// Gets or sets the connect-property payload section.
+    /// Gets or sets a value indicating whether the client requests response information.
     /// </summary>
-    public ReadOnlySequence<byte> Properties { get; set; }
+    public bool RequestResponseInformation { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether the server may send problem information.
+    /// </summary>
+    public bool RequestProblemInformation { get; set; } = true;
 
     /// <summary>
     /// Gets or sets the requested session expiry interval in seconds.
@@ -61,6 +66,22 @@ public sealed class MqttConnectPacket : MqttPacket
     /// Gets or sets the maximum inbound topic alias accepted by the client.
     /// </summary>
     public ushort TopicAliasMaximum { get; set; }
+
+    /// <summary>
+    /// Gets or sets the ordered CONNECT user properties.
+    /// </summary>
+    public IReadOnlyList<MqttUserProperty> UserProperties { get; set; } =
+        Array.Empty<MqttUserProperty>();
+
+    /// <summary>
+    /// Gets or sets the enhanced authentication method.
+    /// </summary>
+    public string? AuthenticationMethod { get; set; }
+
+    /// <summary>
+    /// Gets or sets the enhanced authentication data.
+    /// </summary>
+    public ReadOnlyMemory<byte>? AuthenticationData { get; set; }
 
     /// <summary>
     /// Gets or sets a value indicating whether a username is present.
@@ -98,19 +119,15 @@ public sealed class MqttConnectPacket : MqttPacket
     public bool WillRetain { get; set; }
 
     /// <summary>
-    /// Gets or sets the will property payload section.
+    /// Gets or sets the end-to-end Will message properties.
     /// </summary>
-    public ReadOnlySequence<byte> WillProperties { get; set; }
+    public MqttPublishProperties WillProperties { get; set; } =
+        MqttPublishProperties.Empty;
 
     /// <summary>
     /// Gets or sets the will delay interval in seconds.
     /// </summary>
     public uint WillDelayInterval { get; set; }
-
-    /// <summary>
-    /// Gets or sets the will message expiry interval in seconds.
-    /// </summary>
-    public uint WillMessageExpiryInterval { get; set; }
 
     /// <summary>
     /// Gets or sets the UTF-8 will topic.
@@ -121,4 +138,25 @@ public sealed class MqttConnectPacket : MqttPacket
     /// Gets or sets the will payload.
     /// </summary>
     public ReadOnlySequence<byte> WillPayload { get; set; }
+
+    internal uint WillMessageExpiryInterval
+    {
+        get
+        {
+            return WillProperties.MessageExpiryInterval ?? 0;
+        }
+
+        set
+        {
+            WillProperties = new MqttPublishProperties
+            {
+                PayloadFormatIndicator = WillProperties.PayloadFormatIndicator,
+                MessageExpiryInterval = value == 0 ? null : value,
+                ContentType = WillProperties.ContentType,
+                ResponseTopic = WillProperties.ResponseTopic,
+                CorrelationData = WillProperties.CorrelationData,
+                UserProperties = WillProperties.UserProperties
+            };
+        }
+    }
 }

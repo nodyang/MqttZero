@@ -11,6 +11,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using MQTTnet;
 using MqttZero.AspNetCore;
+using MqttZero.Publishing;
 using System.Buffers;
 using System.Collections.Concurrent;
 using System.Net;
@@ -20,6 +21,77 @@ namespace MqttZero.Tests.Broker
 {
     public sealed partial class BrokerIntegrationTests
     {
+        [Fact(Timeout = 15_000)]
+        public async Task QueuedPersistenceStoresPropertiesAndAllSubscriptionIdentifiers()
+        {
+            int port = GetFreePort();
+            ControllableMessageStore messageStore = new();
+            WebApplicationBuilder builder = WebApplication.CreateBuilder();
+            builder.Logging.ClearProviders();
+            builder.WebHost.ConfigureKestrel(kestrel =>
+                kestrel.Listen(IPAddress.Loopback, port, listen => listen.UseMqttZero()));
+            builder.Services.AddSingleton<IMqttZeroMessageStore>(messageStore);
+            builder.Services.AddMqttZero();
+            await using WebApplication app = builder.Build();
+            await app.StartAsync(TestContext.Current.CancellationToken);
+            MqttZeroBroker broker = app.Services.GetRequiredService<MqttZeroBroker>();
+            CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+            MqttClientFactory factory = new();
+
+            using (IMqttClient subscriber = factory.CreateMqttClient())
+            {
+                await subscriber.ConnectAsync(
+                    CreatePersistentClientOptions(port, "persisted-properties"),
+                    cancellationToken);
+                await subscriber.SubscribeAsync(
+                    new MqttClientSubscribeOptionsBuilder()
+                        .WithTopicFilter(
+                            "persisted/#",
+                            MQTTnet.Protocol.MqttQualityOfServiceLevel.AtLeastOnce)
+                        .WithSubscriptionIdentifier(17)
+                        .Build(),
+                    cancellationToken);
+                await subscriber.SubscribeAsync(
+                    new MqttClientSubscribeOptionsBuilder()
+                        .WithTopicFilter(
+                            "persisted/+",
+                            MQTTnet.Protocol.MqttQualityOfServiceLevel.AtLeastOnce)
+                        .WithSubscriptionIdentifier(23)
+                        .Build(),
+                    cancellationToken);
+                await subscriber.DisconnectAsync(cancellationToken: cancellationToken);
+            }
+
+            await WaitForSessionDisconnectedAsync(
+                broker,
+                "persisted-properties",
+                cancellationToken);
+            await broker.PublishAsync(
+                new MqttZeroPublishMessage
+                {
+                    Topic = "persisted/value",
+                    Payload = new ReadOnlySequence<byte>("queued"u8.ToArray()),
+                    QualityOfServiceLevel = MqttQualityOfServiceLevel.AtLeastOnce,
+                    Properties = new MqttPublishProperties
+                    {
+                        ContentType = "text/plain",
+                        UserProperties = [new MqttUserProperty("trace", "persisted")]
+                    }
+                },
+                cancellationToken);
+
+            MqttZeroPersistedMessage persisted =
+                Assert.Single(messageStore.Messages.Values);
+            Assert.Equal(new uint[] { 17, 23 }, persisted.SubscriptionIdentifiers.ToArray());
+            Assert.True(MqttPublishPropertiesCodec.TryDecode(
+                new ReadOnlySequence<byte>(persisted.Properties),
+                out MqttPublishProperties properties,
+                out _,
+                out _));
+            Assert.Equal("text/plain", properties.ContentType);
+            Assert.Equal("persisted", Assert.Single(properties.UserProperties).Value);
+        }
+
         [Fact(Timeout = 15_000)]
         public async Task QueuedTransitionFailureRestoresPendingMessage()
         {

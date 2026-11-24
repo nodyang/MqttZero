@@ -1,6 +1,6 @@
 # MQTTZero
 
-MQTTZero 是一个面向 ASP.NET Core Kestrel 的独立 MQTT 5 Broker。生产代码不依赖 MQTTnet，目标框架为 .NET 10。当前版本为 `0.9.0-alpha.1`。
+MQTTZero 是一个面向 ASP.NET Core Kestrel 的独立 MQTT 5 Broker。生产代码不依赖 MQTTnet，目标框架为 .NET 10。当前版本为 `0.10.0-alpha.1`。
 
 ## 当前能力
 
@@ -10,6 +10,7 @@ MQTTZero 是一个面向 ASP.NET Core Kestrel 的独立 MQTT 5 Broker。生产�
 - 持久 Session、Session Expiry、Session Present、客户端 ID 接管和离线 QoS 1/2 队列。
 - QoS 1 Inflight `DUP` 重发、KeepAlive 超时、Will/Will Delay 和 Message Expiry。
 - UTF-8 Topic 通配符、Topic Alias、共享订阅轮询、Retained 回放和内存 PayloadOwner。
+- 支持报文使用强类型 MQTT 5 属性模型，包含 User Property、Content Type、Response Topic、Correlation Data、Payload Format、Reason String 和连接能力属性。
 - CONNECT 认证、订阅/退订授权、发布和投递拦截，以及连接与投递 Observer。
 - Broker 生命周期、客户端快照和健康检查。
 - 活跃传输连接和已完成 CONNECT/CONNACK 的在线客户端分别计数。
@@ -49,6 +50,7 @@ builder.WebHost.ConfigureKestrel(kestrel =>
 builder.Services.AddMqttZero(options =>
 {
     options.MaxActiveConnections = 20_000;
+    options.ResponseInformation = "mqttzero";
 });
 builder.Services.AddMqttZeroDashboard(options =>
 {
@@ -87,7 +89,18 @@ await broker.PublishAsync(
         Topic = "devices/a/state",
         Payload = new ReadOnlySequence<byte>("online"u8.ToArray()),
         QualityOfServiceLevel = MqttQualityOfServiceLevel.AtLeastOnce,
-        Retain = true
+        Retain = true,
+        Properties = new MqttPublishProperties
+        {
+            PayloadFormatIndicator = MqttPayloadFormatIndicator.Utf8,
+            ContentType = "text/plain",
+            ResponseTopic = "devices/a/response",
+            CorrelationData = "request-42"u8.ToArray(),
+            UserProperties =
+            [
+                new MqttUserProperty("tenant", "north")
+            ]
+        }
     });
 ```
 
@@ -108,6 +121,10 @@ await broker.PublishAsync(
 ```
 
 Stream 由调用方拥有；扩展会在发布前将内容收集到池化多段 Payload，并执行最大包大小限制。
+
+端到端消息属性会随普通路由、Retained 回放、Will、离线队列和 QoS 1/2 重发保留。Topic Alias、Subscription Identifier 和 Maximum Packet Size 等连接级属性按目标连接重新处理，不会跨连接原样转发。完整报文与属性矩阵见 [`docs/mqtt5-properties.md`](docs/mqtt5-properties.md)。
+
+CONNECT 的 `Request Problem Information=false` 会禁止 Broker 在控制报文中发送 Reason String 和 User Property；`Request Response Information=true` 时，若配置了 `ResponseInformation`，CONNACK 会返回该属性。Enhanced Authentication 当前不支持，使用 Authentication Method 的 CONNECT 会收到 `Bad Authentication Method`。
 
 具体 `MqttZeroBroker` 仍注册为 singleton，供宿主生命周期和 Kestrel 连接接入使用；普通业务代码应依赖 `IMqttZeroBroker`。
 
@@ -259,4 +276,4 @@ npm run build
 
 ## 限制
 
-当前不包含 Enhanced Authentication、MQTT 3.1.1、具体数据库 Store、集群、桥接和客户端 SDK。默认 Noop Store 下 Session、Will、QoS 1/2 队列和 QoS 2 握手状态在进程重启后丢失；配置外部 Store 后由 Store 提供恢复能力。Dashboard、管理 API、异步拦截器续接和网络框架边界不属于 `0 B/op` 承诺。当前不提供完整 MQTT 5 属性语义或 Dashboard Live Events。
+当前不包含 Enhanced Authentication/AUTH 流程、自动出站 Topic Alias、MQTT 3.1.1、具体数据库 Store、集群、桥接和客户端 SDK。默认 Noop Store 下 Session、Will、QoS 1/2 队列和 QoS 2 握手状态在进程重启后丢失；配置外部 Store 后由 Store 提供恢复能力。Dashboard、管理 API、异步拦截器续接和网络框架边界不属于 `0 B/op` 承诺。Dashboard Live Events 仍未实现。

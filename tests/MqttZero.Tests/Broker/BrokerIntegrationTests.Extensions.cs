@@ -61,6 +61,184 @@ namespace MqttZero.Tests.Broker
         }
 
         [Fact(Timeout = 15_000)]
+        public async Task RejectsUnsupportedEnhancedAuthenticationMethod()
+        {
+            int port = GetFreePort();
+            WebApplicationBuilder builder = WebApplication.CreateBuilder();
+            builder.Logging.ClearProviders();
+            builder.WebHost.ConfigureKestrel(kestrel =>
+                kestrel.Listen(IPAddress.Loopback, port, listen => listen.UseMqttZero()));
+            builder.Services.AddMqttZero();
+            await using WebApplication app = builder.Build();
+            await app.StartAsync(TestContext.Current.CancellationToken);
+
+            using TcpClient client = new();
+            await client.ConnectAsync(
+                IPAddress.Loopback,
+                port,
+                TestContext.Current.CancellationToken);
+            NetworkStream stream = client.GetStream();
+            await SendPacketAsync(
+                stream,
+                new MqttConnectPacket
+                {
+                    ClientId = new ReadOnlySequence<byte>("auth-client"u8.ToArray()),
+                    AuthenticationMethod = "SCRAM-SHA-256"
+                },
+                TestContext.Current.CancellationToken);
+
+            MqttConnAckPacket connAck = Assert.IsType<MqttConnAckPacket>(
+                await ReadPacketAsync(stream, TestContext.Current.CancellationToken));
+            Assert.Equal(MqttReasonCode.BadAuthenticationMethod, connAck.ReasonCode);
+            Assert.Equal(
+                0,
+                app.Services.GetRequiredService<MqttZeroBroker>().ConnectedClientCount);
+        }
+
+        [Fact(Timeout = 15_000)]
+        public async Task SuppressesProblemInformationWhenClientDisablesIt()
+        {
+            int port = GetFreePort();
+            WebApplicationBuilder builder = WebApplication.CreateBuilder();
+            builder.Logging.ClearProviders();
+            builder.WebHost.ConfigureKestrel(kestrel =>
+                kestrel.Listen(IPAddress.Loopback, port, listen => listen.UseMqttZero()));
+            builder.Services.AddMqttZero()
+                .AddConnectionInterceptor<RejectingConnectionInterceptor>();
+            await using WebApplication app = builder.Build();
+            await app.StartAsync(TestContext.Current.CancellationToken);
+
+            using TcpClient client = new();
+            await client.ConnectAsync(
+                IPAddress.Loopback,
+                port,
+                TestContext.Current.CancellationToken);
+            NetworkStream stream = client.GetStream();
+            await SendPacketAsync(
+                stream,
+                new MqttConnectPacket
+                {
+                    ClientId = new ReadOnlySequence<byte>("quiet-client"u8.ToArray()),
+                    RequestProblemInformation = false
+                },
+                TestContext.Current.CancellationToken);
+
+            MqttConnAckPacket connAck = Assert.IsType<MqttConnAckPacket>(
+                await ReadPacketAsync(stream, TestContext.Current.CancellationToken));
+            Assert.Equal(MqttReasonCode.BadUserNameOrPassword, connAck.ReasonCode);
+            Assert.Null(connAck.ReasonString);
+        }
+
+        [Fact(Timeout = 15_000)]
+        public async Task ReturnsConfiguredResponseInformationWhenRequested()
+        {
+            int port = GetFreePort();
+            WebApplicationBuilder builder = WebApplication.CreateBuilder();
+            builder.Logging.ClearProviders();
+            builder.WebHost.ConfigureKestrel(kestrel =>
+                kestrel.Listen(IPAddress.Loopback, port, listen => listen.UseMqttZero()));
+            builder.Services.AddMqttZero(options =>
+                options.ResponseInformation = "response/prefix");
+            await using WebApplication app = builder.Build();
+            await app.StartAsync(TestContext.Current.CancellationToken);
+
+            using TcpClient client = new();
+            await client.ConnectAsync(
+                IPAddress.Loopback,
+                port,
+                TestContext.Current.CancellationToken);
+            NetworkStream stream = client.GetStream();
+            await SendPacketAsync(
+                stream,
+                new MqttConnectPacket
+                {
+                    ClientId = new ReadOnlySequence<byte>("response-client"u8.ToArray()),
+                    RequestResponseInformation = true
+                },
+                TestContext.Current.CancellationToken);
+
+            MqttConnAckPacket connAck = Assert.IsType<MqttConnAckPacket>(
+                await ReadPacketAsync(stream, TestContext.Current.CancellationToken));
+            Assert.Equal("response/prefix", connAck.ResponseInformation);
+        }
+
+        [Fact(Timeout = 15_000)]
+        public async Task RejectsInvalidUtf8WillPayload()
+        {
+            int port = GetFreePort();
+            WebApplicationBuilder builder = WebApplication.CreateBuilder();
+            builder.Logging.ClearProviders();
+            builder.WebHost.ConfigureKestrel(kestrel =>
+                kestrel.Listen(IPAddress.Loopback, port, listen => listen.UseMqttZero()));
+            builder.Services.AddMqttZero();
+            await using WebApplication app = builder.Build();
+            await app.StartAsync(TestContext.Current.CancellationToken);
+
+            using TcpClient client = new();
+            await client.ConnectAsync(
+                IPAddress.Loopback,
+                port,
+                TestContext.Current.CancellationToken);
+            NetworkStream stream = client.GetStream();
+            await SendPacketAsync(
+                stream,
+                new MqttConnectPacket
+                {
+                    ClientId = new ReadOnlySequence<byte>("invalid-will-utf8"u8.ToArray()),
+                    HasWill = true,
+                    WillTopic = new ReadOnlySequence<byte>("will/properties"u8.ToArray()),
+                    WillPayload = new ReadOnlySequence<byte>([0xFF]),
+                    WillProperties = new MqttPublishProperties
+                    {
+                        PayloadFormatIndicator = MqttPayloadFormatIndicator.Utf8
+                    }
+                },
+                TestContext.Current.CancellationToken);
+
+            MqttConnAckPacket connAck = Assert.IsType<MqttConnAckPacket>(
+                await ReadPacketAsync(stream, TestContext.Current.CancellationToken));
+            Assert.Equal(MqttReasonCode.PayloadFormatInvalid, connAck.ReasonCode);
+            Assert.DoesNotContain(
+                app.Services.GetRequiredService<MqttZeroBroker>().GetSessions(),
+                session => session.ClientId == "invalid-will-utf8");
+        }
+
+        [Fact(Timeout = 15_000)]
+        public async Task RejectsUnsupportedAuthPacketWithProtocolError()
+        {
+            int port = GetFreePort();
+            WebApplicationBuilder builder = WebApplication.CreateBuilder();
+            builder.Logging.ClearProviders();
+            builder.WebHost.ConfigureKestrel(kestrel =>
+                kestrel.Listen(IPAddress.Loopback, port, listen => listen.UseMqttZero()));
+            builder.Services.AddMqttZero();
+            await using WebApplication app = builder.Build();
+            await app.StartAsync(TestContext.Current.CancellationToken);
+
+            using TcpClient client = new();
+            await client.ConnectAsync(
+                IPAddress.Loopback,
+                port,
+                TestContext.Current.CancellationToken);
+            NetworkStream stream = client.GetStream();
+            await SendPacketAsync(
+                stream,
+                new MqttConnectPacket
+                {
+                    ClientId = new ReadOnlySequence<byte>("auth-packet-client"u8.ToArray())
+                },
+                TestContext.Current.CancellationToken);
+            _ = await ReadPacketAsync(stream, TestContext.Current.CancellationToken);
+            await stream.WriteAsync(
+                new byte[] { 0xF0, 0x00 },
+                TestContext.Current.CancellationToken);
+
+            MqttDisconnectPacket disconnect = Assert.IsType<MqttDisconnectPacket>(
+                await ReadPacketAsync(stream, TestContext.Current.CancellationToken));
+            Assert.Equal(MqttReasonCode.ProtocolError, disconnect.ReasonCode);
+        }
+
+        [Fact(Timeout = 15_000)]
         public async Task SubscriptionInterceptorRejectsOnlyDeniedFilter()
         {
             int port = GetFreePort();
@@ -333,6 +511,7 @@ namespace MqttZero.Tests.Broker
                 CancellationToken cancellationToken)
             {
                 context.RejectReasonCode = MqttReasonCode.BadUserNameOrPassword;
+                context.ReasonString = "bad credentials";
                 return ValueTask.FromResult(MqttZeroConnectionInterceptionResult.Reject);
             }
         }

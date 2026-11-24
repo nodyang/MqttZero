@@ -71,7 +71,10 @@ internal sealed class MqttZeroRouteScope : IDisposable
                 _bestSessions[slot] == null)
             {
                 int deliveryIndex = _deliveryCount;
-                AddDelivery(new MqttZeroDeliveryCandidate(session, subscription));
+                AddDelivery(new MqttZeroDeliveryCandidate(
+                    session,
+                    subscription,
+                    ToIdentifiers(subscription)));
                 _bestSessions[slot] = session;
                 _bestDeliveryIndexes[slot] = deliveryIndex;
                 _bestEpochs[slot] = _epoch;
@@ -87,12 +90,18 @@ internal sealed class MqttZeroRouteScope : IDisposable
             if (ReferenceEquals(_bestSessions[slot], session))
             {
                 int deliveryIndex = _bestDeliveryIndexes[slot];
-                if (subscription.QualityOfServiceLevel >
-                    _deliveries[deliveryIndex].QualityOfServiceLevel)
-                {
-                    _deliveries[deliveryIndex] =
-                        new MqttZeroDeliveryCandidate(session, subscription);
-                }
+                MqttZeroDeliveryCandidate current = _deliveries[deliveryIndex];
+                MqttZeroSubscription selected =
+                    subscription.QualityOfServiceLevel >
+                        current.QualityOfServiceLevel
+                        ? subscription
+                        : current.Subscription;
+                _deliveries[deliveryIndex] = new MqttZeroDeliveryCandidate(
+                    session,
+                    selected,
+                    AppendIdentifier(
+                        current.SubscriptionIdentifiers,
+                        subscription.SubscriptionIdentifier));
 
                 return;
             }
@@ -111,7 +120,7 @@ internal sealed class MqttZeroRouteScope : IDisposable
         for (int index = 0; index < group.Entries.Length; index++)
         {
             MqttZeroSharedRouteEntry entry = group.Entries[index];
-            if (TryGetBestSubscription(entry, topic, sender, out _))
+            if (TryGetBestSubscription(entry, topic, sender, out _, out _))
             {
                 matchingSessionCount++;
             }
@@ -134,14 +143,18 @@ internal sealed class MqttZeroRouteScope : IDisposable
                 entry,
                 topic,
                 sender,
-                out MqttZeroSubscription? subscription))
+                out MqttZeroSubscription? subscription,
+                out ReadOnlyMemory<uint> subscriptionIdentifiers))
             {
                 continue;
             }
 
             if (selectedOffset == 0)
             {
-                AddDelivery(new MqttZeroDeliveryCandidate(entry.Session, subscription));
+                AddDelivery(new MqttZeroDeliveryCandidate(
+                    entry.Session,
+                    subscription,
+                    subscriptionIdentifiers));
                 return;
             }
 
@@ -199,9 +212,11 @@ internal sealed class MqttZeroRouteScope : IDisposable
         MqttZeroSharedRouteEntry entry,
         ReadOnlySpan<byte> topic,
         MqttZeroSessionState? sender,
-        [NotNullWhen(true)] out MqttZeroSubscription? subscription)
+        [NotNullWhen(true)] out MqttZeroSubscription? subscription,
+        out ReadOnlyMemory<uint> subscriptionIdentifiers)
     {
         subscription = null;
+        List<uint>? identifiers = null;
         for (int index = 0; index < entry.Subscriptions.Length; index++)
         {
             MqttZeroSubscription candidate = entry.Subscriptions[index];
@@ -216,9 +231,41 @@ internal sealed class MqttZeroRouteScope : IDisposable
             {
                 subscription = candidate;
             }
+
+            if (candidate.SubscriptionIdentifier.HasValue)
+            {
+                identifiers ??= [];
+                identifiers.Add(candidate.SubscriptionIdentifier.Value);
+            }
         }
 
+        subscriptionIdentifiers = identifiers == null
+            ? ReadOnlyMemory<uint>.Empty
+            : identifiers.ToArray();
         return subscription != null;
+    }
+
+    private static ReadOnlyMemory<uint> ToIdentifiers(
+        MqttZeroSubscription subscription)
+    {
+        return subscription.SubscriptionIdentifier.HasValue
+            ? new[] { subscription.SubscriptionIdentifier.Value }
+            : ReadOnlyMemory<uint>.Empty;
+    }
+
+    private static ReadOnlyMemory<uint> AppendIdentifier(
+        ReadOnlyMemory<uint> identifiers,
+        uint? identifier)
+    {
+        if (!identifier.HasValue)
+        {
+            return identifiers;
+        }
+
+        uint[] values = new uint[identifiers.Length + 1];
+        identifiers.Span.CopyTo(values);
+        values[^1] = identifier.Value;
+        return values;
     }
 
     private void EnsureBestCapacity()

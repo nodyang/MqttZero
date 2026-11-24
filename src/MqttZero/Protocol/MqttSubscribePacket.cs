@@ -1,5 +1,3 @@
-using System.Buffers;
-
 namespace MqttZero.Protocol;
 
 /// <summary>
@@ -22,14 +20,13 @@ public sealed class MqttSubscribePacket : MqttPacket
     public ushort PacketIdentifier { get; set; }
 
     /// <summary>
-    /// Gets or sets the subscribe properties payload section.
-    /// </summary>
-    public ReadOnlySequence<byte> Properties { get; set; }
-
-    /// <summary>
     /// Gets or sets the subscription identifier.
     /// </summary>
     public uint? SubscriptionIdentifier { get; set; }
+
+    /// <summary>Gets or sets the ordered subscribe user properties.</summary>
+    public IReadOnlyList<MqttUserProperty> UserProperties { get; set; } =
+        Array.Empty<MqttUserProperty>();
 
     /// <summary>
     /// Gets or sets the requested subscriptions.

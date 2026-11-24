@@ -42,7 +42,6 @@ public static partial class MqttPacketCodec
         packet = new MqttPublishPacket
         {
             TopicName = topicName,
-            Properties = properties,
             Payload = payload,
             QualityOfServiceLevel = qos,
             PacketIdentifier = packetIdentifier,

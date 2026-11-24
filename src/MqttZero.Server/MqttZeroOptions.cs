@@ -86,6 +86,11 @@ public sealed class MqttZeroOptions
     public ushort TopicAliasMaximum { get; set; } = 32;
 
     /// <summary>
+    /// Gets or sets optional response information returned when requested by a client.
+    /// </summary>
+    public string? ResponseInformation { get; set; }
+
+    /// <summary>
     /// Gets or sets a value indicating whether new connections are accepted.
     /// </summary>
     public bool AcceptNewConnections { get; set; } = true;

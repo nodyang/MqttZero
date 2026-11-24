@@ -25,8 +25,8 @@ public sealed class MqttZeroPersistedMessage
     public MqttQualityOfServiceLevel QualityOfServiceLevel { get; init; }
     /// <summary>Gets whether RETAIN is set.</summary>
     public bool Retain { get; init; }
-    /// <summary>Gets the subscription identifier.</summary>
-    public uint? SubscriptionIdentifier { get; init; }
+    /// <summary>Gets all subscription identifiers for the delivery.</summary>
+    public ReadOnlyMemory<uint> SubscriptionIdentifiers { get; init; }
     /// <summary>Gets the expiration time.</summary>
     public DateTimeOffset? ExpiresAt { get; init; }
 }

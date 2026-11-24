@@ -15,6 +15,33 @@ internal readonly ref struct MqttZeroPublishView
         uint? messageExpiryInterval,
         uint? subscriptionIdentifier,
         ushort? topicAlias)
+        : this(
+            topic,
+            properties,
+            payload,
+            qualityOfServiceLevel,
+            packetIdentifier,
+            duplicate,
+            retain,
+            messageExpiryInterval,
+            subscriptionIdentifier,
+            ReadOnlyMemory<uint>.Empty,
+            topicAlias)
+    {
+    }
+
+    public MqttZeroPublishView(
+        ReadOnlySequence<byte> topic,
+        ReadOnlySequence<byte> properties,
+        ReadOnlySequence<byte> payload,
+        MqttQualityOfServiceLevel qualityOfServiceLevel,
+        ushort packetIdentifier,
+        bool duplicate,
+        bool retain,
+        uint? messageExpiryInterval,
+        uint? subscriptionIdentifier,
+        ReadOnlyMemory<uint> subscriptionIdentifiers,
+        ushort? topicAlias)
     {
         Topic = topic;
         Properties = properties;
@@ -25,6 +52,7 @@ internal readonly ref struct MqttZeroPublishView
         Retain = retain;
         MessageExpiryInterval = messageExpiryInterval;
         SubscriptionIdentifier = subscriptionIdentifier;
+        SubscriptionIdentifiers = subscriptionIdentifiers;
         TopicAlias = topicAlias;
     }
 
@@ -45,6 +73,8 @@ internal readonly ref struct MqttZeroPublishView
     public uint? MessageExpiryInterval { get; }
 
     public uint? SubscriptionIdentifier { get; }
+
+    public ReadOnlyMemory<uint> SubscriptionIdentifiers { get; }
 
     public ushort? TopicAlias { get; }
 }

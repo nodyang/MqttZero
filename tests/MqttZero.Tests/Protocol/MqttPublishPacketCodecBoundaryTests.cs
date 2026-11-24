@@ -6,6 +6,22 @@ namespace MqttZero.Tests.Protocol
     public sealed class MqttPublishPacketCodecBoundaryTests
     {
         [Fact]
+        public void RejectsPropertyThatIsNotAllowedForPublish()
+        {
+            byte[] bytes =
+            [
+                0x30, 0x09,
+                0x00, 0x01, (byte)'a',
+                0x05, 0x11, 0x00, 0x00, 0x00, 0x01
+            ];
+
+            Assert.False(MqttPacketCodec.TryDecode(
+                new ReadOnlySequence<byte>(bytes),
+                out _,
+                out _));
+        }
+
+        [Fact]
         public void EncodesRawPropertiesAndAppendsMissingScalars()
         {
             MqttZeroPublishView view = new(
@@ -85,6 +101,32 @@ namespace MqttZero.Tests.Protocol
             MqttPublishPacketCodec.Encode(view, writer);
 
             Assert.Equal(writer.WrittenCount, length);
+        }
+
+        [Fact]
+        public void FastCodecRoundTripsMultipleSubscriptionIdentifiers()
+        {
+            MqttZeroPublishView source = new(
+                new ReadOnlySequence<byte>("multiple/ids"u8.ToArray()),
+                ReadOnlySequence<byte>.Empty,
+                new ReadOnlySequence<byte>("value"u8.ToArray()),
+                MqttQualityOfServiceLevel.AtMostOnce,
+                0,
+                false,
+                false,
+                null,
+                null,
+                new uint[] { 7, 9 },
+                null);
+            ArrayBufferWriter<byte> writer = new();
+
+            MqttPublishPacketCodec.Encode(source, writer);
+            Assert.True(MqttPublishPacketCodec.TryDecode(
+                new ReadOnlySequence<byte>(writer.WrittenMemory),
+                out MqttZeroPublishView decoded,
+                out _));
+
+            Assert.Equal(new uint[] { 7, 9 }, decoded.SubscriptionIdentifiers.ToArray());
         }
     }
 }

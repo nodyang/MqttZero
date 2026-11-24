@@ -72,7 +72,6 @@ public static partial class MqttPacketCodec
             CleanStart = (connectFlags & 0x02) != 0,
             KeepAliveSeconds = keepAliveSeconds,
             ClientId = clientId,
-            Properties = properties,
             HasUserName = hasUserName,
             UserName = userName,
             HasPassword = hasPassword,
@@ -80,7 +79,6 @@ public static partial class MqttPacketCodec
             HasWill = hasWill,
             WillQualityOfServiceLevel = willQos,
             WillRetain = willRetain,
-            WillProperties = willProperties,
             WillTopic = willTopic,
             WillPayload = willPayload
         };

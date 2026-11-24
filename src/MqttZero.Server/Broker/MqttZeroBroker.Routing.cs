@@ -102,6 +102,24 @@ public sealed partial class MqttZeroBroker
         MqttPublishPacket packet,
         CancellationToken cancellationToken)
     {
+        if (sender != null && packet.SubscriptionIdentifiers.Count > 0)
+        {
+            MqttZeroClientConnection? invalidConnection;
+            lock (sender.SyncRoot)
+            {
+                invalidConnection = sender.Connection;
+            }
+
+            if (invalidConnection != null)
+            {
+                await invalidConnection.CloseAsync(
+                    MqttReasonCode.ProtocolError,
+                    cancellationToken).ConfigureAwait(false);
+            }
+
+            return;
+        }
+
         MqttZeroConnectedClient? senderClient = null;
         if (sender != null)
         {
@@ -141,16 +159,18 @@ public sealed partial class MqttZeroBroker
         packet.QualityOfServiceLevel = context.QualityOfServiceLevel;
         packet.Retain = context.Retain;
 
+        ReadOnlySequence<byte> encodedProperties =
+            MqttPublishPropertiesCodec.Encode(packet.Properties);
         MqttZeroMessageLease lease = MqttZeroMessageLease.BorrowFrom(
             packet.TopicName,
-            packet.Properties,
+            encodedProperties,
             packet.Payload,
             packet.QualityOfServiceLevel,
             packet.Retain,
-            packet.MessageExpiryInterval,
-            packet.SubscriptionIdentifier,
+            packet.Properties.MessageExpiryInterval,
+            null,
             _bufferPool);
-        lease.SetExpiresAt(CalculateMessageExpiresAt(packet.MessageExpiryInterval));
+        lease.SetExpiresAt(CalculateMessageExpiresAt(packet.Properties.MessageExpiryInterval));
         lease.PacketIdentifier = packet.PacketIdentifier;
         try
         {
@@ -184,7 +204,7 @@ public sealed partial class MqttZeroBroker
                     lease,
                     deliveryQos,
                     delivery.Subscription.RetainAsPublished && lease.RetainFlag,
-                    delivery.Subscription.SubscriptionIdentifier,
+                    delivery.SubscriptionIdentifiers,
                     null,
                     cancellationToken).ConfigureAwait(false);
             }
@@ -217,13 +237,58 @@ public sealed partial class MqttZeroBroker
         MqttZeroClientConnection connection,
         MqttZeroPublishView view)
     {
+        if (!TryCreateMessageLease(
+                connection,
+                view,
+                out MqttZeroMessageLease? lease,
+                out MqttReasonCode reasonCode))
+        {
+            throw new InvalidOperationException(
+                $"The inbound MQTT PUBLISH is invalid: {reasonCode}.");
+        }
+
+        return lease!;
+    }
+
+    internal bool TryCreateMessageLease(
+        MqttZeroClientConnection connection,
+        MqttZeroPublishView view,
+        out MqttZeroMessageLease? lease,
+        out MqttReasonCode reasonCode)
+    {
+        lease = null;
+        reasonCode = MqttReasonCode.Success;
+        if (!MqttPublishPropertiesCodec.TryDecode(
+                view.Properties,
+                out MqttPublishProperties properties,
+                out IReadOnlyList<uint> subscriptionIdentifiers,
+                out _))
+        {
+            reasonCode = MqttReasonCode.ProtocolError;
+            return false;
+        }
+
+        if (subscriptionIdentifiers.Count > 0)
+        {
+            reasonCode = MqttReasonCode.ProtocolError;
+            return false;
+        }
+
+        if (properties.PayloadFormatIndicator == MqttPayloadFormatIndicator.Utf8 &&
+            !MqttZeroProtocolValidator.IsValidUtf8(view.Payload))
+        {
+            reasonCode = MqttReasonCode.PayloadFormatInvalid;
+            return false;
+        }
+
         ReadOnlySequence<byte> topic = view.Topic;
         if (view.TopicAlias.HasValue)
         {
             ushort alias = view.TopicAlias.Value;
             if (alias == 0 || alias > _options.TopicAliasMaximum)
             {
-                throw new InvalidOperationException("The PUBLISH topic alias is invalid.");
+                reasonCode = MqttReasonCode.TopicAliasInvalid;
+                return false;
             }
 
             if (!topic.IsEmpty)
@@ -236,26 +301,30 @@ public sealed partial class MqttZeroBroker
             }
             else
             {
-                throw new InvalidOperationException("The PUBLISH topic alias is unknown.");
+                reasonCode = MqttReasonCode.TopicAliasInvalid;
+                return false;
             }
         }
         else if (topic.IsEmpty)
         {
-            throw new InvalidOperationException("The PUBLISH topic is empty.");
+            reasonCode = MqttReasonCode.ProtocolError;
+            return false;
         }
 
-        MqttZeroMessageLease lease = MqttZeroMessageLease.BorrowFrom(
+        ReadOnlySequence<byte> encodedProperties =
+            MqttPublishPropertiesCodec.Encode(properties);
+        lease = MqttZeroMessageLease.BorrowFrom(
             topic,
-            view.Properties,
+            encodedProperties,
             view.Payload,
             view.QualityOfServiceLevel,
             view.Retain,
-            view.MessageExpiryInterval,
-            view.SubscriptionIdentifier,
+            properties.MessageExpiryInterval,
+            null,
             _bufferPool);
-        lease.SetExpiresAt(CalculateMessageExpiresAt(view.MessageExpiryInterval));
+        lease.SetExpiresAt(CalculateMessageExpiresAt(properties.MessageExpiryInterval));
         lease.PacketIdentifier = view.PacketIdentifier;
-        return lease;
+        return true;
     }
 
     internal ValueTask RoutePublishLeaseAsync(
@@ -333,9 +402,20 @@ public sealed partial class MqttZeroBroker
             MqttZeroPublishContext context = MqttZeroPublishContext.Rent();
             context.Topic = new ReadOnlySequence<byte>(lease.Topic);
             context.Payload = new ReadOnlySequence<byte>(lease.Payload);
-            context.Properties = lease.Properties.Length == 0
-                ? ReadOnlySequence<byte>.Empty
-                : new ReadOnlySequence<byte>(lease.Properties);
+            if (!MqttPublishPropertiesCodec.TryDecode(
+                    lease.Properties.Length == 0
+                        ? ReadOnlySequence<byte>.Empty
+                        : new ReadOnlySequence<byte>(lease.Properties),
+                    out MqttPublishProperties properties,
+                    out _,
+                    out _))
+            {
+                context.Release();
+                throw new InvalidOperationException(
+                    "The MQTT PUBLISH properties are invalid.");
+            }
+
+            context.Properties = properties;
             context.QualityOfServiceLevel = lease.QualityOfServiceLevel;
             context.Retain = lease.RetainFlag;
             context.Sender = senderConnection.ConnectedClient;
@@ -376,14 +456,19 @@ public sealed partial class MqttZeroBroker
 
                 effectiveLease = MqttZeroMessageLease.CopyFrom(
                     context.Topic,
-                    context.Properties,
+                    MqttPublishPropertiesCodec.Encode(context.Properties),
                     context.Payload,
                     context.QualityOfServiceLevel,
                     context.Retain,
-                    lease.MessageExpiryInterval,
+                    context.Properties.MessageExpiryInterval,
                     lease.SubscriptionIdentifier,
                     _bufferPool);
-                effectiveLease.SetExpiresAt(lease.ExpiresAt);
+                effectiveLease.SetExpiresAt(
+                    context.Properties.MessageExpiryInterval ==
+                        lease.MessageExpiryInterval
+                        ? lease.ExpiresAt
+                        : CalculateMessageExpiresAt(
+                            context.Properties.MessageExpiryInterval));
                 effectiveLease.PacketIdentifier = lease.PacketIdentifier;
                 ownsEffectiveLease = true;
             }
@@ -430,7 +515,7 @@ public sealed partial class MqttZeroBroker
                     effectiveLease,
                     deliveryQos,
                     delivery.Subscription.RetainAsPublished && effectiveLease.RetainFlag,
-                    delivery.Subscription.SubscriptionIdentifier,
+                    delivery.SubscriptionIdentifiers,
                     senderConnection,
                     cancellationToken).ConfigureAwait(false);
             }

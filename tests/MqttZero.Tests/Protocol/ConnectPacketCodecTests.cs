@@ -14,6 +14,60 @@ namespace MqttZero.Tests.Protocol
     public sealed class ConnectPacketCodecTests
     {
         [Fact]
+        public void RoundTripsConnectAndWillProperties()
+        {
+            MqttConnectPacket packet = new()
+            {
+                ClientId = new ReadOnlySequence<byte>("properties-client"u8.ToArray()),
+                RequestResponseInformation = true,
+                RequestProblemInformation = false,
+                AuthenticationMethod = "SCRAM-SHA-256",
+                AuthenticationData = "challenge"u8.ToArray(),
+                UserProperties =
+                [
+                    new MqttUserProperty("tenant", "a"),
+                    new MqttUserProperty("tenant", "b")
+                ],
+                HasWill = true,
+                WillTopic = new ReadOnlySequence<byte>("will/topic"u8.ToArray()),
+                WillPayload = new ReadOnlySequence<byte>("offline"u8.ToArray()),
+                WillDelayInterval = 12,
+                WillProperties = new MqttPublishProperties
+                {
+                    PayloadFormatIndicator = MqttPayloadFormatIndicator.Utf8,
+                    MessageExpiryInterval = 30,
+                    ContentType = "text/plain",
+                    ResponseTopic = "will/response",
+                    CorrelationData = "will-correlation"u8.ToArray(),
+                    UserProperties = [new MqttUserProperty("source", "will")]
+                }
+            };
+
+            byte[] bytes = ProtocolPacketTestHelper.Encode(packet);
+            bool decoded = MqttPacketCodec.TryDecode(
+                new ReadOnlySequence<byte>(bytes),
+                out MqttPacket? result,
+                out long consumed);
+
+            Assert.True(decoded, Convert.ToHexString(bytes));
+            MqttConnectPacket value = Assert.IsType<MqttConnectPacket>(result);
+            Assert.Equal(bytes.Length, consumed);
+            Assert.True(value.RequestResponseInformation);
+            Assert.False(value.RequestProblemInformation);
+            Assert.Equal("SCRAM-SHA-256", value.AuthenticationMethod);
+            Assert.Equal("challenge", Encoding.UTF8.GetString(value.AuthenticationData!.Value.Span));
+            Assert.Equal(2, value.UserProperties.Count);
+            Assert.Equal(12U, value.WillDelayInterval);
+            Assert.Equal(
+                MqttPayloadFormatIndicator.Utf8,
+                value.WillProperties.PayloadFormatIndicator);
+            Assert.Equal(30U, value.WillProperties.MessageExpiryInterval);
+            Assert.Equal("text/plain", value.WillProperties.ContentType);
+            Assert.Equal("will/response", value.WillProperties.ResponseTopic);
+            Assert.Single(value.WillProperties.UserProperties);
+        }
+
+        [Fact]
         public void DecodesMqtt5ConnectPacket()
         {
             byte[] bytes =
@@ -122,6 +176,56 @@ namespace MqttZero.Tests.Protocol
             Assert.Equal((ushort)32, connAckPacket.ReceiveMaximum);
             Assert.Equal(8192U, connAckPacket.MaximumPacketSize);
             Assert.Equal(3600U, connAckPacket.SessionExpiryInterval!.Value);
+        }
+
+        [Fact]
+        public void RoundTripsCompleteConnAckProperties()
+        {
+            MqttConnAckPacket packet = new()
+            {
+                TopicAliasMaximum = 16,
+                ReceiveMaximum = 32,
+                MaximumPacketSize = 8192,
+                SessionExpiryInterval = 3600,
+                AssignedClientIdentifier = "assigned-client",
+                MaximumQos = MqttQualityOfServiceLevel.AtLeastOnce,
+                RetainAvailable = false,
+                WildcardSubscriptionAvailable = false,
+                SubscriptionIdentifierAvailable = false,
+                SharedSubscriptionAvailable = false,
+                ServerKeepAlive = 90,
+                ResponseInformation = "response/prefix",
+                ServerReference = "backup.example",
+                AuthenticationMethod = "SCRAM-SHA-256",
+                AuthenticationData = "server-data"u8.ToArray(),
+                ReasonString = "connected",
+                UserProperties =
+                [
+                    new MqttUserProperty("region", "east"),
+                    new MqttUserProperty("region", "west")
+                ]
+            };
+
+            byte[] bytes = ProtocolPacketTestHelper.Encode(packet);
+            bool decoded = MqttPacketCodec.TryDecode(
+                new ReadOnlySequence<byte>(bytes),
+                out MqttPacket? result,
+                out _);
+
+            Assert.True(decoded, Convert.ToHexString(bytes));
+            MqttConnAckPacket value = Assert.IsType<MqttConnAckPacket>(result);
+            Assert.Equal(MqttQualityOfServiceLevel.AtLeastOnce, value.MaximumQos);
+            Assert.False(value.RetainAvailable);
+            Assert.False(value.WildcardSubscriptionAvailable);
+            Assert.False(value.SubscriptionIdentifierAvailable);
+            Assert.False(value.SharedSubscriptionAvailable);
+            Assert.Equal((ushort)90, value.ServerKeepAlive);
+            Assert.Equal("response/prefix", value.ResponseInformation);
+            Assert.Equal("backup.example", value.ServerReference);
+            Assert.Equal("SCRAM-SHA-256", value.AuthenticationMethod);
+            Assert.Equal("server-data", Encoding.UTF8.GetString(value.AuthenticationData!.Value.Span));
+            Assert.Equal("connected", value.ReasonString);
+            Assert.Equal(2, value.UserProperties.Count);
         }
         [Fact]
         public void RejectsDuplicateSessionExpiryProperty()

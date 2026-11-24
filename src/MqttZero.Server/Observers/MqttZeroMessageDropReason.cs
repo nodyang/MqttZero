@@ -10,5 +10,7 @@ public enum MqttZeroMessageDropReason
     /// <summary>Offline QoS 0 storage is disabled.</summary>
     OfflineClient,
     /// <summary>An interceptor rejected the delivery.</summary>
-    InterceptorRejected
+    InterceptorRejected,
+    /// <summary>The PUBLISH exceeds the receiver maximum packet size.</summary>
+    PacketTooLarge
 }

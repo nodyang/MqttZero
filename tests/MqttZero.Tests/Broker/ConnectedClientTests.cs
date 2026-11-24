@@ -40,9 +40,19 @@ namespace MqttZero.Tests.Broker
             ConcurrentQueue<string> received = new();
             TaskCompletionSource<bool> messageReceived = new(
                 TaskCreationOptions.RunContinuationsAsynchronously);
+            TaskCompletionSource<string?> contentType = new(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            TaskCompletionSource<string?> userProperty = new(
+                TaskCreationOptions.RunContinuationsAsynchronously);
             client.ApplicationMessageReceivedAsync += eventArgs =>
             {
                 received.Enqueue(eventArgs.ApplicationMessage.ConvertPayloadToString());
+                contentType.TrySetResult(eventArgs.ApplicationMessage.ContentType);
+                userProperty.TrySetResult(eventArgs.ApplicationMessage.UserProperties is
+                { Count: > 0 } properties
+                        ? MQTTnet.Packets.MqttUserPropertyExtensions.ReadValueAsString(
+                            properties[0])
+                        : null);
                 messageReceived.TrySetResult(true);
                 return Task.CompletedTask;
             };
@@ -63,7 +73,12 @@ namespace MqttZero.Tests.Broker
                 new MqttZeroPublishMessage
                 {
                     Topic = "managed/direct",
-                    Payload = new ReadOnlySequence<byte>("direct"u8.ToArray())
+                    Payload = new ReadOnlySequence<byte>("direct"u8.ToArray()),
+                    Properties = new MqttPublishProperties
+                    {
+                        ContentType = "text/plain",
+                        UserProperties = [new MqttUserProperty("trace", "direct")]
+                    }
                 },
                 TestContext.Current.CancellationToken);
 
@@ -71,6 +86,8 @@ namespace MqttZero.Tests.Broker
                 TimeSpan.FromSeconds(5),
                 TestContext.Current.CancellationToken);
             Assert.Equal(["direct"], received.ToArray());
+            Assert.Equal("text/plain", await contentType.Task);
+            Assert.Equal("direct", await userProperty.Task);
             Assert.Same(connected.Items, recorder.Items);
 
             IReadOnlyList<MqttZeroSubscribeResult> invalidSubscription =

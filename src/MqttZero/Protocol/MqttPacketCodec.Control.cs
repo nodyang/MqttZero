@@ -1,5 +1,4 @@
 using System.Buffers;
-using System.Buffers.Binary;
 
 namespace MqttZero.Protocol;
 
@@ -34,8 +33,7 @@ public static partial class MqttPacketCodec
         packet = new MqttConnAckPacket
         {
             SessionPresent = (acknowledgeFlags & 0x01) != 0,
-            ReasonCode = connAckReason,
-            Properties = properties
+            ReasonCode = connAckReason
         };
         if (!Mqtt5PropertyReader.TryReadConnAck(properties, (MqttConnAckPacket)packet))
         {
@@ -53,35 +51,24 @@ public static partial class MqttPacketCodec
     {
         packet = null;
         if ((firstByte & 0x0F) != 0 ||
-            !TryReadUInt16(ref reader, out ushort packetIdentifier))
+            !TryReadAcknowledgement(
+                ref reader,
+                out ushort packetIdentifier,
+                out MqttReasonCode reasonCode,
+                out string? reasonString,
+                out IReadOnlyList<MqttUserProperty> userProperties))
         {
             return false;
-        }
-
-        MqttReasonCode reasonCode = MqttReasonCode.Success;
-        ReadOnlySequence<byte> properties = ReadOnlySequence<byte>.Empty;
-        if (reader.Remaining > 0)
-        {
-            if (!reader.TryRead(out byte encodedReasonCode))
-            {
-                return false;
-            }
-
-            reasonCode = (MqttReasonCode)encodedReasonCode;
-            if (reader.Remaining > 0 && !TryReadProperties(ref reader, out properties))
-            {
-                return false;
-            }
         }
 
         packet = new MqttPubAckPacket
         {
             PacketIdentifier = packetIdentifier,
             ReasonCode = reasonCode,
-            Properties = properties
+            ReasonString = reasonString,
+            UserProperties = userProperties
         };
-        return packetIdentifier != 0 &&
-            reader.Remaining == 0 &&
+        return reader.Remaining == 0 &&
             MqttZeroProtocolValidator.IsValidPubAckReasonCode(reasonCode);
     }
 
@@ -96,7 +83,8 @@ public static partial class MqttPacketCodec
                 ref reader,
                 out ushort packetIdentifier,
                 out MqttReasonCode reasonCode,
-                out ReadOnlySequence<byte> properties))
+                out string? reasonString,
+                out IReadOnlyList<MqttUserProperty> userProperties))
         {
             return false;
         }
@@ -105,7 +93,8 @@ public static partial class MqttPacketCodec
         {
             PacketIdentifier = packetIdentifier,
             ReasonCode = reasonCode,
-            Properties = properties
+            ReasonString = reasonString,
+            UserProperties = userProperties
         };
         return MqttZeroProtocolValidator.IsValidPubAckReasonCode(reasonCode);
     }
@@ -121,7 +110,8 @@ public static partial class MqttPacketCodec
                 ref reader,
                 out ushort packetIdentifier,
                 out MqttReasonCode reasonCode,
-                out ReadOnlySequence<byte> properties))
+                out string? reasonString,
+                out IReadOnlyList<MqttUserProperty> userProperties))
         {
             return false;
         }
@@ -130,7 +120,8 @@ public static partial class MqttPacketCodec
         {
             PacketIdentifier = packetIdentifier,
             ReasonCode = reasonCode,
-            Properties = properties
+            ReasonString = reasonString,
+            UserProperties = userProperties
         };
         return MqttZeroProtocolValidator.IsValidPubRelReasonCode(reasonCode);
     }
@@ -146,7 +137,8 @@ public static partial class MqttPacketCodec
                 ref reader,
                 out ushort packetIdentifier,
                 out MqttReasonCode reasonCode,
-                out ReadOnlySequence<byte> properties))
+                out string? reasonString,
+                out IReadOnlyList<MqttUserProperty> userProperties))
         {
             return false;
         }
@@ -155,7 +147,8 @@ public static partial class MqttPacketCodec
         {
             PacketIdentifier = packetIdentifier,
             ReasonCode = reasonCode,
-            Properties = properties
+            ReasonString = reasonString,
+            UserProperties = userProperties
         };
         return MqttZeroProtocolValidator.IsValidPubRelReasonCode(reasonCode);
     }
@@ -164,10 +157,12 @@ public static partial class MqttPacketCodec
         ref SequenceReader<byte> reader,
         out ushort packetIdentifier,
         out MqttReasonCode reasonCode,
-        out ReadOnlySequence<byte> properties)
+        out string? reasonString,
+        out IReadOnlyList<MqttUserProperty> userProperties)
     {
         reasonCode = MqttReasonCode.Success;
-        properties = ReadOnlySequence<byte>.Empty;
+        reasonString = null;
+        userProperties = Array.Empty<MqttUserProperty>();
         if (!TryReadUInt16(ref reader, out packetIdentifier))
         {
             return false;
@@ -186,7 +181,11 @@ public static partial class MqttPacketCodec
             }
 
             reasonCode = (MqttReasonCode)encodedReasonCode;
-            if (!TryReadProperties(ref reader, out properties))
+            if (!TryReadProperties(ref reader, out ReadOnlySequence<byte> properties) ||
+                !Mqtt5PropertyReader.TryReadReasonProperties(
+                    properties,
+                    out reasonString,
+                    out userProperties))
             {
                 return false;
             }
@@ -199,7 +198,8 @@ public static partial class MqttPacketCodec
         byte firstByte,
         ushort packetIdentifier,
         MqttReasonCode reasonCode,
-        ReadOnlySequence<byte> properties,
+        string? reasonString,
+        IReadOnlyList<MqttUserProperty> userProperties,
         IBufferWriter<byte> writer)
     {
         if (packetIdentifier == 0)
@@ -215,12 +215,14 @@ public static partial class MqttPacketCodec
             throw new ArgumentException("The MQTT acknowledgement reason code is invalid.");
         }
 
-        bool includeReason =
-            reasonCode != MqttReasonCode.Success || !properties.IsEmpty;
+        int propertiesLength = Mqtt5PropertyWriter.GetReasonPropertiesLength(
+            reasonString,
+            userProperties);
+        bool includeReason = reasonCode != MqttReasonCode.Success || propertiesLength > 0;
         int bodyLength = includeReason
             ? 3 +
-                GetVariableByteIntegerSize(properties.Length) +
-                (int)properties.Length
+                GetVariableByteIntegerSize(propertiesLength) +
+                propertiesLength
             : 2;
         Span<byte> fixedHeader = writer.GetSpan(5);
         fixedHeader[0] = firstByte;
@@ -230,7 +232,10 @@ public static partial class MqttPacketCodec
         if (includeReason)
         {
             WriteByte(writer, (byte)reasonCode);
-            WriteProperties(writer, properties);
+            Mqtt5PropertyWriter.WriteReasonProperties(
+                writer,
+                reasonString,
+                userProperties);
         }
     }
 
@@ -270,7 +275,7 @@ public static partial class MqttPacketCodec
             }
 
             reasonCode = (MqttReasonCode)encodedReasonCode;
-            if (reader.Remaining > 0 && !TryReadProperties(ref reader, out properties))
+            if (!TryReadProperties(ref reader, out properties))
             {
                 return false;
             }
@@ -278,10 +283,12 @@ public static partial class MqttPacketCodec
 
         packet = new MqttDisconnectPacket
         {
-            ReasonCode = reasonCode,
-            Properties = properties
+            ReasonCode = reasonCode
         };
-        if (!Mqtt5PropertyReader.TryReadDisconnect(properties, (MqttDisconnectPacket)packet))
+        if (!MqttZeroProtocolValidator.IsValidDisconnectReasonCode(reasonCode) ||
+            !Mqtt5PropertyReader.TryReadDisconnect(
+                properties,
+                (MqttDisconnectPacket)packet))
         {
             packet = null;
             return false;
@@ -298,9 +305,13 @@ public static partial class MqttPacketCodec
             throw new ArgumentException("The MQTT PUBACK packet is invalid.", nameof(packet));
         }
 
-        bool includeReason = packet.ReasonCode != MqttReasonCode.Success || !packet.Properties.IsEmpty;
+        int propertiesLength = Mqtt5PropertyWriter.GetReasonPropertiesLength(
+            packet.ReasonString,
+            packet.UserProperties);
+        bool includeReason = packet.ReasonCode != MqttReasonCode.Success ||
+            propertiesLength > 0;
         int bodyLength = includeReason
-            ? 3 + GetVariableByteIntegerSize(packet.Properties.Length) + (int)packet.Properties.Length
+            ? 3 + GetVariableByteIntegerSize(propertiesLength) + propertiesLength
             : 2;
 
         Span<byte> fixedHeader = writer.GetSpan(1 + 4);
@@ -312,7 +323,10 @@ public static partial class MqttPacketCodec
         if (includeReason)
         {
             WriteByte(writer, (byte)packet.ReasonCode);
-            WriteProperties(writer, packet.Properties);
+            Mqtt5PropertyWriter.WriteReasonProperties(
+                writer,
+                packet.ReasonString,
+                packet.UserProperties);
         }
     }
 
@@ -326,6 +340,11 @@ public static partial class MqttPacketCodec
 
     private static void EncodeDisconnect(MqttDisconnectPacket packet, IBufferWriter<byte> writer)
     {
+        if (!MqttZeroProtocolValidator.IsValidDisconnectReasonCode(packet.ReasonCode))
+        {
+            throw new ArgumentException("The MQTT DISCONNECT reason code is invalid.");
+        }
+
         int propertiesLength = Mqtt5PropertyWriter.GetDisconnectPropertiesLength(packet);
         bool includeDetail =
             packet.ReasonCode != MqttReasonCode.Success ||

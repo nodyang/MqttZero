@@ -8,6 +8,12 @@ public enum MqttReasonCode : byte
     /// <summary>The operation succeeded.</summary>
     Success = 0x00,
 
+    /// <summary>The client disconnected normally while publishing a Will.</summary>
+    DisconnectWithWill = 0x04,
+
+    /// <summary>No subscriptions matched the published message.</summary>
+    NoMatchingSubscribers = 0x10,
+
     /// <summary>The server failed unexpectedly.</summary>
     UnspecifiedError = 0x80,
 
@@ -32,6 +38,30 @@ public enum MqttReasonCode : byte
     /// <summary>The user name or password is invalid.</summary>
     BadUserNameOrPassword = 0x86,
 
+    /// <summary>Additional authentication is required.</summary>
+    ContinueAuthentication = 0x18,
+
+    /// <summary>The client requests re-authentication.</summary>
+    Reauthenticate = 0x19,
+
+    /// <summary>The packet is malformed.</summary>
+    MalformedPacket = 0x81,
+
+    /// <summary>The client violated protocol rules.</summary>
+    ProtocolError = 0x82,
+
+    /// <summary>The requested protocol version is unsupported.</summary>
+    UnsupportedProtocolVersion = 0x84,
+
+    /// <summary>The client identifier is invalid.</summary>
+    ClientIdentifierNotValid = 0x85,
+
+    /// <summary>The server is busy.</summary>
+    ServerBusy = 0x89,
+
+    /// <summary>The authentication method is unsupported.</summary>
+    BadAuthenticationMethod = 0x8C,
+
     /// <summary>Subscription granted at QoS 1.</summary>
     GrantedQos1 = 0x01,
 
@@ -50,9 +80,6 @@ public enum MqttReasonCode : byte
     /// <summary>No matching subscription existed.</summary>
     NoSubscriptionExisted = 0x11,
 
-    /// <summary>The client is not connected.</summary>
-    NotConnected = 0x8C,
-
     /// <summary>The topic filter is invalid.</summary>
     TopicFilterInvalid = 0x8F,
 
@@ -68,6 +95,15 @@ public enum MqttReasonCode : byte
     /// <summary>The receive maximum was exceeded.</summary>
     ReceiveMaximumExceeded = 0x93,
 
+    /// <summary>The topic alias is invalid.</summary>
+    TopicAliasInvalid = 0x94,
+
+    /// <summary>The packet exceeds the negotiated maximum size.</summary>
+    PacketTooLarge = 0x95,
+
+    /// <summary>The message rate is too high.</summary>
+    MessageRateTooHigh = 0x96,
+
     /// <summary>The server is shutting down.</summary>
     ServerShuttingDown = 0x8B,
 
@@ -78,5 +114,14 @@ public enum MqttReasonCode : byte
     KeepAliveTimeout = 0x8D,
 
     /// <summary>The payload format is invalid.</summary>
-    PayloadFormatInvalid = 0x99
+    PayloadFormatInvalid = 0x99,
+
+    /// <summary>Retained messages are not supported.</summary>
+    RetainNotSupported = 0x9A,
+
+    /// <summary>Shared subscriptions are not supported.</summary>
+    SharedSubscriptionsNotSupported = 0x9E,
+
+    /// <summary>An administrative action caused the disconnect.</summary>
+    AdministrativeAction = 0x98
 }

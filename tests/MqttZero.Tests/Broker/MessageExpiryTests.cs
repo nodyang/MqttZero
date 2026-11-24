@@ -51,8 +51,10 @@ namespace MqttZero.Tests.Broker
                     out MqttPacket? packet,
                     out _));
                 MqttPublishPacket publish = Assert.IsType<MqttPublishPacket>(packet);
-                Assert.Equal(5U, publish.MessageExpiryInterval);
-                Assert.Equal((byte)0x01, publish.Properties.FirstSpan[0]);
+                Assert.Equal(5U, publish.Properties.MessageExpiryInterval);
+                Assert.Equal(
+                    MqttPayloadFormatIndicator.Utf8,
+                    publish.Properties.PayloadFormatIndicator);
             }
             finally
             {

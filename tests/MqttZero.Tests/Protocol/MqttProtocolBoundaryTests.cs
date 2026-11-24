@@ -66,7 +66,19 @@ namespace MqttZero.Tests.Protocol
                 out _));
             MqttPubRecPacket pubRec = Assert.IsType<MqttPubRecPacket>(packet);
             Assert.Equal(MqttReasonCode.PacketIdentifierInUse, pubRec.ReasonCode);
-            Assert.True(pubRec.Properties.IsEmpty);
+            Assert.Null(pubRec.ReasonString);
+            Assert.Empty(pubRec.UserProperties);
+        }
+
+        [Fact]
+        public void DisconnectWithReasonRequiresPropertyLength()
+        {
+            byte[] bytes = [0xE0, 0x01, 0x95];
+
+            Assert.False(MqttPacketCodec.TryDecode(
+                new ReadOnlySequence<byte>(bytes),
+                out _,
+                out _));
         }
 
         [Fact]

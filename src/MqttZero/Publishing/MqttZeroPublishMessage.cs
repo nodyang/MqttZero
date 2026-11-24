@@ -28,4 +28,9 @@ public sealed class MqttZeroPublishMessage
     /// Gets a value indicating whether the message should be retained.
     /// </summary>
     public bool Retain { get; init; }
+
+    /// <summary>
+    /// Gets the end-to-end MQTT 5 message properties.
+    /// </summary>
+    public MqttPublishProperties Properties { get; init; } = MqttPublishProperties.Empty;
 }
