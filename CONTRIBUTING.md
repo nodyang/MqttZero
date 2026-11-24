@@ -27,8 +27,16 @@
 dotnet build MqttZero.slnx -c Release
 dotnet test tests/MqttZero.Tests/MqttZero.Tests.csproj -c Release
 dotnet test tests/MqttZero.Dashboard.Tests/MqttZero.Dashboard.Tests.csproj -c Release
+./eng/verify-coverage.ps1
 ./perf/verify-allocation.ps1
 ```
+
+覆盖率门禁按生产程序集执行：
+
+- `MqttZero`：行 86%，分支 70%
+- `MqttZero.Server`：行 80%，分支 72%
+- `MqttZero.AspNetCore`：行 90%，分支 85%
+- `MqttZero.AspNetCore.Dashboard`：行 80%，分支 70%
 
 ## 性能规则
 

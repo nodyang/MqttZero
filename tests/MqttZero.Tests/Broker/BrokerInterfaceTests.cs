@@ -3,6 +3,7 @@ using MqttZero.Server;
 using MqttZero.AspNetCore;
 using MqttZero.Server.Broker;
 using MqttZero.Server.Retained;
+using MqttZero.Server.Storage;
 using MqttZero.Publishing;
 using Microsoft.Extensions.DependencyInjection;
 using System.Buffers;
@@ -50,6 +51,24 @@ namespace MqttZero.Tests.Broker
             {
                 await concrete.DisposeAsync();
             }
+        }
+
+        [Fact]
+        public void AddMqttZeroRegistersDefaultInfrastructure()
+        {
+            ServiceCollection services = new();
+            services.AddMqttZero();
+            using ServiceProvider provider = services.BuildServiceProvider();
+
+            Assert.IsType<MqttZeroNoopSessionStore>(
+                provider.GetRequiredService<IMqttZeroSessionStore>());
+            Assert.IsType<MqttZeroNoopMessageStore>(
+                provider.GetRequiredService<IMqttZeroMessageStore>());
+            Assert.IsType<MqttZeroNoopRetainedMessageStore>(
+                provider.GetRequiredService<IMqttZeroRetainedMessageStore>());
+            Assert.Same(
+                TimeProvider.System,
+                provider.GetRequiredService<TimeProvider>());
         }
     }
 }

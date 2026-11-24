@@ -56,13 +56,15 @@ internal sealed class MqttZeroLimitedPipeWriter : PipeWriter
         _inner.CancelPendingFlush();
     }
 
-    public override ValueTask<FlushResult> WriteAsync(
+    public override async ValueTask<FlushResult> WriteAsync(
         ReadOnlyMemory<byte> source,
         CancellationToken cancellationToken = default)
     {
         EnsureCapacity(source.Length);
+        FlushResult result = await _inner.WriteAsync(source, cancellationToken)
+            .ConfigureAwait(false);
         _writtenBytes += source.Length;
-        return _inner.WriteAsync(source, cancellationToken);
+        return result;
     }
 
     private void EnsureRemainingCapacity()

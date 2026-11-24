@@ -170,12 +170,25 @@ namespace MqttZero.Tests.Broker
             await using WebApplication app = builder.Build();
             await app.StartAsync(TestContext.Current.CancellationToken);
 
-            MqttClientFactory factory = new();
-            using IMqttClient client = factory.CreateMqttClient();
+            using TcpClient client = new();
             await client.ConnectAsync(
-                CreateClientOptions(port, "observed-client"),
+                IPAddress.Loopback,
+                port,
                 TestContext.Current.CancellationToken);
-            await client.DisconnectAsync(
+            NetworkStream stream = client.GetStream();
+            await SendPacketAsync(
+                stream,
+                new MqttConnectPacket
+                {
+                    ClientId = new ReadOnlySequence<byte>("observed-client"u8.ToArray()),
+                    CleanStart = true
+                },
+                TestContext.Current.CancellationToken);
+            _ = Assert.IsType<MqttConnAckPacket>(
+                await ReadPacketAsync(stream, TestContext.Current.CancellationToken));
+            await SendPacketAsync(
+                stream,
+                new MqttDisconnectPacket(),
                 cancellationToken: TestContext.Current.CancellationToken);
 
             ConnectionRecorder recorder = app.Services.GetRequiredService<ConnectionRecorder>();
@@ -232,6 +245,85 @@ namespace MqttZero.Tests.Broker
                 item => item.ClientId == "close-sender-client");
             Assert.Equal(0, session.PendingMessageCount);
             Assert.Equal(0, session.InflightMessageCount);
+        }
+
+        [Fact(Timeout = 15_000)]
+        public async Task ConnectionObserverExceptionDoesNotRejectConnection()
+        {
+            int port = GetFreePort();
+            WebApplicationBuilder builder = WebApplication.CreateBuilder();
+            builder.Logging.ClearProviders();
+            builder.WebHost.ConfigureKestrel(kestrel =>
+                kestrel.Listen(IPAddress.Loopback, port, listen => listen.UseMqttZero()));
+            builder.Services.AddMqttZero()
+                .AddConnectionObserver<ThrowingConnectionObserver>();
+            await using WebApplication app = builder.Build();
+            await app.StartAsync(TestContext.Current.CancellationToken);
+            MqttClientFactory factory = new();
+            using IMqttClient client = factory.CreateMqttClient();
+
+            await client.ConnectAsync(
+                CreateClientOptions(port, "throwing-observer"),
+                TestContext.Current.CancellationToken);
+
+            Assert.Equal(
+                1,
+                app.Services.GetRequiredService<MqttZeroBroker>().ConnectedClientCount);
+            await client.DisconnectAsync(
+                cancellationToken: TestContext.Current.CancellationToken);
+            await app.StopAsync(TestContext.Current.CancellationToken);
+        }
+
+        [Fact(Timeout = 15_000)]
+        public async Task DeliveryObserverExceptionDoesNotBlockMessage()
+        {
+            int port = GetFreePort();
+            WebApplicationBuilder builder = WebApplication.CreateBuilder();
+            builder.Logging.ClearProviders();
+            builder.WebHost.ConfigureKestrel(kestrel =>
+                kestrel.Listen(IPAddress.Loopback, port, listen => listen.UseMqttZero()));
+            builder.Services.AddMqttZero()
+                .AddDeliveryObserver<ThrowingDeliveryObserver>();
+            await using WebApplication app = builder.Build();
+            await app.StartAsync(TestContext.Current.CancellationToken);
+            MqttClientFactory factory = new();
+            using IMqttClient subscriber = factory.CreateMqttClient();
+            using IMqttClient publisher = factory.CreateMqttClient();
+            TaskCompletionSource<string> received = new(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            subscriber.ApplicationMessageReceivedAsync += eventArgs =>
+            {
+                received.TrySetResult(
+                    eventArgs.ApplicationMessage.ConvertPayloadToString());
+                return Task.CompletedTask;
+            };
+            await subscriber.ConnectAsync(
+                CreateClientOptions(port, "throwing-delivery-subscriber"),
+                TestContext.Current.CancellationToken);
+            await subscriber.SubscribeAsync(
+                new MqttClientSubscribeOptionsBuilder()
+                    .WithTopicFilter("throwing-delivery/#")
+                    .Build(),
+                TestContext.Current.CancellationToken);
+            await publisher.ConnectAsync(
+                CreateClientOptions(port, "throwing-delivery-publisher"),
+                TestContext.Current.CancellationToken);
+
+            await publisher.PublishStringAsync(
+                "throwing-delivery/value",
+                "delivered",
+                cancellationToken: TestContext.Current.CancellationToken);
+
+            Assert.Equal(
+                "delivered",
+                await received.Task.WaitAsync(
+                    TimeSpan.FromSeconds(5),
+                    TestContext.Current.CancellationToken));
+            await subscriber.DisconnectAsync(
+                cancellationToken: TestContext.Current.CancellationToken);
+            await publisher.DisconnectAsync(
+                cancellationToken: TestContext.Current.CancellationToken);
+            await app.StopAsync(TestContext.Current.CancellationToken);
         }
 
         private sealed class RejectingConnectionInterceptor : IMqttZeroConnectionInterceptor
@@ -323,6 +415,54 @@ namespace MqttZero.Tests.Broker
                 Assert.Null(context.Sender);
                 return ValueTask.FromResult(
                     MqttZeroEnqueueInterceptionResult.CloseSenderConnection);
+            }
+        }
+
+        private sealed class ThrowingConnectionObserver : IMqttZeroConnectionObserver
+        {
+            public ValueTask OnConnectedAsync(
+                MqttZeroClientConnectedContext context,
+                CancellationToken cancellationToken)
+            {
+                throw new InvalidOperationException("Observer failed.");
+            }
+
+            public ValueTask OnDisconnectedAsync(
+                MqttZeroClientDisconnectedContext context,
+                CancellationToken cancellationToken)
+            {
+                throw new InvalidOperationException("Observer failed.");
+            }
+        }
+
+        private sealed class ThrowingDeliveryObserver : IMqttZeroDeliveryObserver
+        {
+            public ValueTask OnMessageEnqueuedAsync(
+                MqttZeroMessageEnqueuedContext context,
+                CancellationToken cancellationToken)
+            {
+                throw new InvalidOperationException("Observer failed.");
+            }
+
+            public ValueTask OnMessageDroppedAsync(
+                MqttZeroMessageDroppedContext context,
+                CancellationToken cancellationToken)
+            {
+                throw new InvalidOperationException("Observer failed.");
+            }
+
+            public ValueTask OnQueueMessageOverwrittenAsync(
+                MqttZeroQueueMessageOverwrittenContext context,
+                CancellationToken cancellationToken)
+            {
+                throw new InvalidOperationException("Observer failed.");
+            }
+
+            public ValueTask OnMessageNotConsumedAsync(
+                MqttZeroMessageNotConsumedContext context,
+                CancellationToken cancellationToken)
+            {
+                throw new InvalidOperationException("Observer failed.");
             }
         }
     }

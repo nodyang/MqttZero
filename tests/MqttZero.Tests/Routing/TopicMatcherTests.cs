@@ -17,6 +17,11 @@ namespace MqttZero.Tests.Routing
         [InlineData("devices/#", "devices", true)]
         [InlineData("+", "a", true)]
         [InlineData("#", "a/b", true)]
+        [InlineData("a//b", "a//b", true)]
+        [InlineData("a/+/b", "a//b", true)]
+        [InlineData("a/#", "a/", true)]
+        [InlineData("a/+", "a", false)]
+        [InlineData("$share/group/a/+", "a/b", false)]
         public void MatchesMqttWildcardFilters(string filter, string topic, bool expected)
         {
             bool actual = MqttZeroTopicMatcher.Matches(

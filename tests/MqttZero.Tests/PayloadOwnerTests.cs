@@ -41,5 +41,61 @@ namespace MqttZero.Tests
 
             Assert.Equal("abcd", Encoding.UTF8.GetString(owner.Payload.ToArray()));
         }
+
+        [Fact]
+        public async Task EmptySingleSegmentOwnerExposesEmptyPayload()
+        {
+            await using MqttZeroPayloadOwner owner =
+                MqttZeroPayloadOwnerFactory.CreateSingleSegment(
+                    0,
+                    static _ => { });
+
+            Assert.True(owner.Payload.IsEmpty);
+        }
+
+        [Fact]
+        public async Task EmptyMultipleSegmentFactoryProducesEmptyPayload()
+        {
+            await using MqttZeroPayloadOwner owner =
+                await MqttZeroPayloadOwnerFactory.CreateMultipleSegmentAsync(
+                    static _ => ValueTask.CompletedTask,
+                    TestContext.Current.CancellationToken);
+
+            Assert.True(owner.Payload.IsEmpty);
+        }
+
+        [Fact]
+        public void SingleSegmentFactoryValidatesArguments()
+        {
+            Assert.Throws<ArgumentOutOfRangeException>(() =>
+                MqttZeroPayloadOwnerFactory.CreateSingleSegment(
+                    -1,
+                    static _ => { }));
+            Assert.Throws<ArgumentNullException>(() =>
+                MqttZeroPayloadOwnerFactory.CreateSingleSegment(
+                    1,
+                    null!));
+        }
+
+        [Fact]
+        public async Task MultipleSegmentFactoryValidatesArguments()
+        {
+            await Assert.ThrowsAsync<ArgumentNullException>(async () =>
+                await MqttZeroPayloadOwnerFactory.CreateMultipleSegmentAsync(
+                    null!,
+                    TestContext.Current.CancellationToken));
+        }
+
+        [Fact]
+        public async Task PayloadOwnerDisposeIsIdempotent()
+        {
+            MqttZeroPayloadOwner owner =
+                MqttZeroPayloadOwnerFactory.CreateSingleSegment(
+                    1,
+                    static payload => payload.Span[0] = 1);
+
+            await owner.DisposeAsync();
+            await owner.DisposeAsync();
+        }
     }
 }

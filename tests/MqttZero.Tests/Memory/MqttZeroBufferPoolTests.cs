@@ -59,5 +59,61 @@ namespace MqttZero.Tests.Memory
 
             Assert.Equal(0, pool.RentedBytes);
         }
+
+        [Fact]
+        public async Task WaitForCapacityCompletesAfterBufferIsReturned()
+        {
+            using MqttZeroBufferPool pool = new(1024);
+            byte[] buffer = pool.Rent(1024);
+            Task wait = pool.WaitForCapacityAsync(
+                TestContext.Current.CancellationToken).AsTask();
+
+            Assert.False(wait.IsCompleted);
+            pool.Return(buffer);
+
+            await wait.WaitAsync(
+                TimeSpan.FromSeconds(2),
+                TestContext.Current.CancellationToken);
+        }
+
+        [Fact]
+        public async Task WaitForCapacityHonorsCancellation()
+        {
+            using MqttZeroBufferPool pool = new(1024);
+            byte[] buffer = pool.Rent(1024);
+            using CancellationTokenSource cancellation = new();
+            Task wait = pool.WaitForCapacityAsync(cancellation.Token).AsTask();
+            cancellation.Cancel();
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(
+                async () => await wait);
+            pool.Return(buffer);
+        }
+
+        [Fact]
+        public void CachedBufferReturnsToBucketWhenCapacityCannotBeReserved()
+        {
+            using MqttZeroBufferPool pool = new(1024);
+            byte[] cached = pool.Rent(256);
+            pool.Return(cached);
+            byte[] held = pool.Rent(1024);
+
+            Assert.False(pool.TryRent(256, out byte[] unavailable));
+            Assert.Empty(unavailable);
+
+            pool.Return(held);
+        }
+
+        [Fact]
+        public void ReturnEmptyBufferAndDisposeAreSafe()
+        {
+            MqttZeroBufferPool pool = new(1024);
+
+            pool.Return([]);
+            pool.Dispose();
+            pool.Dispose();
+
+            Assert.Throws<ObjectDisposedException>(() => pool.Rent(1));
+        }
     }
 }

@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using MQTTnet;
 using MqttZero.AspNetCore;
+using MqttZero.Server.Broker;
 using MqttZero.Server.Clients;
 using MqttZero.Server.Observers;
 using MqttZero.Protocol;
@@ -26,7 +27,11 @@ namespace MqttZero.Tests.Broker
             builder.WebHost.ConfigureKestrel(kestrel =>
                 kestrel.Listen(IPAddress.Loopback, port, listen => listen.UseMqttZero()));
             builder.Services.AddSingleton<ConnectedClientRecorder>();
-            builder.Services.AddMqttZero().AddConnectionObserver<HandleObserver>();
+            builder.Services.AddMqttZero(options =>
+                {
+                    options.MaxSubscriptionsPerSession = 1;
+                })
+                .AddConnectionObserver<HandleObserver>();
             await using WebApplication app = builder.Build();
             await app.StartAsync(TestContext.Current.CancellationToken);
 
@@ -68,8 +73,116 @@ namespace MqttZero.Tests.Broker
             Assert.Equal(["direct"], received.ToArray());
             Assert.Same(connected.Items, recorder.Items);
 
+            IReadOnlyList<MqttZeroSubscribeResult> invalidSubscription =
+                await connected.SubscribeAsync(
+                    [new MqttSubscriptionRequest
+                    {
+                        TopicFilter = new ReadOnlySequence<byte>("invalid/#/filter"u8.ToArray())
+                    }],
+                    cancellationToken: TestContext.Current.CancellationToken);
+            Assert.Equal(
+                MqttReasonCode.TopicFilterInvalid,
+                Assert.Single(invalidSubscription).ReasonCode);
+            IReadOnlyList<MqttZeroSubscribeResult> quota = await connected.SubscribeAsync(
+                [new MqttSubscriptionRequest
+                {
+                    TopicFilter = new ReadOnlySequence<byte>("quota/#"u8.ToArray())
+                }],
+                cancellationToken: TestContext.Current.CancellationToken);
+            Assert.Equal(
+                MqttReasonCode.QuotaExceeded,
+                Assert.Single(quota).ReasonCode);
+            IReadOnlyList<MqttZeroSubscribeResult> replacedSubscription =
+                await connected.SubscribeAsync(
+                    [new MqttSubscriptionRequest
+                    {
+                        TopicFilter = new ReadOnlySequence<byte>("managed/#"u8.ToArray()),
+                        QualityOfServiceLevel = MqttQualityOfServiceLevel.ExactlyOnce,
+                        RetainHandling = MqttRetainHandling.DoNotSendOnSubscribe
+                    }],
+                    cancellationToken: TestContext.Current.CancellationToken);
+            Assert.Equal(
+                MqttReasonCode.GrantedQos2,
+                Assert.Single(replacedSubscription).ReasonCode);
+            await Assert.ThrowsAsync<ArgumentException>(async () =>
+                await connected.SendPublishAsync(
+                    new MqttZeroPublishMessage
+                    {
+                        Topic = "invalid/+",
+                        Payload = new ReadOnlySequence<byte>("value"u8.ToArray())
+                    },
+                    TestContext.Current.CancellationToken));
+            IReadOnlyList<MqttZeroUnsubscribeResult> unsubscribeResults =
+                await connected.UnsubscribeAsync(
+                    ["managed/#"],
+                    TestContext.Current.CancellationToken);
+            Assert.Equal(
+                MqttReasonCode.Success,
+                Assert.Single(unsubscribeResults).ReasonCode);
+            IReadOnlyList<MqttZeroUnsubscribeResult> missingSubscription =
+                await connected.UnsubscribeAsync(
+                    ["managed/#"],
+                    TestContext.Current.CancellationToken);
+            Assert.Equal(
+                MqttReasonCode.NoSubscriptionExisted,
+                Assert.Single(missingSubscription).ReasonCode);
+            Assert.True(await connected.DisconnectAsync(
+                cancellationToken: TestContext.Current.CancellationToken));
+            await app.StopAsync(TestContext.Current.CancellationToken);
+        }
+
+        [Fact(Timeout = 15_000)]
+        public async Task DisconnectedHandleRejectsStatefulOperations()
+        {
+            int port = GetFreePort();
+            WebApplicationBuilder builder = WebApplication.CreateBuilder();
+            builder.Logging.ClearProviders();
+            builder.WebHost.ConfigureKestrel(kestrel =>
+                kestrel.Listen(IPAddress.Loopback, port, listen => listen.UseMqttZero()));
+            builder.Services.AddSingleton<ConnectedClientRecorder>();
+            builder.Services.AddMqttZero().AddConnectionObserver<HandleObserver>();
+            await using WebApplication app = builder.Build();
+            await app.StartAsync(TestContext.Current.CancellationToken);
+            MqttClientFactory factory = new();
+            using IMqttClient client = factory.CreateMqttClient();
+
+            await client.ConnectAsync(
+                CreatePersistentClientOptions(port, "stale-handle"),
+                TestContext.Current.CancellationToken);
+            ConnectedClientRecorder recorder =
+                app.Services.GetRequiredService<ConnectedClientRecorder>();
+            MqttZeroConnectedClient connected = await recorder.Client.Task.WaitAsync(
+                TimeSpan.FromSeconds(5),
+                TestContext.Current.CancellationToken);
             await client.DisconnectAsync(
                 cancellationToken: TestContext.Current.CancellationToken);
+            await WaitForSessionDisconnectedAsync(
+                app.Services.GetRequiredService<MqttZeroBroker>(),
+                "stale-handle",
+                TestContext.Current.CancellationToken);
+
+            Assert.False(connected.IsConnected);
+            Assert.False(await connected.SendPublishAsync(
+                new MqttZeroPublishMessage
+                {
+                    Topic = "stale/topic",
+                    Payload = new ReadOnlySequence<byte>("value"u8.ToArray())
+                },
+                TestContext.Current.CancellationToken));
+            Assert.False(await connected.DisconnectAsync(
+                cancellationToken: TestContext.Current.CancellationToken));
+            await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                await connected.SubscribeAsync(
+                    [new MqttSubscriptionRequest
+                    {
+                        TopicFilter = new ReadOnlySequence<byte>("stale/#"u8.ToArray())
+                    }],
+                    cancellationToken: TestContext.Current.CancellationToken));
+            await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                await connected.UnsubscribeAsync(
+                    ["stale/#"],
+                    TestContext.Current.CancellationToken));
+            Assert.Throws<InvalidOperationException>(() => connected.GetSnapshot());
             await app.StopAsync(TestContext.Current.CancellationToken);
         }
 

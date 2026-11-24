@@ -20,6 +20,7 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
     private readonly PipeWriter _writer;
     private readonly DateTimeOffset _connectedAt;
     private readonly TimeProvider _timeProvider;
+    private int _disposed;
     private long _packetsReceived;
     private long _packetsSent;
     private long _bytesReceived;
@@ -264,6 +265,13 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
         MqttReasonCode reasonCode,
         CancellationToken cancellationToken)
     {
+        int encodedLength = reasonCode == MqttReasonCode.Success ? 4 : 6;
+        if (encodedLength > MaximumPacketSize)
+        {
+            throw new InvalidOperationException(
+                "The outbound MQTT packet exceeds the client maximum packet size.");
+        }
+
         await _writeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -282,7 +290,7 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
             }
 
             _ = await _writer.FlushAsync(cancellationToken).ConfigureAwait(false);
-            MarkPacketSent(includeReason ? 6 : 4, false);
+            MarkPacketSent(encodedLength, false);
         }
         finally
         {
@@ -334,6 +342,12 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
 
     public async ValueTask SendPingRespAsync(CancellationToken cancellationToken)
     {
+        if (MaximumPacketSize < 2)
+        {
+            throw new InvalidOperationException(
+                "The outbound MQTT packet exceeds the client maximum packet size.");
+        }
+
         await _writeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -623,6 +637,11 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
         _closed.Cancel();
         _writeLock.Dispose();
         _closed.Dispose();

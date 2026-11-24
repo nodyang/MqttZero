@@ -200,7 +200,15 @@ public static class MqttZeroDashboardEndpointRouteBuilderExtensions
         DashboardPublishRequest request,
         CancellationToken cancellationToken)
     {
-        await antiforgery.ValidateRequestAsync(context).ConfigureAwait(false);
+        try
+        {
+            await antiforgery.ValidateRequestAsync(context).ConfigureAwait(false);
+        }
+        catch (AntiforgeryValidationException)
+        {
+            return Results.BadRequest();
+        }
+
         await broker.PublishAsync(
             request.Topic,
             new ReadOnlySequence<byte>(Encoding.UTF8.GetBytes(request.Payload)),
@@ -219,7 +227,7 @@ public static class MqttZeroDashboardEndpointRouteBuilderExtensions
     private static IResult GetAsset(string path, HttpContext context)
     {
         context.Response.Headers.CacheControl = "public,max-age=31536000,immutable";
-        return GetAssetResult(path);
+        return GetAssetResult($"assets/{path.TrimStart('/')}");
     }
 
     private static IResult GetAssetResult(string path)

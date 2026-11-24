@@ -237,6 +237,7 @@ dotnet run -c Release --project benchmarks/MqttZero.Benchmarks -- `
 dotnet build MqttZero.slnx -c Release
 dotnet test tests/MqttZero.Tests/MqttZero.Tests.csproj -c Release
 dotnet test tests/MqttZero.Dashboard.Tests/MqttZero.Dashboard.Tests.csproj -c Release
+./eng/verify-coverage.ps1
 ```
 
 Vue 源码构建：

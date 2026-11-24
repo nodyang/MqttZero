@@ -80,6 +80,52 @@ namespace MqttZero.Tests.Broker
             await app.StopAsync(cancellationToken);
         }
 
+        [Fact(Timeout = 15_000)]
+        public async Task ManagementQueriesReturnFalseForUnknownAndOfflineClients()
+        {
+            int port = GetFreePort();
+            await using WebApplication app = await StartTcpBrokerAsync(port);
+            CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+            MqttZeroBroker broker = app.Services.GetRequiredService<MqttZeroBroker>();
+            MqttClientFactory factory = new();
+
+            using (IMqttClient client = factory.CreateMqttClient())
+            {
+                await client.ConnectAsync(
+                    CreatePersistentClientOptions(port, "offline-management"),
+                    cancellationToken);
+                await client.DisconnectAsync(cancellationToken: cancellationToken);
+            }
+
+            await WaitForSessionDisconnectedAsync(
+                broker,
+                "offline-management",
+                cancellationToken);
+
+            Assert.False(broker.TryGetClient("missing", out MqttZeroConnectedClient? missing));
+            Assert.Null(missing);
+            Assert.Throws<ArgumentException>(() =>
+                broker.TryGetClient(string.Empty, out _));
+            Assert.False(broker.TryGetClient(
+                "offline-management",
+                out MqttZeroConnectedClient? offline));
+            Assert.Null(offline);
+            Assert.False(await broker.DisconnectClientAsync(
+                "missing",
+                MqttReasonCode.Success,
+                cancellationToken));
+            Assert.False(await broker.DisconnectClientAsync(
+                "offline-management",
+                MqttReasonCode.Success,
+                cancellationToken));
+            await Assert.ThrowsAsync<ArgumentException>(async () =>
+                await broker.DisconnectClientAsync(
+                    string.Empty,
+                    MqttReasonCode.Success,
+                    cancellationToken));
+            await app.StopAsync(cancellationToken);
+        }
+
         [Fact(Timeout = 10_000)]
         public async Task ClosesConnectionForOversizedInboundPacket()
         {

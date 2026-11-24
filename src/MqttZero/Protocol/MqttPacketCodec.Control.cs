@@ -186,8 +186,7 @@ public static partial class MqttPacketCodec
             }
 
             reasonCode = (MqttReasonCode)encodedReasonCode;
-            if (reader.Remaining > 0 &&
-                !TryReadProperties(ref reader, out properties))
+            if (!TryReadProperties(ref reader, out properties))
             {
                 return false;
             }

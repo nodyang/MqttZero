@@ -109,22 +109,33 @@ namespace MqttZero.Tests.Broker
             await using WebApplication app = await StartTcpBrokerAsync(port);
             CancellationToken cancellationToken = TestContext.Current.CancellationToken;
             MqttZeroBroker broker = app.Services.GetRequiredService<MqttZeroBroker>();
-            MqttClientFactory factory = new();
-            using IMqttClient client = factory.CreateMqttClient();
-
+            using TcpClient client = new();
             await client.ConnectAsync(
-                new MqttClientOptionsBuilder()
-                    .WithTcpServer("127.0.0.1", port)
-                    .WithProtocolVersion(MQTTnet.Formatter.MqttProtocolVersion.V500)
-                    .WithClientId("clean-will-client")
-                    .WithCleanStart()
-                    .WithWillTopic("will/clean")
-                    .WithWillPayload("unexpected")
-                    .WithWillQualityOfServiceLevel(
-                        MQTTnet.Protocol.MqttQualityOfServiceLevel.AtLeastOnce)
-                    .Build(),
+                IPAddress.Loopback,
+                port,
                 cancellationToken);
-            await client.DisconnectAsync(cancellationToken: cancellationToken);
+            NetworkStream stream = client.GetStream();
+            await SendPacketAsync(
+                stream,
+                new MqttConnectPacket
+                {
+                    ClientId = new ReadOnlySequence<byte>("clean-will-client"u8.ToArray()),
+                    CleanStart = true,
+                    HasWill = true,
+                    WillTopic = new ReadOnlySequence<byte>("will/clean"u8.ToArray()),
+                    WillPayload = new ReadOnlySequence<byte>("unexpected"u8.ToArray()),
+                    WillQualityOfServiceLevel =
+                        MqttQualityOfServiceLevel.AtLeastOnce
+                },
+                cancellationToken);
+            _ = Assert.IsType<MqttConnAckPacket>(
+                await ReadPacketAsync(stream, cancellationToken));
+            await SendPacketAsync(
+                stream,
+                new MqttDisconnectPacket(),
+                cancellationToken);
+            byte[] buffer = new byte[1];
+            _ = await stream.ReadAsync(buffer, cancellationToken);
             await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
 
             Assert.Equal(0, broker.PublishedWillCount);
