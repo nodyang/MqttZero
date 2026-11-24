@@ -70,6 +70,24 @@ await app.RunAsync();
 
 完整示例位于 `samples/MqttZero.Sample`。
 
+样板同时监听 HTTP 与 MQTT：
+
+```powershell
+dotnet run --project samples/MqttZero.Sample
+```
+
+- Dashboard：`http://localhost:5209/mqttzero/`
+- 健康检查：`http://localhost:5209/health/ready`
+- MQTT：`mqtt://localhost:1883`
+
+端口可通过配置覆盖，例如系统保留了 1883 时：
+
+```powershell
+$env:SampleEndpoints__MqttPort = "11883"
+$env:SampleEndpoints__HttpPort = "5209"
+dotnet run --project samples/MqttZero.Sample
+```
+
 `ActiveConnectionCount` 表示已接受、尚未完成清理的 TCP/TLS/WebSocket 连接数，包括尚未完成 CONNECT 的连接；`ConnectedClientCount` 只表示已经成功完成 CONNECT/CONNACK 的在线 MQTT 客户端数。
 
 ## 默认资源限制

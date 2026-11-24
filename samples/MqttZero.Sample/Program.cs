@@ -6,10 +6,13 @@ using MqttZero.AspNetCore;
 using MqttZero.AspNetCore.Dashboard;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
+int httpPort = builder.Configuration.GetValue("SampleEndpoints:HttpPort", 5209);
+int mqttPort = builder.Configuration.GetValue("SampleEndpoints:MqttPort", 1883);
 
 builder.WebHost.ConfigureKestrel(kestrel =>
 {
-    kestrel.Listen(IPAddress.Any, 1883, listen => listen.UseMqttZero(options =>
+    kestrel.ListenLocalhost(httpPort);
+    kestrel.Listen(IPAddress.Any, mqttPort, listen => listen.UseMqttZero(options =>
     {
         options.AcceptedSockets.NoDelay = true;
         options.AcceptedSockets.KeepAlive = true;
