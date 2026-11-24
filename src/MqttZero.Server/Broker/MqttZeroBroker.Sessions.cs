@@ -58,9 +58,41 @@ public sealed partial class MqttZeroBroker
         await session.DrainLock.WaitAsync().ConfigureAwait(false);
         session.DrainLock.Release();
 
+        if (!removeSession && _sessionStore.IsEnabled)
+        {
+            try
+            {
+                await SaveSessionAsync(session, CancellationToken.None).ConfigureAwait(false);
+            }
+            catch
+            {
+                lock (_sessionGate)
+                {
+                    if (_sessions.TryGetValue(session.ClientId, out MqttZeroSessionState? current) &&
+                        ReferenceEquals(current, session))
+                    {
+                        _sessions.TryRemove(session.ClientId, out _);
+                        RebuildSubscriptionRouteSnapshot();
+                    }
+                }
+
+                ReleaseSessionMessages(session);
+                try
+                {
+                    await DeleteClientPersistenceAsync(
+                        session.ClientId,
+                        CancellationToken.None).ConfigureAwait(false);
+                }
+                catch
+                {
+                }
+
+                throw;
+            }
+        }
+
         if (removeSession)
         {
-            ReleaseSessionMessages(session);
             bool removed = false;
             lock (_sessionGate)
             {
@@ -75,9 +107,20 @@ public sealed partial class MqttZeroBroker
 
             if (removed)
             {
-                await _persistenceWriter.EnqueueSessionDeleteAsync(
-                    session.ClientId,
-                    CancellationToken.None).ConfigureAwait(false);
+                try
+                {
+                    await DeleteClientPersistenceAsync(
+                        session.ClientId,
+                        CancellationToken.None).ConfigureAwait(false);
+                }
+                catch
+                {
+                    _sessions[session.ClientId] = session;
+                    RebuildSubscriptionRouteSnapshot();
+                    throw;
+                }
+
+                ReleaseSessionMessages(session);
             }
         }
     }

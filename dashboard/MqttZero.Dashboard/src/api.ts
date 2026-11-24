@@ -11,10 +11,17 @@ export interface ClientDto {
   subscriptionCount: number
 }
 
+export interface PageDto<T> {
+  items: T[]
+  page: number
+  pageSize: number
+  total: number
+}
+
 export interface PublishRequest {
   topic: string
   payload: string
-  qualityOfServiceLevel: 0 | 1
+  qualityOfServiceLevel: 0 | 1 | 2
   retain: boolean
 }
 
@@ -23,11 +30,20 @@ export async function getOverview(): Promise<OverviewDto> {
 }
 
 export async function getClients(): Promise<ClientDto[]> {
-  return request<ClientDto[]>('clients')
+  const page = await getClientPage(1)
+  return page.items
+}
+
+export async function getClientPage(page: number, pageSize?: number): Promise<PageDto<ClientDto>> {
+  const query = new URLSearchParams({ page: page.toString() })
+  if (pageSize !== undefined) {
+    query.set('pageSize', pageSize.toString())
+  }
+  return request<PageDto<ClientDto>>(`clients?${query}`)
 }
 
 export async function publishMessage(message: PublishRequest): Promise<void> {
-  const tokenResponse = await fetch('/mqttzero/api/v1/antiforgery', {
+  const tokenResponse = await fetch(getApiPath('antiforgery'), {
     credentials: 'same-origin',
     headers: { Accept: 'application/json' }
   })
@@ -37,7 +53,7 @@ export async function publishMessage(message: PublishRequest): Promise<void> {
   }
 
   const token = (await tokenResponse.json()) as { token: string }
-  const response = await fetch('/mqttzero/api/v1/publish', {
+  const response = await fetch(getApiPath('publish'), {
     method: 'POST',
     credentials: 'same-origin',
     headers: {
@@ -54,7 +70,7 @@ export async function publishMessage(message: PublishRequest): Promise<void> {
 }
 
 async function request<T>(path: string): Promise<T> {
-  const response = await fetch(`/mqttzero/api/v1/${path}`, {
+  const response = await fetch(getApiPath(path), {
     credentials: 'same-origin',
     headers: { Accept: 'application/json' }
   })
@@ -64,4 +80,8 @@ async function request<T>(path: string): Promise<T> {
   }
 
   return response.json() as Promise<T>
+}
+
+export function getApiPath(path: string): string {
+  return `api/v1/${path}`
 }

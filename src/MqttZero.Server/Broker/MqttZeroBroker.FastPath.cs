@@ -18,6 +18,19 @@ public sealed partial class MqttZeroBroker
     {
         MqttZeroMessageLease effectiveLease = lease;
         bool ownsEffectiveLease = false;
+        if (lease.ExpiresAt <= _timeProvider.GetUtcNow())
+        {
+            if (lease.QualityOfServiceLevel == MqttQualityOfServiceLevel.AtLeastOnce)
+            {
+                await senderConnection.SendPubAckAsync(
+                    lease.PacketIdentifier,
+                    MqttReasonCode.Success,
+                    cancellationToken).ConfigureAwait(false);
+            }
+
+            return;
+        }
+
         if (_publishInterceptors.Length > 0)
         {
             MqttZeroPublishContext context = MqttZeroPublishContext.Rent();
@@ -38,7 +51,15 @@ public sealed partial class MqttZeroBroker
                         .ConfigureAwait(false);
                     if (result != MqttZeroInterceptionResult.Continue)
                     {
-                        if (lease.QualityOfServiceLevel ==
+                        if (result == MqttZeroInterceptionResult.CloseConnection)
+                        {
+                            await senderConnection.CloseAsync(
+                                context.ResultReasonCode == MqttReasonCode.Success
+                                    ? MqttReasonCode.NotAuthorized
+                                    : context.ResultReasonCode,
+                                cancellationToken).ConfigureAwait(false);
+                        }
+                        else if (lease.QualityOfServiceLevel ==
                             MqttQualityOfServiceLevel.AtLeastOnce)
                         {
                             await senderConnection.SendPubAckAsync(
@@ -60,6 +81,7 @@ public sealed partial class MqttZeroBroker
                     lease.MessageExpiryInterval,
                     lease.SubscriptionIdentifier,
                     _bufferPool);
+                effectiveLease.SetExpiresAt(lease.ExpiresAt);
                 effectiveLease.PacketIdentifier = lease.PacketIdentifier;
                 ownsEffectiveLease = true;
             }
@@ -126,9 +148,7 @@ public sealed partial class MqttZeroBroker
         uint? subscriptionIdentifier,
         CancellationToken cancellationToken)
     {
-        DateTimeOffset? expiresAt = lease.MessageExpiryInterval.HasValue
-            ? _timeProvider.GetUtcNow().AddSeconds(lease.MessageExpiryInterval.Value)
-            : null;
+        DateTimeOffset? expiresAt = lease.ExpiresAt;
         if (expiresAt <= _timeProvider.GetUtcNow())
         {
             return;
@@ -175,7 +195,7 @@ public sealed partial class MqttZeroBroker
                     subscriptionIdentifier,
                     expiresAt);
                 message.SetMessageId(GetNextMessageId());
-                MqttZeroQueuedMessage? evicted = EnqueueMessage(session, message, null);
+                MqttZeroQueuedMessage? evicted = EnqueueMessage(session, message);
                 evicted?.Release();
                 messageHeld = true;
             }

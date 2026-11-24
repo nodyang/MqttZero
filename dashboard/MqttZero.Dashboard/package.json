@@ -1,7 +1,7 @@
 {
   "name": "mqttzero-dashboard",
   "private": true,
-  "version": "0.6.0-alpha.1",
+  "version": "0.7.0-alpha.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,7 +9,6 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@microsoft/signalr": "latest",
     "echarts": "latest",
     "element-plus": "latest",
     "pinia": "latest",

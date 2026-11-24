@@ -138,18 +138,18 @@ public static partial class MqttPacketCodec
         WriteByte(writer, BuildConnectFlags(packet));
         WriteUInt16(writer, packet.KeepAliveSeconds);
         Mqtt5PropertyWriter.WriteConnectProperties(packet, writer);
-        WriteUtf8(writer, packet.ClientId.IsEmpty ? ReadOnlySpan<byte>.Empty : packet.ClientId.FirstSpan);
+        WriteUtf8(writer, packet.ClientId);
 
         if (packet.HasWill)
         {
             Mqtt5PropertyWriter.WriteWillProperties(packet, writer);
-            WriteUtf8(writer, packet.WillTopic.IsEmpty ? ReadOnlySpan<byte>.Empty : packet.WillTopic.FirstSpan);
+            WriteUtf8(writer, packet.WillTopic);
             WriteBinary(writer, packet.WillPayload);
         }
 
         if (packet.HasUserName)
         {
-            WriteUtf8(writer, packet.UserName.IsEmpty ? ReadOnlySpan<byte>.Empty : packet.UserName.FirstSpan);
+            WriteUtf8(writer, packet.UserName);
         }
 
         if (packet.HasPassword)

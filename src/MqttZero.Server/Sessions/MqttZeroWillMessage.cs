@@ -1,5 +1,6 @@
 using MqttZero.Memory;
 using MqttZero.Protocol;
+using MqttZero.Server.Storage;
 using System.Buffers;
 
 namespace MqttZero.Server.Sessions;
@@ -15,6 +16,17 @@ internal sealed class MqttZeroWillMessage
         Retain = packet.WillRetain;
         DelayInterval = packet.WillDelayInterval;
         MessageExpiryInterval = packet.WillMessageExpiryInterval;
+    }
+
+    public MqttZeroWillMessage(MqttZeroPersistedWill will)
+    {
+        Topic = will.Topic.ToArray();
+        Payload = will.Payload.ToArray();
+        Properties = will.Properties.ToArray();
+        QualityOfServiceLevel = will.QualityOfServiceLevel;
+        Retain = will.Retain;
+        DelayInterval = will.DelayInterval;
+        MessageExpiryInterval = will.MessageExpiryInterval;
     }
 
     public byte[] Topic { get; }

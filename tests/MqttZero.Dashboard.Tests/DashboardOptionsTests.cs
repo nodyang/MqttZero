@@ -9,11 +9,19 @@ namespace MqttZero.Dashboard.Tests
         {
             MqttZeroDashboardOptions options = new();
 
-            Assert.Equal(10_000, options.EventBufferCapacity);
-            Assert.Equal(TimeSpan.FromMilliseconds(250), options.EventBatchInterval);
-            Assert.Equal(64 * 1024, options.PayloadPreviewLimit);
             Assert.Equal(50, options.DefaultPageSize);
             Assert.Equal(200, options.MaxPageSize);
+        }
+
+        [Fact]
+        public void UnimplementedDashboardOptionsAreRemoved()
+        {
+            Assert.Null(typeof(MqttZeroDashboardOptions).GetProperty(
+                "EventBufferCapacity"));
+            Assert.Null(typeof(MqttZeroDashboardOptions).GetProperty(
+                "EventBatchInterval"));
+            Assert.Null(typeof(MqttZeroDashboardOptions).GetProperty(
+                "PayloadPreviewLimit"));
         }
     }
 }

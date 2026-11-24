@@ -72,7 +72,8 @@ public static partial class MqttPacketCodec
             ReasonCode = reasonCode,
             Properties = properties
         };
-        return reader.Remaining == 0;
+        return reader.Remaining == 0 &&
+            MqttZeroProtocolValidator.IsValidPubAckReasonCode(reasonCode);
     }
 
     private static bool TryDecodePubRec(
@@ -97,7 +98,7 @@ public static partial class MqttPacketCodec
             ReasonCode = reasonCode,
             Properties = properties
         };
-        return true;
+        return MqttZeroProtocolValidator.IsValidPubAckReasonCode(reasonCode);
     }
 
     private static bool TryDecodePubRel(
@@ -122,7 +123,7 @@ public static partial class MqttPacketCodec
             ReasonCode = reasonCode,
             Properties = properties
         };
-        return true;
+        return MqttZeroProtocolValidator.IsValidPubRelReasonCode(reasonCode);
     }
 
     private static bool TryDecodePubComp(
@@ -147,7 +148,7 @@ public static partial class MqttPacketCodec
             ReasonCode = reasonCode,
             Properties = properties
         };
-        return true;
+        return MqttZeroProtocolValidator.IsValidPubRelReasonCode(reasonCode);
     }
 
     private static bool TryReadAcknowledgement(

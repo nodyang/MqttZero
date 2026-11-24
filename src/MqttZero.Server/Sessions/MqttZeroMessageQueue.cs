@@ -78,6 +78,23 @@ internal sealed class MqttZeroMessageQueue
         return message;
     }
 
+    public void Prepend(MqttZeroQueuedMessage message)
+    {
+        ArgumentNullException.ThrowIfNull(message);
+        if (_count == _items.Length)
+        {
+            throw new InvalidOperationException("The message queue is full.");
+        }
+
+        _head = (_head - 1 + _items.Length) % _items.Length;
+        _items[_head] = message;
+        _count++;
+        if (message.ExpiresAt.HasValue)
+        {
+            _expiringCount++;
+        }
+    }
+
     public int FindIndex(Predicate<MqttZeroQueuedMessage> predicate)
     {
         for (int index = 0; index < _count; index++)
@@ -120,8 +137,11 @@ internal sealed class MqttZeroMessageQueue
         _expiringCount = 0;
     }
 
-    public void RemoveExpired(DateTimeOffset now)
+    public void RemoveExpired(
+        DateTimeOffset now,
+        List<MqttZeroQueuedMessage> expired)
     {
+        ArgumentNullException.ThrowIfNull(expired);
         if (_expiringCount == 0)
         {
             return;
@@ -133,7 +153,7 @@ internal sealed class MqttZeroMessageQueue
             {
                 MqttZeroQueuedMessage message = this[index];
                 RemoveAt(index);
-                message.Release();
+                expired.Add(message);
             }
         }
     }

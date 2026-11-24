@@ -117,6 +117,11 @@ public sealed partial class MqttZeroBroker
         }
 
         ReadOnlySequence<byte> topic = new(Encoding.UTF8.GetBytes(message.Topic));
+        if (!MqttZeroProtocolValidator.IsValidTopicName(topic))
+        {
+            throw new ArgumentException("The MQTT topic name is invalid.", nameof(message));
+        }
+
         MqttPublishPacket packet = new()
         {
             TopicName = topic,

@@ -4,6 +4,7 @@ using MqttZero.Memory;
 using MqttZero.Protocol;
 using MqttZero.Server.Routing;
 using MqttZero.Server.Sessions;
+using MqttZero.Server.Storage;
 using MqttQualityOfServiceLevel = MqttZero.Protocol.MqttQualityOfServiceLevel;
 using System.Buffers;
 using System.Globalization;
@@ -196,6 +197,194 @@ namespace MqttZero.Tests.Broker
                 broker.GetSessions(),
                 session => session.ClientId == "disconnect-expiry");
             await app.StopAsync(cancellationToken);
+        }
+
+        [Fact(Timeout = 15_000)]
+        public async Task PersistsWillAndDisconnectedTimestamp()
+        {
+            int port = GetFreePort();
+            RecordingSessionStore sessionStore = new();
+            WebApplicationBuilder builder = WebApplication.CreateBuilder();
+            builder.Logging.ClearProviders();
+            builder.WebHost.ConfigureKestrel(kestrel =>
+                kestrel.Listen(IPAddress.Loopback, port, listen => listen.UseMqttZero()));
+            builder.Services.AddSingleton<IMqttZeroSessionStore>(sessionStore);
+            builder.Services.AddMqttZero();
+            await using WebApplication app = builder.Build();
+            await app.StartAsync(TestContext.Current.CancellationToken);
+
+            using TcpClient client = new();
+            await client.ConnectAsync(
+                IPAddress.Loopback,
+                port,
+                TestContext.Current.CancellationToken);
+            NetworkStream stream = client.GetStream();
+            await SendPacketAsync(
+                stream,
+                new MqttConnectPacket
+                {
+                    ClientId = new ReadOnlySequence<byte>("persisted-will"u8.ToArray()),
+                    CleanStart = false,
+                    KeepAliveSeconds = 30,
+                    SessionExpiryInterval = 60,
+                    HasWill = true,
+                    WillTopic = new ReadOnlySequence<byte>("will/persisted"u8.ToArray()),
+                    WillPayload = new ReadOnlySequence<byte>("value"u8.ToArray())
+                },
+                TestContext.Current.CancellationToken);
+            _ = Assert.IsType<MqttConnAckPacket>(
+                await ReadPacketAsync(stream, TestContext.Current.CancellationToken));
+            client.Client.LingerState = new LingerOption(true, 0);
+            client.Client.Shutdown(SocketShutdown.Both);
+            client.Close();
+
+            for (int attempt = 0; attempt < 40; attempt++)
+            {
+                MqttZeroPersistedSession? saved = sessionStore.Saved;
+                if (saved?.Will != null && saved.DisconnectedAt.HasValue)
+                {
+                    Assert.Equal("persisted-will", saved.ClientId);
+                    await app.StopAsync(TestContext.Current.CancellationToken);
+                    return;
+                }
+
+                await Task.Delay(
+                    TimeSpan.FromMilliseconds(50),
+                    TestContext.Current.CancellationToken);
+            }
+
+            Assert.Fail("The disconnected session with Will was not persisted.");
+        }
+
+        [Fact(Timeout = 15_000)]
+        public async Task RejectsConnectionWhenSessionPersistenceFails()
+        {
+            int port = GetFreePort();
+            WebApplicationBuilder builder = WebApplication.CreateBuilder();
+            builder.Logging.ClearProviders();
+            builder.WebHost.ConfigureKestrel(kestrel =>
+                kestrel.Listen(IPAddress.Loopback, port, listen => listen.UseMqttZero()));
+            builder.Services.AddSingleton<IMqttZeroSessionStore, FailingSessionStore>();
+            builder.Services.AddMqttZero();
+            await using WebApplication app = builder.Build();
+            await app.StartAsync(TestContext.Current.CancellationToken);
+
+            using TcpClient client = new();
+            await client.ConnectAsync(
+                IPAddress.Loopback,
+                port,
+                TestContext.Current.CancellationToken);
+            NetworkStream stream = client.GetStream();
+            await SendPacketAsync(
+                stream,
+                new MqttConnectPacket
+                {
+                    ClientId = new ReadOnlySequence<byte>("failed-save"u8.ToArray()),
+                    CleanStart = true
+                },
+                TestContext.Current.CancellationToken);
+            using CancellationTokenSource timeout =
+                CancellationTokenSource.CreateLinkedTokenSource(
+                    TestContext.Current.CancellationToken);
+            timeout.CancelAfter(TimeSpan.FromSeconds(2));
+            byte[] buffer = new byte[1];
+            int read = await stream.ReadAsync(buffer, timeout.Token);
+
+            Assert.Equal(0, read);
+            Assert.DoesNotContain(
+                app.Services.GetRequiredService<MqttZeroBroker>().GetSessions(),
+                static session => session.ClientId == "failed-save");
+            await app.StopAsync(TestContext.Current.CancellationToken);
+        }
+
+        [Fact(Timeout = 15_000)]
+        public async Task ReturnsAssignedClientIdentifierForEmptyClientId()
+        {
+            int port = GetFreePort();
+            await using WebApplication app = await StartTcpBrokerAsync(port);
+            CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+            using TcpClient client = new();
+            await client.ConnectAsync(IPAddress.Loopback, port, cancellationToken);
+            NetworkStream stream = client.GetStream();
+            await SendPacketAsync(
+                stream,
+                new MqttConnectPacket
+                {
+                    ClientId = ReadOnlySequence<byte>.Empty,
+                    CleanStart = true
+                },
+                cancellationToken);
+
+            MqttConnAckPacket connAck = Assert.IsType<MqttConnAckPacket>(
+                await ReadPacketAsync(stream, cancellationToken));
+            Assert.False(string.IsNullOrWhiteSpace(connAck.AssignedClientIdentifier));
+            await app.StopAsync(cancellationToken);
+        }
+
+        private sealed class RecordingSessionStore : IMqttZeroSessionStore
+        {
+            public bool IsEnabled
+            {
+                get
+                {
+                    return true;
+                }
+            }
+
+            public MqttZeroPersistedSession? Saved { get; private set; }
+
+            public ValueTask<IReadOnlyList<MqttZeroPersistedSession>> LoadAllAsync(
+                CancellationToken cancellationToken)
+            {
+                return ValueTask.FromResult<IReadOnlyList<MqttZeroPersistedSession>>([]);
+            }
+
+            public ValueTask SaveAsync(
+                MqttZeroPersistedSession session,
+                CancellationToken cancellationToken)
+            {
+                Saved = session;
+                return ValueTask.CompletedTask;
+            }
+
+            public ValueTask DeleteAsync(
+                string clientId,
+                CancellationToken cancellationToken)
+            {
+                Saved = null;
+                return ValueTask.CompletedTask;
+            }
+        }
+
+        private sealed class FailingSessionStore : IMqttZeroSessionStore
+        {
+            public bool IsEnabled
+            {
+                get
+                {
+                    return true;
+                }
+            }
+
+            public ValueTask<IReadOnlyList<MqttZeroPersistedSession>> LoadAllAsync(
+                CancellationToken cancellationToken)
+            {
+                return ValueTask.FromResult<IReadOnlyList<MqttZeroPersistedSession>>([]);
+            }
+
+            public ValueTask SaveAsync(
+                MqttZeroPersistedSession session,
+                CancellationToken cancellationToken)
+            {
+                throw new InvalidOperationException("Persistence failed.");
+            }
+
+            public ValueTask DeleteAsync(
+                string clientId,
+                CancellationToken cancellationToken)
+            {
+                return ValueTask.CompletedTask;
+            }
         }
     }
 }

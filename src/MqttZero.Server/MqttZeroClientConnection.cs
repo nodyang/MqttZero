@@ -76,6 +76,8 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
 
     public DateTimeOffset LastPacketReceivedAt { get; private set; }
 
+    public bool IsReadingIncompletePacket { get; set; }
+
     public CancellationToken ClosedToken
     {
         get
@@ -263,19 +265,21 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
         try
         {
             bool includeReason = reasonCode != MqttReasonCode.Success;
-            Span<byte> header = _writer.GetSpan(includeReason ? 5 : 4);
+            Span<byte> header = _writer.GetSpan(includeReason ? 6 : 4);
             header[0] = 0x40;
-            header[1] = includeReason ? (byte)3 : (byte)2;
+            header[1] = includeReason ? (byte)4 : (byte)2;
             BinaryPrimitives.WriteUInt16BigEndian(header[2..], packetIdentifier);
             _writer.Advance(4);
             if (includeReason)
             {
                 _writer.GetSpan(1)[0] = (byte)reasonCode;
                 _writer.Advance(1);
+                _writer.GetSpan(1)[0] = 0;
+                _writer.Advance(1);
             }
 
             _ = await _writer.FlushAsync(cancellationToken).ConfigureAwait(false);
-            MarkPacketSent(includeReason ? 5 : 4, false);
+            MarkPacketSent(includeReason ? 6 : 4, false);
         }
         finally
         {
@@ -335,6 +339,7 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
             header[1] = 0;
             _writer.Advance(2);
             _ = await _writer.FlushAsync(cancellationToken).ConfigureAwait(false);
+            MarkPacketSent(2, false);
         }
         finally
         {
@@ -398,6 +403,7 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
             _writer.Advance(2);
             Mqtt5PropertyWriter.WriteConnAckProperties(packet, _writer);
             _ = await _writer.FlushAsync(cancellationToken).ConfigureAwait(false);
+            MarkPacketSent((int)encodedLength, false);
         }
         finally
         {
@@ -446,6 +452,7 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
             }
 
             _ = await _writer.FlushAsync(cancellationToken).ConfigureAwait(false);
+            MarkPacketSent((int)encodedLength, false);
         }
         finally
         {
@@ -499,6 +506,7 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
         }
 
         _ = await _writer.FlushAsync(cancellationToken).ConfigureAwait(false);
+        MarkPacketSent(encodedLength, true);
     }
 
     private void MarkPacketSent(int byteCount, bool applicationMessage)
@@ -538,6 +546,7 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
         {
             MqttPacketCodec.Encode(packet, _writer);
             _ = await _writer.FlushAsync(cancellationToken).ConfigureAwait(false);
+            MarkPacketSent((int)encodedLength, false);
         }
         finally
         {

@@ -55,6 +55,29 @@ namespace MqttZero.Tests.Routing
         }
 
         [Fact]
+        public void SharedSubscriptionsWithDifferentFiltersAreDistinct()
+        {
+            List<MqttZeroSessionState> sessions =
+            [
+                CreateSession("a", "$share/workers/jobs/#"),
+                CreateSession("b", "$share/workers/+/one")
+            ];
+            MqttZeroSubscriptionRouteSnapshot snapshot =
+                MqttZeroSubscriptionRouteSnapshotBuilder.Build(sessions);
+            ConcurrentDictionary<string, int> cursors = new(StringComparer.Ordinal);
+            MqttZeroRouteScopePool scopePool = new();
+
+            using MqttZeroRouteScope route = MqttZeroRouteSelector.Select(
+                snapshot,
+                "jobs/one"u8,
+                null,
+                cursors,
+                scopePool);
+
+            Assert.Equal(2, route.Count);
+        }
+
+        [Fact]
         public void SharedSubscriptionSelectsHighestMatchingQosAndHonorsNoLocal()
         {
             MqttZeroSessionState first = new("a");

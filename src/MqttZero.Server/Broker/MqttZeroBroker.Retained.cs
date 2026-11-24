@@ -19,7 +19,7 @@ public sealed partial class MqttZeroBroker
         MqttZeroMessageLease lease,
         CancellationToken cancellationToken)
     {
-        if (!_persistenceWriter.IsEnabled)
+        if (!_retainedMessageStore.IsEnabled)
         {
             StoreRetainedMessageInMemory(lease);
             return;
@@ -28,16 +28,14 @@ public sealed partial class MqttZeroBroker
         string topicKey = Encoding.UTF8.GetString(lease.Topic.Span);
         if (lease.PayloadSequence.IsEmpty)
         {
-            RemoveRetainedMessage(topicKey);
-            await _persistenceWriter.EnqueueRetainedDeleteAsync(topicKey, cancellationToken)
+            await _retainedMessageStore.DeleteAsync(topicKey, cancellationToken)
                 .ConfigureAwait(false);
+            RemoveRetainedMessage(topicKey);
             return;
         }
 
         lease.EnsureOwned();
-        DateTimeOffset? expiresAt = lease.MessageExpiryInterval.HasValue
-            ? _timeProvider.GetUtcNow().AddSeconds(lease.MessageExpiryInterval.Value)
-            : null;
+        DateTimeOffset? expiresAt = lease.ExpiresAt;
         await SaveRetainedAsync(lease, expiresAt, cancellationToken).ConfigureAwait(false);
         StoreRetainedMessageInMemory(lease, topicKey, expiresAt);
     }
@@ -52,9 +50,7 @@ public sealed partial class MqttZeroBroker
         }
 
         lease.EnsureOwned();
-        DateTimeOffset? expiresAt = lease.MessageExpiryInterval.HasValue
-            ? _timeProvider.GetUtcNow().AddSeconds(lease.MessageExpiryInterval.Value)
-            : null;
+        DateTimeOffset? expiresAt = lease.ExpiresAt;
         StoreRetainedMessageInMemory(lease, topicKey, expiresAt);
     }
 

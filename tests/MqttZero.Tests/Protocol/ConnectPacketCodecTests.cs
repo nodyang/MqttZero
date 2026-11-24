@@ -179,5 +179,24 @@ namespace MqttZero.Tests.Protocol
                 out _,
                 out _));
         }
+
+        [Fact]
+        public void RoundTripsAssignedClientIdentifier()
+        {
+            MqttConnAckPacket packet = new()
+            {
+                AssignedClientIdentifier = "server-client"
+            };
+
+            byte[] bytes = ProtocolPacketTestHelper.Encode(packet);
+            Assert.True(MqttPacketCodec.TryDecode(
+                new ReadOnlySequence<byte>(bytes),
+                out MqttPacket? decoded,
+                out _));
+
+            Assert.Equal(
+                "server-client",
+                Assert.IsType<MqttConnAckPacket>(decoded).AssignedClientIdentifier);
+        }
     }
 }

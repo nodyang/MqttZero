@@ -365,5 +365,44 @@ namespace MqttZero.Tests.Broker
             await subscriber.DisconnectAsync(cancellationToken: cancellationToken);
             await app.StopAsync(cancellationToken);
         }
+
+        [Fact(Timeout = 15_000)]
+        public async Task DisconnectsIncompletePacketAfterConfiguredTimeout()
+        {
+            int port = GetFreePort();
+            await using WebApplication app = await StartTcpBrokerAsync(
+                port,
+                options =>
+                {
+                    options.IncompletePacketTimeout = TimeSpan.FromMilliseconds(200);
+                    options.KeepAliveCheckInterval = TimeSpan.FromMilliseconds(50);
+                });
+            CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+            using TcpClient client = new();
+            await client.ConnectAsync(IPAddress.Loopback, port, cancellationToken);
+            NetworkStream stream = client.GetStream();
+            await SendPacketAsync(
+                stream,
+                new MqttConnectPacket
+                {
+                    ClientId = new ReadOnlySequence<byte>("slow-packet"u8.ToArray()),
+                    CleanStart = true
+                },
+                cancellationToken);
+            _ = Assert.IsType<MqttConnAckPacket>(
+                await ReadPacketAsync(stream, cancellationToken));
+
+            await stream.WriteAsync(
+                new byte[] { 0x30, 0x7F, 0x00, 0x01, (byte)'a' },
+                cancellationToken);
+            using CancellationTokenSource closeTimeout =
+                CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            closeTimeout.CancelAfter(TimeSpan.FromSeconds(3));
+            byte[] buffer = new byte[1];
+            int read = await stream.ReadAsync(buffer, closeTimeout.Token);
+
+            Assert.Equal(0, read);
+            await app.StopAsync(cancellationToken);
+        }
     }
 }

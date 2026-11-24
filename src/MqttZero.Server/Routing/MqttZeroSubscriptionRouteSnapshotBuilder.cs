@@ -23,7 +23,9 @@ internal static class MqttZeroSubscriptionRouteSnapshotBuilder
                     {
                         AddEntry(
                             sharedGroups,
-                            subscription.SharedGroup!,
+                            CreateSharedSubscriptionKey(
+                                subscription.SharedGroup!,
+                                subscription.MatchFilter),
                             entry);
                         continue;
                     }
@@ -74,6 +76,13 @@ internal static class MqttZeroSubscriptionRouteSnapshotBuilder
         }
 
         entries.Add(entry);
+    }
+
+    private static string CreateSharedSubscriptionKey(
+        string group,
+        ReadOnlySpan<byte> filter)
+    {
+        return string.Concat(group, "\0", Encoding.UTF8.GetString(filter));
     }
 
     private static MqttZeroSharedRouteEntry[] BuildSharedEntries(

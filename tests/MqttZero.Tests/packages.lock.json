@@ -214,14 +214,14 @@
       "mqttzero.aspnetcore": {
         "type": "Project",
         "dependencies": {
-          "MqttZero.Server": "[0.6.0-alpha.1, )"
+          "MqttZero.Server": "[0.7.0-alpha.1, )"
         }
       },
       "mqttzero.server": {
         "type": "Project",
         "dependencies": {
           "Microsoft.Extensions.Options": "[10.0.0, )",
-          "MqttZero": "[0.6.0-alpha.1, )"
+          "MqttZero": "[0.7.0-alpha.1, )"
         }
       },
       "Microsoft.Extensions.Options": {

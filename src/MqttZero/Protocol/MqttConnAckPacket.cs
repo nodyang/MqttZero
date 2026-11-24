@@ -55,4 +55,9 @@ public sealed class MqttConnAckPacket : MqttPacket
     /// Gets or sets the session expiry interval accepted by the server.
     /// </summary>
     public uint? SessionExpiryInterval { get; set; }
+
+    /// <summary>
+    /// Gets or sets the server-assigned client identifier.
+    /// </summary>
+    public string? AssignedClientIdentifier { get; set; }
 }

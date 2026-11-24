@@ -96,6 +96,11 @@ internal sealed class MqttZeroQueuedMessage
         State = MqttZeroOutboundState.AwaitPubComp;
     }
 
+    public void SetAwaitPubRec()
+    {
+        State = MqttZeroOutboundState.AwaitPubRec;
+    }
+
     public void SetMessageId(long messageId)
     {
         MessageId = messageId;

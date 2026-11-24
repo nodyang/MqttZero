@@ -27,7 +27,6 @@ public static class MqttZeroDashboardServiceCollectionExtensions
             services.Configure(configure);
         }
 
-        services.AddSignalR();
         services.AddAntiforgery();
         return services;
     }

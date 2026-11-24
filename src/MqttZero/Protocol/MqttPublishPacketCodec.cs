@@ -41,9 +41,15 @@ internal static class MqttPublishPacketCodec
         }
 
         MqttQualityOfServiceLevel qos = (MqttQualityOfServiceLevel)((firstByte >> 1) & 0x03);
+        if ((byte)qos > (byte)MqttQualityOfServiceLevel.ExactlyOnce)
+        {
+            return false;
+        }
+
         ushort packetIdentifier = 0;
         if (qos > MqttQualityOfServiceLevel.AtMostOnce &&
-            !TryReadUInt16(ref bodyReader, out packetIdentifier))
+            (!TryReadUInt16(ref bodyReader, out packetIdentifier) ||
+                packetIdentifier == 0))
         {
             return false;
         }
@@ -70,6 +76,13 @@ internal static class MqttPublishPacketCodec
             messageExpiryInterval,
             subscriptionIdentifier,
             topicAlias);
+        if ((!topic.IsEmpty && !MqttZeroProtocolValidator.IsValidTopicName(topic)) ||
+            (topic.IsEmpty && !topicAlias.HasValue))
+        {
+            view = default;
+            return false;
+        }
+
         consumed = reader.Consumed + remainingLength;
         return true;
     }

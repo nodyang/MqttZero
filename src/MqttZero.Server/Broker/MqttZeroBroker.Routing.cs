@@ -63,11 +63,29 @@ public sealed partial class MqttZeroBroker
             return false;
         }
 
-        if (_persistenceWriter.IsEnabled)
+        if (_messageStore.IsEnabled)
         {
-            await _persistenceWriter.EnqueueInboundQos2Async(
-                CreateInboundPersistedMessage(lease, session.ClientId, packetIdentifier),
-                cancellationToken).ConfigureAwait(false);
+            try
+            {
+                await _messageStore.SaveInboundQos2Async(
+                    CreateInboundPersistedMessage(lease, session.ClientId, packetIdentifier),
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                lock (session.SyncRoot)
+                {
+                    if (session.InboundQos2Messages.TryGetValue(
+                            packetIdentifier,
+                            out MqttZeroMessageLease? stored) &&
+                        ReferenceEquals(stored, lease))
+                    {
+                        session.InboundQos2Messages.Remove(packetIdentifier);
+                    }
+                }
+
+                throw;
+            }
         }
         await connection.SendPubRecAsync(
             packetIdentifier,
@@ -129,6 +147,7 @@ public sealed partial class MqttZeroBroker
             packet.MessageExpiryInterval,
             packet.SubscriptionIdentifier,
             _bufferPool);
+        lease.SetExpiresAt(CalculateMessageExpiresAt(packet.MessageExpiryInterval));
         lease.PacketIdentifier = packet.PacketIdentifier;
         try
         {
@@ -231,6 +250,7 @@ public sealed partial class MqttZeroBroker
             view.MessageExpiryInterval,
             view.SubscriptionIdentifier,
             _bufferPool);
+        lease.SetExpiresAt(CalculateMessageExpiresAt(view.MessageExpiryInterval));
         lease.PacketIdentifier = view.PacketIdentifier;
         return lease;
     }
@@ -241,7 +261,9 @@ public sealed partial class MqttZeroBroker
         MqttZeroMessageLease lease,
         CancellationToken cancellationToken)
     {
-        if (!_persistenceWriter.IsEnabled &&
+        if (!_sessionStore.IsEnabled &&
+            !_messageStore.IsEnabled &&
+            !_retainedMessageStore.IsEnabled &&
             _enqueueInterceptors.Length == 0 &&
             _deliveryObservers.Length == 0)
         {
@@ -285,6 +307,24 @@ public sealed partial class MqttZeroBroker
     {
         MqttZeroMessageLease effectiveLease = lease;
         bool ownsEffectiveLease = false;
+        if (lease.ExpiresAt <= _timeProvider.GetUtcNow())
+        {
+            if (lease.QualityOfServiceLevel == MqttQualityOfServiceLevel.AtLeastOnce)
+            {
+                await senderConnection.SendPubAckAsync(
+                    lease.PacketIdentifier,
+                    MqttReasonCode.Success,
+                    cancellationToken).ConfigureAwait(false);
+            }
+
+            if (resultHolder != null)
+            {
+                resultHolder[0] = MqttReasonCode.Success;
+            }
+
+            return;
+        }
+
         if (_publishInterceptors.Length > 0)
         {
             MqttZeroPublishContext context = MqttZeroPublishContext.Rent();
@@ -305,7 +345,16 @@ public sealed partial class MqttZeroBroker
                         .ConfigureAwait(false);
                     if (result != MqttZeroInterceptionResult.Continue)
                     {
-                        if (lease.QualityOfServiceLevel == MqttQualityOfServiceLevel.AtLeastOnce)
+                        if (result == MqttZeroInterceptionResult.CloseConnection)
+                        {
+                            await senderConnection.CloseAsync(
+                                context.ResultReasonCode == MqttReasonCode.Success
+                                    ? MqttReasonCode.NotAuthorized
+                                    : context.ResultReasonCode,
+                                cancellationToken).ConfigureAwait(false);
+                        }
+                        else if (lease.QualityOfServiceLevel ==
+                            MqttQualityOfServiceLevel.AtLeastOnce)
                         {
                             await senderConnection.SendPubAckAsync(
                                 lease.PacketIdentifier,
@@ -331,6 +380,7 @@ public sealed partial class MqttZeroBroker
                     lease.MessageExpiryInterval,
                     lease.SubscriptionIdentifier,
                     _bufferPool);
+                effectiveLease.SetExpiresAt(lease.ExpiresAt);
                 effectiveLease.PacketIdentifier = lease.PacketIdentifier;
                 ownsEffectiveLease = true;
             }
@@ -446,6 +496,16 @@ public sealed partial class MqttZeroBroker
             MqttZeroSubscriptionRouteSnapshot snapshot =
                 MqttZeroSubscriptionRouteSnapshotBuilder.Build(_sessions.Values);
             Volatile.Write(ref _subscriptionRouteSnapshot, snapshot);
+            HashSet<string> activeSharedGroups = new(
+                snapshot.SharedGroups.Select(static group => group.Group),
+                StringComparer.Ordinal);
+            foreach (string group in _sharedSubscriptionCursors.Keys)
+            {
+                if (!activeSharedGroups.Contains(group))
+                {
+                    _sharedSubscriptionCursors.TryRemove(group, out _);
+                }
+            }
         }
     }
 

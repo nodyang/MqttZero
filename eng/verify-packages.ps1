@@ -2,8 +2,12 @@ $ErrorActionPreference = 'Stop'
 
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $packageDirectory = Join-Path $repositoryRoot 'artifacts/packages'
-$packageVersion = '0.6.0-alpha.1'
+$packageVersion = '0.7.0-alpha.1'
 New-Item -ItemType Directory -Force -Path $packageDirectory | Out-Null
+Get-ChildItem -LiteralPath $packageDirectory -Filter '*.nupkg' -File |
+    Remove-Item -Force
+Get-ChildItem -LiteralPath $packageDirectory -Filter '*.snupkg' -File |
+    Remove-Item -Force
 
 Push-Location $repositoryRoot
 try {

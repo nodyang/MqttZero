@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Buffers.Binary;
+using System.Text;
 
 namespace MqttZero.Protocol;
 
@@ -220,6 +221,7 @@ internal static class Mqtt5PropertyReader
         bool hasReceiveMaximum = false;
         bool hasMaximumPacketSize = false;
         bool hasSessionExpiry = false;
+        bool hasAssignedClientIdentifier = false;
         SequenceReader<byte> reader = new(properties);
         while (reader.Remaining > 0)
         {
@@ -271,6 +273,16 @@ internal static class Mqtt5PropertyReader
 
                     hasSessionExpiry = true;
                     packet.SessionExpiryInterval = sessionExpiry;
+                    break;
+                case AssignedClientIdentifier:
+                    if (hasAssignedClientIdentifier ||
+                        !TryReadUtf8String(ref reader, out string? assignedClientIdentifier))
+                    {
+                        return false;
+                    }
+
+                    hasAssignedClientIdentifier = true;
+                    packet.AssignedClientIdentifier = assignedClientIdentifier;
                     break;
                 default:
                     if (!TrySkipProperty(identifier, ref reader))
@@ -394,6 +406,32 @@ internal static class Mqtt5PropertyReader
     private static bool TrySkipUtf8(ref SequenceReader<byte> reader)
     {
         return TrySkipBinary(ref reader);
+    }
+
+    private static bool TryReadUtf8String(
+        ref SequenceReader<byte> reader,
+        out string? value)
+    {
+        value = null;
+        if (!TryReadUInt16(ref reader, out ushort length) ||
+            reader.Remaining < length)
+        {
+            return false;
+        }
+
+        ReadOnlySequence<byte> encoded = length == 0
+            ? ReadOnlySequence<byte>.Empty
+            : reader.Sequence.Slice(reader.Position, length);
+        if (!MqttZeroProtocolValidator.IsValidUtf8(encoded))
+        {
+            return false;
+        }
+
+        value = length == 0
+            ? string.Empty
+            : Encoding.UTF8.GetString(encoded);
+        reader.Advance(length);
+        return true;
     }
 
     private static bool TryReadUInt16(ref SequenceReader<byte> reader, out ushort value)

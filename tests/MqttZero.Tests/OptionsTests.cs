@@ -30,5 +30,17 @@ namespace MqttZero.Tests
             Assert.Equal(TimeSpan.FromMilliseconds(500), options.KeepAliveCheckInterval);
             Assert.Equal((ushort)32, options.TopicAliasMaximum);
         }
+
+        [Fact]
+        public void BrokerRejectsNonPositivePacketSize()
+        {
+            Assert.Throws<ArgumentOutOfRangeException>(() =>
+                MqttZeroBroker.Create(
+                    new MqttZeroOptions
+                    {
+                        MaxPacketSize = 0
+                    },
+                    TimeProvider.System));
+        }
     }
 }

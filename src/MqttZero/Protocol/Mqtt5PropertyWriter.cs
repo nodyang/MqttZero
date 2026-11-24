@@ -198,6 +198,11 @@ internal static class Mqtt5PropertyWriter
             length += 5;
         }
 
+        if (!string.IsNullOrEmpty(packet.AssignedClientIdentifier))
+        {
+            length += 3 + Encoding.UTF8.GetByteCount(packet.AssignedClientIdentifier);
+        }
+
         if (!string.IsNullOrEmpty(packet.ReasonString))
         {
             length += 3 + Encoding.UTF8.GetByteCount(packet.ReasonString);
@@ -236,6 +241,11 @@ internal static class Mqtt5PropertyWriter
         if (packet.SessionExpiryInterval.HasValue)
         {
             WriteUInt32(writer, 0x11, packet.SessionExpiryInterval.Value);
+        }
+
+        if (!string.IsNullOrEmpty(packet.AssignedClientIdentifier))
+        {
+            WriteString(writer, 0x12, packet.AssignedClientIdentifier);
         }
 
         if (!string.IsNullOrEmpty(packet.ReasonString))

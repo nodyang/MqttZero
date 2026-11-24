@@ -115,6 +115,22 @@ namespace MqttZero.Tests.Storage
             {
                 return ValueTask.CompletedTask;
             }
+
+            public ValueTask DeleteByClientAsync(
+                string clientId,
+                CancellationToken cancellationToken)
+            {
+                return ValueTask.CompletedTask;
+            }
+
+            public ValueTask ReplaceQueuedAsync(
+                string clientId,
+                long replacedMessageId,
+                MqttZeroPersistedMessage message,
+                CancellationToken cancellationToken)
+            {
+                return ValueTask.CompletedTask;
+            }
         }
 
         private sealed class TestRetainedStore : IMqttZeroRetainedMessageStore

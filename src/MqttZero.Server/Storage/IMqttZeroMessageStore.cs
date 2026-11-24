@@ -17,4 +17,12 @@ public interface IMqttZeroMessageStore
     ValueTask DeleteOutboundAsync(string clientId, long messageId, CancellationToken cancellationToken);
     /// <summary>Deletes an inbound QoS 2 message.</summary>
     ValueTask DeleteInboundQos2Async(string clientId, ushort packetIdentifier, CancellationToken cancellationToken);
+    /// <summary>Deletes all messages owned by one client.</summary>
+    ValueTask DeleteByClientAsync(string clientId, CancellationToken cancellationToken);
+    /// <summary>Atomically replaces one queued message.</summary>
+    ValueTask ReplaceQueuedAsync(
+        string clientId,
+        long replacedMessageId,
+        MqttZeroPersistedMessage message,
+        CancellationToken cancellationToken);
 }

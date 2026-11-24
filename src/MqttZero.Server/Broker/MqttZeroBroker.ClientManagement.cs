@@ -85,9 +85,29 @@ public sealed partial class MqttZeroBroker
         ArgumentNullException.ThrowIfNull(subscriptions);
         List<MqttZeroSubscribeResult> results = new(subscriptions.Count);
         bool changed = false;
+        List<MqttZeroSubscription>? subscriptionSnapshot = null;
+        if (_sessionStore.IsEnabled)
+        {
+            lock (session.SyncRoot)
+            {
+                subscriptionSnapshot = [.. session.Subscriptions];
+            }
+        }
+
         for (int index = 0; index < subscriptions.Count; index++)
         {
             MqttSubscriptionRequest request = subscriptions[index];
+            if (!MqttZeroProtocolValidator.IsValidTopicFilter(request.TopicFilter))
+            {
+                results.Add(new MqttZeroSubscribeResult
+                {
+                    TopicFilter = Encoding.UTF8.GetString(request.TopicFilter.FirstSpan),
+                    QualityOfServiceLevel = request.QualityOfServiceLevel,
+                    ReasonCode = MqttReasonCode.TopicFilterInvalid
+                });
+                continue;
+            }
+
             MqttZeroSubscribeContext context = new()
             {
                 ConnectedClient = connection.ConnectedClient,
@@ -208,6 +228,10 @@ public sealed partial class MqttZeroBroker
                     Retain = true,
                     SubscriptionIdentifier = subscriptionIdentifier
                 };
+                packet.MessageExpiryInterval =
+                    GetRemainingMessageExpiry(
+                        retained.ExpiresAt,
+                        _timeProvider.GetUtcNow());
                 await DeliverAsync(
                     session,
                     packet,
@@ -221,7 +245,25 @@ public sealed partial class MqttZeroBroker
         if (changed)
         {
             RebuildSubscriptionRouteSnapshot();
-            await SaveSessionAsync(session, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                await SaveSessionAsync(session, cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                if (subscriptionSnapshot != null)
+                {
+                    lock (session.SyncRoot)
+                    {
+                        session.Subscriptions.Clear();
+                        session.Subscriptions.AddRange(subscriptionSnapshot);
+                    }
+
+                    RebuildSubscriptionRouteSnapshot();
+                }
+
+                throw;
+            }
         }
 
         return results;
@@ -237,13 +279,34 @@ public sealed partial class MqttZeroBroker
         ArgumentNullException.ThrowIfNull(topicFilters);
         List<MqttZeroUnsubscribeResult> results = new(topicFilters.Count);
         bool changed = false;
+        List<MqttZeroSubscription>? subscriptionSnapshot = null;
+        if (_sessionStore.IsEnabled)
+        {
+            lock (session.SyncRoot)
+            {
+                subscriptionSnapshot = [.. session.Subscriptions];
+            }
+        }
+
         foreach (string topicFilter in topicFilters)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(topicFilter);
+            ReadOnlySequence<byte> encodedFilter =
+                new(Encoding.UTF8.GetBytes(topicFilter));
+            if (!MqttZeroProtocolValidator.IsValidTopicFilter(encodedFilter))
+            {
+                results.Add(new MqttZeroUnsubscribeResult
+                {
+                    TopicFilter = topicFilter,
+                    ReasonCode = MqttReasonCode.TopicFilterInvalid
+                });
+                continue;
+            }
+
             MqttZeroUnsubscribeContext context = new()
             {
                 ConnectedClient = connection.ConnectedClient,
-                TopicFilter = new ReadOnlySequence<byte>(Encoding.UTF8.GetBytes(topicFilter))
+                TopicFilter = encodedFilter
             };
             MqttZeroInterceptionResult interception = MqttZeroInterceptionResult.Continue;
             foreach (IMqttZeroUnsubscribeInterceptor interceptor in _unsubscribeInterceptors)
@@ -273,7 +336,7 @@ public sealed partial class MqttZeroBroker
                 continue;
             }
 
-            byte[] filter = Encoding.UTF8.GetBytes(topicFilter);
+            byte[] filter = encodedFilter.ToArray();
             bool removed = false;
             lock (session.SyncRoot)
             {
@@ -299,7 +362,25 @@ public sealed partial class MqttZeroBroker
         if (changed)
         {
             RebuildSubscriptionRouteSnapshot();
-            await SaveSessionAsync(session, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                await SaveSessionAsync(session, cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                if (subscriptionSnapshot != null)
+                {
+                    lock (session.SyncRoot)
+                    {
+                        session.Subscriptions.Clear();
+                        session.Subscriptions.AddRange(subscriptionSnapshot);
+                    }
+
+                    RebuildSubscriptionRouteSnapshot();
+                }
+
+                throw;
+            }
         }
 
         return results;
@@ -320,6 +401,11 @@ public sealed partial class MqttZeroBroker
         }
 
         ReadOnlySequence<byte> topic = new(Encoding.UTF8.GetBytes(message.Topic));
+        if (!MqttZeroProtocolValidator.IsValidTopicName(topic))
+        {
+            throw new ArgumentException("The MQTT topic name is invalid.", nameof(message));
+        }
+
         MqttZeroMessageLease lease = MqttZeroMessageLease.CopyFrom(
             topic,
             ReadOnlySequence<byte>.Empty,

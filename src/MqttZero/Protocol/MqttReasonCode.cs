@@ -42,7 +42,13 @@ public enum MqttReasonCode : byte
     NoSubscriptionExisted = 0x11,
 
     /// <summary>The client is not connected.</summary>
-    NotConnected = 0x90,
+    NotConnected = 0x8C,
+
+    /// <summary>The topic filter is invalid.</summary>
+    TopicFilterInvalid = 0x8F,
+
+    /// <summary>The topic name is invalid.</summary>
+    TopicNameInvalid = 0x90,
 
     /// <summary>The packet identifier is already in use.</summary>
     PacketIdentifierInUse = 0x91,

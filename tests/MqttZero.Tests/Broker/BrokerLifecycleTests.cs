@@ -67,5 +67,22 @@ namespace MqttZero.Tests.Broker
             Assert.Equal(HealthStatus.Unhealthy, stopped.Status);
             Assert.Equal(HealthStatus.Healthy, running.Status);
         }
+
+        [Fact]
+        public async Task BrokerCanRestartAfterStopButNotAfterDispose()
+        {
+            MqttZeroBroker broker = MqttZeroBroker.Create(
+                new MqttZeroOptions(),
+                TimeProvider.System);
+            await broker.StartAsync(TestContext.Current.CancellationToken);
+            await broker.StopAsync(TestContext.Current.CancellationToken);
+            await broker.StartAsync(TestContext.Current.CancellationToken);
+            Assert.Equal(MqttZeroBrokerState.Running, broker.State);
+            await broker.DisposeAsync();
+
+            await Assert.ThrowsAsync<ObjectDisposedException>(
+                async () => await broker.StartAsync(
+                    TestContext.Current.CancellationToken));
+        }
     }
 }

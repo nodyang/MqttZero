@@ -10,6 +10,8 @@ namespace MqttZero.AspNetCore.Dashboard;
 [JsonSerializable(typeof(DashboardOverviewDto))]
 [JsonSerializable(typeof(DashboardClientDto[]))]
 [JsonSerializable(typeof(DashboardSessionDto[]))]
+[JsonSerializable(typeof(DashboardClientPageDto))]
+[JsonSerializable(typeof(DashboardSessionPageDto))]
 [JsonSerializable(typeof(DashboardPublishRequest))]
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 public partial class DashboardJsonSerializerContext : JsonSerializerContext

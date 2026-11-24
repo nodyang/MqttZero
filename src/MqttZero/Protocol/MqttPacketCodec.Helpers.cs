@@ -31,6 +31,12 @@ public static partial class MqttPacketCodec
 
     private static bool TryReadUtf8(ref SequenceReader<byte> reader, out ReadOnlySequence<byte> value)
     {
+        return TryReadBinary(ref reader, out value) &&
+            MqttZeroProtocolValidator.IsValidUtf8(value);
+    }
+
+    private static bool TryReadBinary(ref SequenceReader<byte> reader, out ReadOnlySequence<byte> value)
+    {
         if (!TryReadUInt16(ref reader, out ushort length) || reader.Remaining < length)
         {
             value = ReadOnlySequence<byte>.Empty;
@@ -42,11 +48,6 @@ public static partial class MqttPacketCodec
             : reader.Sequence.Slice(reader.Position, length);
         reader.Advance(length);
         return true;
-    }
-
-    private static bool TryReadBinary(ref SequenceReader<byte> reader, out ReadOnlySequence<byte> value)
-    {
-        return TryReadUtf8(ref reader, out value);
     }
 
     private static bool TryReadUInt16(ref SequenceReader<byte> reader, out ushort value)
@@ -104,6 +105,17 @@ public static partial class MqttPacketCodec
         Span<byte> destination = writer.GetSpan(value.Length);
         value.CopyTo(destination);
         writer.Advance(value.Length);
+    }
+
+    private static void WriteUtf8(IBufferWriter<byte> writer, ReadOnlySequence<byte> value)
+    {
+        if (value.Length > ushort.MaxValue)
+        {
+            throw new ArgumentOutOfRangeException(nameof(value), "MQTT UTF-8 values may not exceed 65535 bytes.");
+        }
+
+        WriteUInt16(writer, (ushort)value.Length);
+        WriteSequence(writer, value);
     }
 
     private static void WriteBinary(IBufferWriter<byte> writer, ReadOnlySequence<byte> value)

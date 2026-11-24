@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
-  getClients,
+  getClientPage,
   getOverview,
   publishMessage,
   type ClientDto,
@@ -14,6 +14,9 @@ import { formatBrokerState } from './format'
 const activePage = ref('overview')
 const overview = ref<OverviewDto>({ state: 'Created', connectedClients: 0 })
 const clients = ref<ClientDto[]>([])
+const clientPage = ref(1)
+const clientPageSize = ref(50)
+const clientTotal = ref(0)
 const error = ref('')
 const publishing = ref(false)
 const publishForm = ref<PublishRequest>({
@@ -30,8 +33,6 @@ const title = computed(() => {
       return '客户端'
     case 'publish':
       return '发布消息'
-    case 'events':
-      return '实时事件'
     default:
       return '运行概览'
   }
@@ -41,10 +42,20 @@ async function refresh() {
   try {
     error.value = ''
     overview.value = await getOverview()
-    clients.value = await getClients()
+    const page = await getClientPage(clientPage.value, clientPageSize.value)
+    clients.value = page.items
+    clientTotal.value = page.total
+    clientPage.value = page.page
+    clientPageSize.value = page.pageSize
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : '加载失败'
   }
+}
+
+async function changeClientPage(page: number, pageSize: number) {
+  clientPage.value = page
+  clientPageSize.value = pageSize
+  await refresh()
 }
 
 async function publish() {
@@ -79,7 +90,6 @@ onUnmounted(() => {
         <el-menu-item index="overview">运行概览</el-menu-item>
         <el-menu-item index="clients">客户端</el-menu-item>
         <el-menu-item index="publish">发布消息</el-menu-item>
-        <el-menu-item index="events">实时事件</el-menu-item>
       </el-menu>
     </el-aside>
 
@@ -119,6 +129,15 @@ onUnmounted(() => {
             </el-table-column>
             <el-table-column prop="subscriptionCount" label="订阅数" width="100" />
           </el-table>
+          <el-pagination
+            :current-page="clientPage"
+            :page-size="clientPageSize"
+            :total="clientTotal"
+            :page-sizes="[20, 50, 100, 200]"
+            layout="total, sizes, prev, pager, next"
+            @current-change="(page: number) => changeClientPage(page, clientPageSize)"
+            @size-change="(size: number) => changeClientPage(1, size)"
+          />
         </el-card>
 
         <el-card v-if="activePage === 'publish'">
@@ -130,6 +149,7 @@ onUnmounted(() => {
               <el-radio-group v-model="publishForm.qualityOfServiceLevel">
                 <el-radio :value="0">QoS 0</el-radio>
                 <el-radio :value="1">QoS 1</el-radio>
+                <el-radio :value="2">QoS 2</el-radio>
               </el-radio-group>
             </el-form-item>
             <el-form-item label="保留消息">
@@ -149,9 +169,6 @@ onUnmounted(() => {
           </el-form>
         </el-card>
 
-        <el-card v-if="activePage === 'events'">
-          <el-empty description="SignalR Hub 已挂载于 /mqttzero/hubs/events；事件推送接口已预留。" />
-        </el-card>
       </el-main>
     </el-container>
   </el-container>

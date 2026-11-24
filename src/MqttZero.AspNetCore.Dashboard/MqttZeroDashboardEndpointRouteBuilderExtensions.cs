@@ -17,7 +17,7 @@ namespace MqttZero.AspNetCore.Dashboard;
 public static class MqttZeroDashboardEndpointRouteBuilderExtensions
 {
     /// <summary>
-    /// Maps the dashboard UI, API, and SignalR endpoints under a route prefix.
+    /// Maps the dashboard UI and API endpoints under a route prefix.
     /// </summary>
     /// <param name="endpoints">The endpoint route builder.</param>
     /// <param name="prefix">The route prefix, for example <c>/mqttzero</c>.</param>
@@ -52,8 +52,6 @@ public static class MqttZeroDashboardEndpointRouteBuilderExtensions
         endpoints.MapFallback($"{normalizedPrefix}/{{**path}}", GetIndex)
             .RequireAuthorization(options.ReadAuthorizationPolicy)
             .AddEndpointFilter(AddSecurityHeadersAsync);
-        endpoints.MapHub<MqttZeroDashboardHub>($"{normalizedPrefix}/hubs/events")
-            .RequireAuthorization(options.ReadAuthorizationPolicy);
         return endpoints;
     }
 
@@ -67,9 +65,7 @@ public static class MqttZeroDashboardEndpointRouteBuilderExtensions
         }
 
         if (options.DefaultPageSize <= 0 ||
-            options.MaxPageSize < options.DefaultPageSize ||
-            options.PayloadPreviewLimit <= 0 ||
-            options.EventBufferCapacity <= 0)
+            options.MaxPageSize < options.DefaultPageSize)
         {
             throw new InvalidOperationException("MQTTZero dashboard option values are invalid.");
         }
@@ -82,9 +78,14 @@ public static class MqttZeroDashboardEndpointRouteBuilderExtensions
             DashboardJsonSerializerContext.Default.DashboardOverviewDto);
     }
 
-    private static IResult GetClients(IMqttZeroBroker broker)
+    private static IResult GetClients(
+        IMqttZeroBroker broker,
+        IOptions<MqttZeroDashboardOptions> configuredOptions,
+        int page = 1,
+        int pageSize = 0)
     {
-        DashboardClientDto[] clients = broker.GetClients()
+        DashboardClientDto[] allClients = broker.GetClients()
+            .OrderBy(static client => client.ClientId, StringComparer.Ordinal)
             .Select(static client => new DashboardClientDto(
                 client.ClientId,
                 client.RemoteEndPoint?.ToString(),
@@ -92,12 +93,24 @@ public static class MqttZeroDashboardEndpointRouteBuilderExtensions
                 client.IsWebSocket,
                 client.SubscriptionCount))
             .ToArray();
-        return Results.Json(clients, DashboardJsonSerializerContext.Default.DashboardClientDtoArray);
+        DashboardClientPageDto result = CreatePage(
+            allClients,
+            configuredOptions.Value,
+            page,
+            pageSize);
+        return Results.Json(
+            result,
+            DashboardJsonSerializerContext.Default.DashboardClientPageDto);
     }
 
-    private static IResult GetSessions(IMqttZeroBroker broker)
+    private static IResult GetSessions(
+        IMqttZeroBroker broker,
+        IOptions<MqttZeroDashboardOptions> configuredOptions,
+        int page = 1,
+        int pageSize = 0)
     {
-        DashboardSessionDto[] sessions = broker.GetSessions()
+        DashboardSessionDto[] allSessions = broker.GetSessions()
+            .OrderBy(static session => session.ClientId, StringComparer.Ordinal)
             .Select(static session => new DashboardSessionDto(
                 session.ClientId,
                 session.IsConnected,
@@ -111,8 +124,65 @@ public static class MqttZeroDashboardEndpointRouteBuilderExtensions
                 session.HasWill,
                 session.WillTopic))
             .ToArray();
-        return Results.Json(sessions, DashboardJsonSerializerContext.Default.DashboardSessionDtoArray);
+        DashboardSessionPageDto result = CreatePage(
+            allSessions,
+            configuredOptions.Value,
+            page,
+            pageSize);
+        return Results.Json(
+            result,
+            DashboardJsonSerializerContext.Default.DashboardSessionPageDto);
     }
+
+    private static DashboardClientPageDto CreatePage(
+        DashboardClientDto[] items,
+        MqttZeroDashboardOptions options,
+        int page,
+        int pageSize)
+    {
+        PageSelection selection = SelectPage(items.Length, options, page, pageSize);
+        return new DashboardClientPageDto(
+            items.Skip(selection.Offset).Take(selection.Size).ToArray(),
+            selection.Page,
+            selection.Size,
+            items.Length);
+    }
+
+    private static DashboardSessionPageDto CreatePage(
+        DashboardSessionDto[] items,
+        MqttZeroDashboardOptions options,
+        int page,
+        int pageSize)
+    {
+        PageSelection selection = SelectPage(items.Length, options, page, pageSize);
+        return new DashboardSessionPageDto(
+            items.Skip(selection.Offset).Take(selection.Size).ToArray(),
+            selection.Page,
+            selection.Size,
+            items.Length);
+    }
+
+    private static PageSelection SelectPage(
+        int total,
+        MqttZeroDashboardOptions options,
+        int page,
+        int pageSize)
+    {
+        int size = pageSize <= 0
+            ? options.DefaultPageSize
+            : Math.Clamp(pageSize, 1, options.MaxPageSize);
+        int maximumPage = Math.Max(1, (total + size - 1) / size);
+        int selectedPage = Math.Clamp(page, 1, maximumPage);
+        return new PageSelection(
+            selectedPage,
+            size,
+            (selectedPage - 1) * size);
+    }
+
+    private readonly record struct PageSelection(
+        int Page,
+        int Size,
+        int Offset);
 
     private static IResult GetAntiforgeryToken(HttpContext context, IAntiforgery antiforgery)
     {

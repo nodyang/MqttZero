@@ -30,7 +30,6 @@ public sealed partial class MqttZeroBroker : IMqttZeroBroker, IAsyncDisposable
     private readonly IMqttZeroSessionStore _sessionStore;
     private readonly IMqttZeroMessageStore _messageStore;
     private readonly IMqttZeroRetainedMessageStore _retainedMessageStore;
-    private readonly IMqttZeroPersistenceWriter _persistenceWriter;
     private readonly ConcurrentDictionary<string, MqttZeroRetainedMessage> _retainedMessages =
         new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, MqttZeroSessionState> _sessions =
@@ -74,7 +73,6 @@ public sealed partial class MqttZeroBroker : IMqttZeroBroker, IAsyncDisposable
     /// <param name="sessionStore">The session persistence store.</param>
     /// <param name="messageStore">The message persistence store.</param>
     /// <param name="retainedMessageStore">The retained-message persistence store.</param>
-    /// <param name="persistenceWriter">The write-behind persistence writer.</param>
     public MqttZeroBroker(
         IOptions<MqttZeroOptions> options,
         TimeProvider timeProvider,
@@ -87,11 +85,11 @@ public sealed partial class MqttZeroBroker : IMqttZeroBroker, IAsyncDisposable
         IEnumerable<IMqttZeroDeliveryObserver> deliveryObservers,
         IMqttZeroSessionStore sessionStore,
         IMqttZeroMessageStore messageStore,
-        IMqttZeroRetainedMessageStore retainedMessageStore,
-        IMqttZeroPersistenceWriter persistenceWriter)
+        IMqttZeroRetainedMessageStore retainedMessageStore)
     {
         ArgumentNullException.ThrowIfNull(options);
         _options = options.Value ?? throw new ArgumentNullException(nameof(options));
+        MqttZeroOptionsValidator.Validate(_options);
         _timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
         ArgumentNullException.ThrowIfNull(publishInterceptors);
         _bufferPool = new MqttZeroBufferPool(_options.MaxBufferedBytes);
@@ -106,8 +104,6 @@ public sealed partial class MqttZeroBroker : IMqttZeroBroker, IAsyncDisposable
         _messageStore = messageStore ?? throw new ArgumentNullException(nameof(messageStore));
         _retainedMessageStore = retainedMessageStore ??
             throw new ArgumentNullException(nameof(retainedMessageStore));
-        _persistenceWriter = persistenceWriter ??
-            throw new ArgumentNullException(nameof(persistenceWriter));
     }
 
     internal static MqttZeroBroker Create(
@@ -127,11 +123,7 @@ public sealed partial class MqttZeroBroker : IMqttZeroBroker, IAsyncDisposable
             [],
             new MqttZeroNoopSessionStore(),
             new MqttZeroNoopMessageStore(),
-            new MqttZeroNoopRetainedMessageStore(),
-            new MqttZeroPersistenceWriter(
-                new MqttZeroNoopSessionStore(),
-                new MqttZeroNoopMessageStore(),
-                new MqttZeroNoopRetainedMessageStore()));
+            new MqttZeroNoopRetainedMessageStore());
     }
 
     /// <summary>

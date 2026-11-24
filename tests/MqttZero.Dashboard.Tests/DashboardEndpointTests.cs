@@ -31,31 +31,31 @@ namespace MqttZero.Dashboard.Tests
                 .AddPolicy("Operate", static policy => policy.RequireAssertion(static _ => true));
 
             await using WebApplication app = builder.Build();
-            app.MapMqttZeroDashboard("/mqttzero");
+            app.MapMqttZeroDashboard("/admin");
 
             CancellationToken cancellationToken = TestContext.Current.CancellationToken;
             await app.StartAsync(cancellationToken);
 
             using HttpClient client = new();
             using HttpResponseMessage overviewResponse = await client.GetAsync(
-                $"http://127.0.0.1:{port}/mqttzero/api/v1/overview",
+                $"http://127.0.0.1:{port}/admin/api/v1/overview",
                 cancellationToken);
             string overview = await overviewResponse.Content.ReadAsStringAsync(cancellationToken);
 
             using HttpResponseMessage indexResponse = await client.GetAsync(
-                $"http://127.0.0.1:{port}/mqttzero/",
+                $"http://127.0.0.1:{port}/admin/",
                 cancellationToken);
             string index = await indexResponse.Content.ReadAsStringAsync(cancellationToken);
 
             using HttpResponseMessage tokenResponse = await client.GetAsync(
-                $"http://127.0.0.1:{port}/mqttzero/api/v1/antiforgery",
+                $"http://127.0.0.1:{port}/admin/api/v1/antiforgery",
                 cancellationToken);
             using JsonDocument tokenDocument = JsonDocument.Parse(
                 await tokenResponse.Content.ReadAsStringAsync(cancellationToken));
             string requestToken = tokenDocument.RootElement.GetProperty("token").GetString()!;
             using HttpRequestMessage publishRequest = new(
                 HttpMethod.Post,
-                $"http://127.0.0.1:{port}/mqttzero/api/v1/publish")
+                $"http://127.0.0.1:{port}/admin/api/v1/publish")
             {
                 Content = JsonContent.Create(new
                 {
@@ -70,7 +70,7 @@ namespace MqttZero.Dashboard.Tests
                 publishRequest,
                 cancellationToken);
             using HttpResponseMessage sessionsResponse = await client.GetAsync(
-                $"http://127.0.0.1:{port}/mqttzero/api/v1/sessions",
+                $"http://127.0.0.1:{port}/admin/api/v1/sessions?page=1&pageSize=999",
                 cancellationToken);
             string sessions = await sessionsResponse.Content.ReadAsStringAsync(cancellationToken);
 
@@ -80,7 +80,9 @@ namespace MqttZero.Dashboard.Tests
             Assert.Contains("<div id=\"app\"></div>", index, StringComparison.Ordinal);
             Assert.Equal(HttpStatusCode.NoContent, publishResponse.StatusCode);
             Assert.Equal(HttpStatusCode.OK, sessionsResponse.StatusCode);
-            Assert.Equal("[]", sessions);
+            Assert.Contains("\"items\":[]", sessions, StringComparison.Ordinal);
+            Assert.Contains("\"page\":1", sessions, StringComparison.Ordinal);
+            Assert.Contains("\"pageSize\":200", sessions, StringComparison.Ordinal);
 
             await app.StopAsync(cancellationToken);
         }

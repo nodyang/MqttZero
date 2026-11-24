@@ -48,6 +48,8 @@ internal sealed class MqttZeroMessageLease : IDisposable
 
     public uint? SubscriptionIdentifier { get; private set; }
 
+    public DateTimeOffset? ExpiresAt { get; private set; }
+
     public ushort PacketIdentifier { get; set; }
 
     public static MqttZeroMessageLease CopyFrom(
@@ -106,7 +108,7 @@ internal sealed class MqttZeroMessageLease : IDisposable
 
     public MqttZeroMessageLease CreateOwnedCopy()
     {
-        return CopyFrom(
+        MqttZeroMessageLease copy = CopyFrom(
             TopicSequence,
             PropertiesSequence,
             PayloadSequence,
@@ -115,6 +117,13 @@ internal sealed class MqttZeroMessageLease : IDisposable
             MessageExpiryInterval,
             SubscriptionIdentifier,
             _bufferPool);
+        copy.ExpiresAt = ExpiresAt;
+        return copy;
+    }
+
+    public void SetExpiresAt(DateTimeOffset? expiresAt)
+    {
+        ExpiresAt = expiresAt;
     }
 
     public void EnsureOwned()
@@ -196,6 +205,7 @@ internal sealed class MqttZeroMessageLease : IDisposable
             RetainFlag = retain;
             MessageExpiryInterval = messageExpiryInterval;
             SubscriptionIdentifier = subscriptionIdentifier;
+            ExpiresAt = null;
             PacketIdentifier = 0;
             _referenceCount = 1;
         }
@@ -253,6 +263,7 @@ internal sealed class MqttZeroMessageLease : IDisposable
             RetainFlag = retain;
             MessageExpiryInterval = messageExpiryInterval;
             SubscriptionIdentifier = subscriptionIdentifier;
+            ExpiresAt = null;
             PacketIdentifier = 0;
             _referenceCount = 1;
         }
@@ -290,6 +301,7 @@ internal sealed class MqttZeroMessageLease : IDisposable
         _isBorrowed = false;
         MessageExpiryInterval = null;
         SubscriptionIdentifier = null;
+        ExpiresAt = null;
         PacketIdentifier = 0;
     }
 

@@ -16,6 +16,7 @@ public static partial class MqttPacketCodec
         packet = null;
         if ((firstByte & 0x0F) != 0x02 ||
             !TryReadUInt16(ref reader, out ushort packetIdentifier) ||
+            packetIdentifier == 0 ||
             !TryReadProperties(ref reader, out ReadOnlySequence<byte> properties))
         {
             return false;
@@ -25,7 +26,8 @@ public static partial class MqttPacketCodec
         while (reader.Remaining > 0)
         {
             if (!TryReadUtf8(ref reader, out ReadOnlySequence<byte> topicFilter) ||
-                !reader.TryRead(out byte options))
+                !reader.TryRead(out byte options) ||
+                !MqttZeroProtocolValidator.IsValidTopicFilter(topicFilter))
             {
                 return false;
             }
@@ -71,6 +73,7 @@ public static partial class MqttPacketCodec
         packet = null;
         if ((firstByte & 0x0F) != 0x02 ||
             !TryReadUInt16(ref reader, out ushort packetIdentifier) ||
+            packetIdentifier == 0 ||
             !TryReadProperties(ref reader, out ReadOnlySequence<byte> properties))
         {
             return false;
@@ -79,7 +82,8 @@ public static partial class MqttPacketCodec
         List<ReadOnlySequence<byte>> topicFilters = [];
         while (reader.Remaining > 0)
         {
-            if (!TryReadUtf8(ref reader, out ReadOnlySequence<byte> topicFilter))
+            if (!TryReadUtf8(ref reader, out ReadOnlySequence<byte> topicFilter) ||
+                !MqttZeroProtocolValidator.IsValidTopicFilter(topicFilter))
             {
                 return false;
             }
@@ -154,6 +158,13 @@ public static partial class MqttPacketCodec
             propertiesLength;
         foreach (MqttSubscriptionRequest subscription in packet.Subscriptions)
         {
+            if (!MqttZeroProtocolValidator.IsValidTopicFilter(subscription.TopicFilter))
+            {
+                throw new ArgumentException(
+                    "The MQTT subscription topic filter is invalid.",
+                    nameof(packet));
+            }
+
             bodyLength += 2 + (int)subscription.TopicFilter.Length + 1;
         }
 
@@ -166,9 +177,7 @@ public static partial class MqttPacketCodec
 
         foreach (MqttSubscriptionRequest subscription in packet.Subscriptions)
         {
-            WriteUtf8(writer, subscription.TopicFilter.IsEmpty
-                ? ReadOnlySpan<byte>.Empty
-                : subscription.TopicFilter.FirstSpan);
+            WriteUtf8(writer, subscription.TopicFilter);
             byte options = (byte)subscription.QualityOfServiceLevel;
             if (subscription.NoLocal)
             {
@@ -211,6 +220,13 @@ public static partial class MqttPacketCodec
             (int)packet.Properties.Length;
         foreach (ReadOnlySequence<byte> topicFilter in packet.TopicFilters)
         {
+            if (!MqttZeroProtocolValidator.IsValidTopicFilter(topicFilter))
+            {
+                throw new ArgumentException(
+                    "The MQTT unsubscribe topic filter is invalid.",
+                    nameof(packet));
+            }
+
             bodyLength += 2 + (int)topicFilter.Length;
         }
 
@@ -222,9 +238,7 @@ public static partial class MqttPacketCodec
         WriteProperties(writer, packet.Properties);
         foreach (ReadOnlySequence<byte> topicFilter in packet.TopicFilters)
         {
-            WriteUtf8(
-                writer,
-                topicFilter.IsEmpty ? ReadOnlySpan<byte>.Empty : topicFilter.FirstSpan);
+            WriteUtf8(writer, topicFilter);
         }
     }
 

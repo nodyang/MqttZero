@@ -34,7 +34,6 @@ public static class MqttZeroServiceCollectionExtensions
         services.TryAddSingleton<IMqttZeroSessionStore, MqttZeroNoopSessionStore>();
         services.TryAddSingleton<IMqttZeroMessageStore, MqttZeroNoopMessageStore>();
         services.TryAddSingleton<IMqttZeroRetainedMessageStore, MqttZeroNoopRetainedMessageStore>();
-        services.TryAddSingleton<IMqttZeroPersistenceWriter, MqttZeroPersistenceWriter>();
         services.TryAddSingleton<MqttZeroBroker>();
         services.TryAddSingleton<IMqttZeroBroker>(
             static provider => provider.GetRequiredService<MqttZeroBroker>());

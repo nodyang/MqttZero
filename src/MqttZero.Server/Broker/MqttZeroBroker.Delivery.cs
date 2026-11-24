@@ -6,6 +6,7 @@ using MqttZero.Server.Clients;
 using MqttZero.Protocol;
 using MqttZero.Server.Routing;
 using MqttZero.Server.Sessions;
+using MqttZero.Server.Storage;
 using System.Buffers;
 using System.Collections.Concurrent;
 using System.IO.Pipelines;
@@ -35,6 +36,7 @@ public sealed partial class MqttZeroBroker
             source.MessageExpiryInterval,
             subscriptionIdentifier,
             _bufferPool);
+        lease.SetExpiresAt(CalculateMessageExpiresAt(source.MessageExpiryInterval));
         try
         {
             await DeliverLeaseAsync(
@@ -62,9 +64,7 @@ public sealed partial class MqttZeroBroker
         CancellationToken cancellationToken)
     {
         DateTimeOffset now = _timeProvider.GetUtcNow();
-        DateTimeOffset? expiresAt = lease.MessageExpiryInterval.HasValue
-            ? now.AddSeconds(lease.MessageExpiryInterval.Value)
-            : null;
+        DateTimeOffset? expiresAt = lease.ExpiresAt;
         if (expiresAt <= now)
         {
             await NotifyDroppedAsync(
@@ -122,6 +122,7 @@ public sealed partial class MqttZeroBroker
         bool sendImmediately = false;
         bool messageHeld = false;
         MqttZeroQueuedMessage? evicted = null;
+        bool dropOfflineQos0 = false;
 
         try
         {
@@ -153,45 +154,59 @@ public sealed partial class MqttZeroBroker
                         connection == null &&
                         !_options.StoreQos0InQueue)
                     {
-                        return;
-                    }
-
-                    message = MqttZeroQueuedMessage.Rent(
-                        lease,
-                        qos,
-                        retain,
-                        subscriptionIdentifier,
-                        expiresAt);
-                    message.SetMessageId(GetNextMessageId());
-                    if (_deliveryObservers.Length > 0)
-                    {
-                        evicted = EnqueueMessage(
-                            session,
-                            message,
-                            session.Connection?.ClientInfo ?? CreateOfflineClientInfo(session));
+                        dropOfflineQos0 = true;
                     }
                     else
                     {
-                        evicted = EnqueueMessage(session, message, null);
+                        message = MqttZeroQueuedMessage.Rent(
+                            lease,
+                            qos,
+                            retain,
+                            subscriptionIdentifier,
+                            expiresAt);
+                        message.SetMessageId(GetNextMessageId());
+                        evicted = EnqueueMessage(session, message);
+                        messageHeld = true;
                     }
-                    messageHeld = true;
                 }
+            }
+
+            if (dropOfflineQos0)
+            {
+                await NotifyDroppedAsync(
+                    senderConnection?.ConnectedClient,
+                    session,
+                    lease,
+                    MqttZeroMessageDropReason.OfflineClient,
+                    cancellationToken).ConfigureAwait(false);
+                return;
             }
 
             if (evicted != null)
             {
-                await _persistenceWriter.EnqueueOutboundDeleteAsync(
-                    session.ClientId,
-                    evicted.MessageId,
+                await NotifyOverwrittenAsync(
+                    session,
+                    session.Connection?.ClientInfo ?? CreateOfflineClientInfo(session),
+                    evicted,
                     cancellationToken).ConfigureAwait(false);
-                evicted.Release();
             }
 
-            if (messageHeld && _persistenceWriter.IsEnabled)
+            if (messageHeld && _messageStore.IsEnabled)
             {
                 try
                 {
-                    if (sendImmediately)
+                    if (evicted != null)
+                    {
+                        await _messageStore.ReplaceQueuedAsync(
+                            session.ClientId,
+                            evicted.MessageId,
+                            CreatePersistedMessage(
+                                message!,
+                                session.ClientId,
+                                MqttZeroPersistedMessageKind.Queued),
+                            cancellationToken).ConfigureAwait(false);
+                    }
+                    else if (sendImmediately)
                     {
                         await SaveOutboundAsync(
                             message!,
@@ -222,6 +237,11 @@ public sealed partial class MqttZeroBroker
                             {
                                 session.PendingMessages.RemoveAt(index);
                             }
+
+                            if (evicted != null)
+                            {
+                                session.PendingMessages.Prepend(evicted);
+                            }
                         }
                     }
 
@@ -236,6 +256,11 @@ public sealed partial class MqttZeroBroker
 
                     throw;
                 }
+            }
+
+            if (evicted != null)
+            {
+                evicted.Release();
             }
 
             if (messageHeld && _deliveryObservers.Length > 0)
@@ -286,8 +311,7 @@ public sealed partial class MqttZeroBroker
 
     private MqttZeroQueuedMessage? EnqueueMessage(
         MqttZeroSessionState session,
-        MqttZeroQueuedMessage message,
-        MqttZeroClientInfo? receiver)
+        MqttZeroQueuedMessage message)
     {
         MqttZeroQueuedMessage? evicted = null;
         if (session.PendingMessages.Count >= _options.MaxMessageQueueLength)
@@ -298,19 +322,11 @@ public sealed partial class MqttZeroBroker
             {
                 evicted = session.PendingMessages[oldestQos0Index];
                 session.PendingMessages.RemoveAt(oldestQos0Index);
-                if (receiver != null)
-                {
-                    NotifyOverwritten(session, receiver, evicted);
-                }
             }
             else if (session.PendingMessages.Count > 0)
             {
                 evicted = session.PendingMessages[0];
                 session.PendingMessages.RemoveAt(0);
-                if (receiver != null)
-                {
-                    NotifyOverwritten(session, receiver, evicted);
-                }
             }
         }
 
@@ -431,10 +447,23 @@ public sealed partial class MqttZeroBroker
 
             if (failed != null)
             {
-                await _persistenceWriter.EnqueueOutboundDeleteAsync(
-                    session.ClientId,
-                    failed.MessageId,
-                    cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    await DeleteOutboundAsync(
+                        session.ClientId,
+                        failed.MessageId,
+                        cancellationToken).ConfigureAwait(false);
+                }
+                catch
+                {
+                    lock (session.SyncRoot)
+                    {
+                        session.InflightMessages[packet.PacketIdentifier] = failed;
+                    }
+
+                    throw;
+                }
+
                 failed.Release();
             }
 
@@ -443,10 +472,19 @@ public sealed partial class MqttZeroBroker
         }
 
         message.SetAwaitPubComp();
-        await SaveOutboundAsync(
-            message,
-            session.ClientId,
-            cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await SaveOutboundAsync(
+                message,
+                session.ClientId,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            message.SetAwaitPubRec();
+            throw;
+        }
+
         await connection.SendPubRelAsync(
             packet.PacketIdentifier,
             MqttReasonCode.Success,
@@ -466,10 +504,23 @@ public sealed partial class MqttZeroBroker
 
         if (completed != null)
         {
-            await _persistenceWriter.EnqueueOutboundDeleteAsync(
-                session.ClientId,
-                completed.MessageId,
-                cancellationToken).ConfigureAwait(false);
+            try
+            {
+                await DeleteOutboundAsync(
+                    session.ClientId,
+                    completed.MessageId,
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                lock (session.SyncRoot)
+                {
+                    session.InflightMessages[packet.PacketIdentifier] = completed;
+                }
+
+                throw;
+            }
+
             completed.Release();
         }
 
@@ -499,10 +550,24 @@ public sealed partial class MqttZeroBroker
             return;
         }
 
-        await _persistenceWriter.EnqueueInboundQos2DeleteAsync(
-            session.ClientId,
-            packet.PacketIdentifier,
-            cancellationToken).ConfigureAwait(false);
+        bool leaseRestored = false;
+        try
+        {
+            await DeleteInboundQos2Async(
+                session.ClientId,
+                packet.PacketIdentifier,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            lock (session.SyncRoot)
+            {
+                session.InboundQos2Messages[packet.PacketIdentifier] = lease;
+            }
+
+            leaseRestored = true;
+            throw;
+        }
         try
         {
             MqttReasonCode result = await RoutePublishLeaseWithResultAsync(
@@ -517,14 +582,18 @@ public sealed partial class MqttZeroBroker
         }
         finally
         {
-            lease.Release();
+            if (!leaseRestored)
+            {
+                lease.Release();
+            }
         }
     }
 
-    private void NotifyOverwritten(
+    private async ValueTask NotifyOverwrittenAsync(
         MqttZeroSessionState session,
         MqttZeroClientInfo receiver,
-        MqttZeroQueuedMessage evicted)
+        MqttZeroQueuedMessage evicted,
+        CancellationToken cancellationToken)
     {
         MqttZeroQueueMessageOverwrittenContext context = new()
         {
@@ -536,9 +605,9 @@ public sealed partial class MqttZeroBroker
         {
             try
             {
-                _ = observer.OnQueueMessageOverwrittenAsync(
+                await observer.OnQueueMessageOverwrittenAsync(
                     context,
-                    CancellationToken.None).AsTask();
+                    cancellationToken).ConfigureAwait(false);
             }
             catch (Exception)
             {
@@ -621,49 +690,63 @@ public sealed partial class MqttZeroBroker
         {
             MqttZeroQueuedMessage? next = null;
             bool nextHeld = false;
+            bool hasNext = false;
+            List<MqttZeroQueuedMessage> expired = [];
             lock (session.SyncRoot)
             {
                 DateTimeOffset now = _timeProvider.GetUtcNow();
-                RemoveExpiredPendingMessages(session, now);
-                if (session.PendingMessages.Count == 0 ||
-                    (session.PendingMessages[0].QualityOfServiceLevel !=
-                        MqttQualityOfServiceLevel.AtMostOnce &&
-                    session.InflightMessages.Count >= GetInflightLimit(connection)))
+                session.PendingMessages.RemoveExpired(now, expired);
+                hasNext = session.PendingMessages.Count > 0 &&
+                    (session.PendingMessages[0].QualityOfServiceLevel ==
+                        MqttQualityOfServiceLevel.AtMostOnce ||
+                    session.InflightMessages.Count < GetInflightLimit(connection));
+                if (hasNext)
                 {
-                    break;
+                    next = session.PendingMessages.Dequeue();
+                    if (next.QualityOfServiceLevel != MqttQualityOfServiceLevel.AtMostOnce)
+                    {
+                        next.PacketIdentifier = session.GetNextPacketIdentifier();
+                        session.InflightMessages[next.PacketIdentifier] = next;
+                        nextHeld = true;
+                    }
                 }
+            }
 
-                next = session.PendingMessages.Dequeue();
-                if (next.QualityOfServiceLevel != MqttQualityOfServiceLevel.AtMostOnce)
-                {
-                    next.PacketIdentifier = session.GetNextPacketIdentifier();
-                    session.InflightMessages[next.PacketIdentifier] = next;
-                    nextHeld = true;
-                }
+            foreach (MqttZeroQueuedMessage expiredMessage in expired)
+            {
+                await NotifyDroppedAsync(
+                    null,
+                    session,
+                    expiredMessage.Lease,
+                    MqttZeroMessageDropReason.Expired,
+                    cancellationToken).ConfigureAwait(false);
+                await DeleteOutboundAsync(
+                    session.ClientId,
+                    expiredMessage.MessageId,
+                    cancellationToken).ConfigureAwait(false);
+                expiredMessage.Release();
+            }
+
+            if (!hasNext)
+            {
+                break;
             }
 
             if (nextHeld)
             {
                 await SaveOutboundAsync(
-                    next,
+                    next!,
                     session.ClientId,
                     cancellationToken).ConfigureAwait(false);
             }
 
-            await connection.SendAsync(next.CreatePacket(false), cancellationToken)
+            await connection.SendAsync(next!.CreatePacket(false), cancellationToken)
                 .ConfigureAwait(false);
             if (!nextHeld)
             {
                 next.Release();
             }
         }
-    }
-
-    private static void RemoveExpiredPendingMessages(
-        MqttZeroSessionState session,
-        DateTimeOffset now)
-    {
-        session.PendingMessages.RemoveExpired(now);
     }
 
     private static void ReleaseSessionMessages(MqttZeroSessionState session)

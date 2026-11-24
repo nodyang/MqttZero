@@ -56,11 +56,28 @@ public static partial class MqttPacketCodec
             return false;
         }
 
+        MqttPublishPacket publishPacket = (MqttPublishPacket)packet;
+        if ((qos != MqttQualityOfServiceLevel.AtMostOnce && packetIdentifier == 0) ||
+            (!topicName.IsEmpty &&
+                !MqttZeroProtocolValidator.IsValidTopicName(topicName)) ||
+            (topicName.IsEmpty && !publishPacket.TopicAlias.HasValue))
+        {
+            packet = null;
+            return false;
+        }
+
         return true;
     }
 
     private static void EncodePublish(MqttPublishPacket packet, IBufferWriter<byte> writer)
     {
+        if ((!packet.TopicName.IsEmpty &&
+                !MqttZeroProtocolValidator.IsValidTopicName(packet.TopicName)) ||
+            (packet.TopicName.IsEmpty && !packet.TopicAlias.HasValue))
+        {
+            throw new ArgumentException("The MQTT PUBLISH topic name is invalid.", nameof(packet));
+        }
+
         int propertiesLength = Mqtt5PropertyWriter.GetPublishPropertiesLength(packet);
         int bodyLength =
             2 +
@@ -87,7 +104,7 @@ public static partial class MqttPacketCodec
         int lengthBytes = WriteVariableByteInteger(fixedHeader[1..], bodyLength);
         writer.Advance(1 + lengthBytes);
 
-        WriteUtf8(writer, packet.TopicName.IsEmpty ? ReadOnlySpan<byte>.Empty : packet.TopicName.FirstSpan);
+        WriteUtf8(writer, packet.TopicName);
         if (packet.QualityOfServiceLevel != MqttQualityOfServiceLevel.AtMostOnce)
         {
             WriteUInt16(writer, packet.PacketIdentifier);

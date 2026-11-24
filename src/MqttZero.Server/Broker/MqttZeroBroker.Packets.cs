@@ -54,10 +54,24 @@ public sealed partial class MqttZeroBroker
 
                 if (acknowledgedMessage != null)
                 {
-                    await _persistenceWriter.EnqueueOutboundDeleteAsync(
-                        session.ClientId,
-                        acknowledgedMessage.MessageId,
-                        cancellationToken).ConfigureAwait(false);
+                    try
+                    {
+                        await DeleteOutboundAsync(
+                            session.ClientId,
+                            acknowledgedMessage.MessageId,
+                            cancellationToken).ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                        lock (session.SyncRoot)
+                        {
+                            session.InflightMessages[pubAckPacket.PacketIdentifier] =
+                                acknowledgedMessage;
+                        }
+
+                        throw;
+                    }
+
                     acknowledgedMessage.Release();
                 }
 
@@ -113,7 +127,7 @@ public sealed partial class MqttZeroBroker
         bool[] existed = new bool[packet.Subscriptions.Count];
         bool changed = false;
         List<MqttZeroSubscription>? subscriptionSnapshot = null;
-        if (_persistenceWriter.IsEnabled)
+        if (_sessionStore.IsEnabled)
         {
             lock (session.SyncRoot)
             {
@@ -270,6 +284,8 @@ public sealed partial class MqttZeroBroker
                     Retain = true,
                     SubscriptionIdentifier = packet.SubscriptionIdentifier
                 };
+                retainedPacket.MessageExpiryInterval =
+                    GetRemainingMessageExpiry(retainedMessage.ExpiresAt, now);
                 await DeliverAsync(
                     session,
                     retainedPacket,
@@ -290,7 +306,7 @@ public sealed partial class MqttZeroBroker
         byte[] reasonCodes = new byte[packet.TopicFilters.Count];
         bool changed = false;
         List<MqttZeroSubscription>? subscriptionSnapshot = null;
-        if (_persistenceWriter.IsEnabled)
+        if (_sessionStore.IsEnabled)
         {
             lock (session.SyncRoot)
             {

@@ -1,6 +1,6 @@
 # MQTTZero
 
-MQTTZero 是一个面向 ASP.NET Core Kestrel 的独立 MQTT 5 Broker。生产代码不依赖 MQTTnet，目标框架为 .NET 10。当前版本为 `0.6.0-alpha.1`。
+MQTTZero 是一个面向 ASP.NET Core Kestrel 的独立 MQTT 5 Broker。生产代码不依赖 MQTTnet，目标框架为 .NET 10。当前版本为 `0.7.0-alpha.1`。
 
 ## 当前能力
 
@@ -161,7 +161,9 @@ builder.Services.AddSingleton<IMqttZeroRetainedMessageStore, MyRetainedMessageSt
 builder.Services.AddMqttZero();
 ```
 
-外部 Store 在保存二进制字段时必须复制数据，不能引用 Broker 的池化 Lease。持久化模式允许异步和分配；默认无操作模式仍执行零分配热路径检查。
+Store 采用严格 Write-Through：Save/Delete 成功后才发送对应 ACK；失败时 Broker 回滚内存状态并关闭相关连接。外部 Store 在保存二进制字段时必须复制数据，不能引用 Broker 的池化 Lease。默认无操作模式仍执行零分配热路径检查。
+
+Dashboard 的客户端和 Session 列表支持 `page`、`pageSize` 参数，默认值和上限由 `MqttZeroDashboardOptions` 控制。
 
 ## Kestrel 入口配置
 
@@ -250,4 +252,4 @@ npm run build
 
 ## 限制
 
-当前不包含 Enhanced Authentication、MQTT 3.1.1、跨进程持久化、集群、桥接和客户端 SDK。Session、Will、QoS 1/2 队列和 QoS 2 握手状态在进程重启后丢失。Dashboard、管理 API、异步拦截器续接和网络框架边界不属于 `0 B/op` 承诺。当前不提供完整 MQTT 5 属性语义或 Dashboard Live Events。
+当前不包含 Enhanced Authentication、MQTT 3.1.1、具体数据库 Store、集群、桥接和客户端 SDK。默认 Noop Store 下 Session、Will、QoS 1/2 队列和 QoS 2 握手状态在进程重启后丢失；配置外部 Store 后由 Store 提供恢复能力。Dashboard、管理 API、异步拦截器续接和网络框架边界不属于 `0 B/op` 承诺。当前不提供完整 MQTT 5 属性语义或 Dashboard Live Events。
