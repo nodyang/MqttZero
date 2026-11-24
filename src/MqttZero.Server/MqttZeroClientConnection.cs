@@ -27,7 +27,8 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
         ushort receiveMaximum,
         uint maximumPacketSize,
         TimeProvider timeProvider,
-        MqttZeroBufferPool? bufferPool = null)
+        MqttZeroBufferPool? bufferPool = null,
+        bool allowPacketFragmentation = true)
     {
         _bufferPool = bufferPool ?? MqttZeroBufferPool.Shared;
         _writer = writer;
@@ -37,6 +38,7 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
         KeepAliveSeconds = keepAliveSeconds;
         ReceiveMaximum = receiveMaximum;
         MaximumPacketSize = maximumPacketSize;
+        AllowPacketFragmentation = allowPacketFragmentation;
         LastPacketReceivedAt = timeProvider.GetUtcNow();
     }
 
@@ -51,6 +53,8 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
     public ushort ReceiveMaximum { get; }
 
     public uint MaximumPacketSize { get; }
+
+    public bool AllowPacketFragmentation { get; }
 
     public DateTimeOffset LastPacketReceivedAt { get; private set; }
 
@@ -141,15 +145,17 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
         await _writeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            MqttZeroPublishView view = message.CreateView(duplicate);
-            if (MqttPublishPacketCodec.GetEncodedLength(view) > MaximumPacketSize)
-            {
-                throw new InvalidOperationException(
-                    "The outbound MQTT packet exceeds the client maximum packet size.");
-            }
-
-            MqttPublishPacketCodec.Encode(view, _writer);
-            _ = await _writer.FlushAsync(cancellationToken).ConfigureAwait(false);
+            await WritePublishPacketAsync(
+                message.Lease.TopicSequence,
+                message.Lease.PropertiesSequence,
+                message.Lease.PayloadSequence,
+                message.QualityOfServiceLevel,
+                message.PacketIdentifier,
+                duplicate,
+                message.Retain,
+                message.Lease.MessageExpiryInterval,
+                message.SubscriptionIdentifier,
+                cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -169,7 +175,7 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
         await _writeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            MqttZeroPublishView view = new(
+            await WritePublishPacketAsync(
                 lease.TopicSequence,
                 lease.PropertiesSequence,
                 lease.PayloadSequence,
@@ -179,15 +185,7 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
                 retain,
                 lease.MessageExpiryInterval,
                 subscriptionIdentifier,
-                null);
-            if (MqttPublishPacketCodec.GetEncodedLength(view) > MaximumPacketSize)
-            {
-                throw new InvalidOperationException(
-                    "The outbound MQTT packet exceeds the client maximum packet size.");
-            }
-
-            MqttPublishPacketCodec.Encode(view, _writer);
-            _ = await _writer.FlushAsync(cancellationToken).ConfigureAwait(false);
+                cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -349,6 +347,54 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
         {
             _writeLock.Release();
         }
+    }
+
+    private async ValueTask WritePublishPacketAsync(
+        ReadOnlySequence<byte> topic,
+        ReadOnlySequence<byte> properties,
+        ReadOnlySequence<byte> payload,
+        MqttQualityOfServiceLevel qualityOfServiceLevel,
+        ushort packetIdentifier,
+        bool duplicate,
+        bool retain,
+        uint? messageExpiryInterval,
+        uint? subscriptionIdentifier,
+        CancellationToken cancellationToken)
+    {
+        MqttZeroPublishView view = new(
+            topic,
+            properties,
+            payload,
+            qualityOfServiceLevel,
+            packetIdentifier,
+            duplicate,
+            retain,
+            messageExpiryInterval,
+            subscriptionIdentifier,
+            null);
+        int encodedLength = MqttPublishPacketCodec.GetEncodedLength(view);
+        if (encodedLength > MaximumPacketSize)
+        {
+            throw new InvalidOperationException(
+                "The outbound MQTT packet exceeds the client maximum packet size.");
+        }
+
+        if (AllowPacketFragmentation)
+        {
+            MqttPublishPacketCodec.Encode(view, _writer);
+        }
+        else
+        {
+            using MqttZeroPooledBufferWriter packetWriter = new(
+                _bufferPool,
+                encodedLength);
+            MqttPublishPacketCodec.Encode(view, packetWriter);
+            _ = await _writer.WriteAsync(
+                packetWriter.WrittenMemory,
+                cancellationToken).ConfigureAwait(false);
+        }
+
+        _ = await _writer.FlushAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private async ValueTask SendControlPacketDirectAsync(

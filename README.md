@@ -10,6 +10,8 @@ MQTTZero 是一个面向 ASP.NET Core Kestrel 的独立 MQTT 5 Broker。生产�
 - QoS 1 Inflight `DUP` 重发、KeepAlive 超时、Will/Will Delay 和 Message Expiry。
 - UTF-8 Topic 通配符、Topic Alias、共享订阅轮询、Retained 回放和内存 PayloadOwner。
 - DI 发布拦截器、Broker 生命周期、客户端快照和健康检查。
+- 统一 `MqttZeroPublishMessage` 发布入口，以及 `ReadOnlySequence<byte>`、PipeWriter 工厂和 Stream 便捷扩展。
+- Kestrel Accepted Socket、静态 TLS、分片策略和 Unix Domain Socket 原生承载配置。
 - 池化字节池、引用计数 Payload Lease、无分配 PUBLISH 解码/路由/QoS 1 队列/编码和内存 Transport 热路径。
 - 可选 Vue 3 + Element Plus 管理面板，构建资源内嵌在 NuGet 程序集中。
 
@@ -25,7 +27,11 @@ WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 
 builder.WebHost.ConfigureKestrel(kestrel =>
 {
-    kestrel.Listen(IPAddress.Any, 1883, listen => listen.UseMqttZero());
+    kestrel.Listen(IPAddress.Any, 1883, listen => listen.UseMqttZero(options =>
+    {
+        options.AcceptedSockets.NoDelay = true;
+        options.AcceptedSockets.KeepAlive = true;
+    }));
 });
 
 builder.Services.AddMqttZero();
@@ -46,6 +52,76 @@ await app.RunAsync();
 ```
 
 完整示例位于 `samples/MqttZero.Sample`。
+
+## 发布 API
+
+`MqttZeroBroker.PublishAsync` 接收单个消息实体，后续消息字段扩展不会改变核心方法签名：
+
+```csharp
+using MqttZero.Broker;
+using MqttZero.Protocol;
+using MqttZero.Publishing;
+using System.Buffers;
+
+MqttZeroBroker broker = app.Services.GetRequiredService<MqttZeroBroker>();
+await broker.PublishAsync(
+    new MqttZeroPublishMessage
+    {
+        Topic = "devices/a/state",
+        Payload = new ReadOnlySequence<byte>("online"u8.ToArray()),
+        QualityOfServiceLevel = MqttQualityOfServiceLevel.AtLeastOnce,
+        Retain = true
+    });
+```
+
+`ReadOnlySequence<byte>`、PipeWriter 工厂和 Stream 继续通过 `PublishAsync` 扩展调用：
+
+```csharp
+await broker.PublishAsync(
+    "devices/a/state",
+    new ReadOnlySequence<byte>("online"u8.ToArray()),
+    MqttQualityOfServiceLevel.AtMostOnce,
+    retain: false);
+
+await broker.PublishAsync(
+    "devices/a/state",
+    payloadStream,
+    MqttQualityOfServiceLevel.AtLeastOnce,
+    retain: false);
+```
+
+Stream 由调用方拥有；扩展会在发布前将内容收集到池化多段 Payload，并执行最大包大小限制。
+
+## Kestrel 入口配置
+
+`UseMqttZero` 支持连接级 TCP 选项和静态 TLS。Listening Socket 的 `ReuseAddress` 等选项仍由 Kestrel `SocketTransportOptions` 管理。
+
+```csharp
+using System.Security.Authentication;
+using System.Security.Cryptography.X509Certificates;
+
+kestrel.Listen(IPAddress.Any, 8883, listen => listen.UseMqttZero(options =>
+{
+    options.AcceptedSockets.KeepAlive = true;
+    options.Tls = new MqttZeroTlsOptions
+    {
+        ServerCertificate = certificate,
+        SslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13
+    };
+}));
+```
+
+证书在监听器启动时使用，不提供热替换。WebSocket 端点可按连接选择是否允许 MQTT PUBLISH 分片：
+
+```csharp
+app.MapMqttZero("/mqtt", options =>
+{
+    options.AllowPacketFragmentationSelector = transport =>
+        !transport.IsSecure;
+});
+```
+
+WebSocket 未设置选择器时默认不允许分片，从而保持 MQTT PUBLISH 单帧语义；TCP/TLS 端点未设置选择器时仍允许分片。
 
 ## 0.4.0 命名空间迁移
 
@@ -121,6 +197,8 @@ dotnet run -c Release --project benchmarks/MqttZero.Benchmarks -- `
 ```
 
 已提交的基准数据和解释位于 `perf/baseline`。当前实测中，fast PUBLISH 解码、Header 编码、Topic 路由、共享订阅、QoS 1 队列、扇出和内存端到端均达到 `0 B/op`。8 KiB 内存端到端约 `317 ns`，约为 MQTTnet 同工作负载 codec+匹配基线的 `1.46x`。Header-only 小报文仍约为 MQTTnet 的 `1.07–1.14x`，公平 Full Writer 和所有路由对比也尚未达到全部计划门槛；这些缺口保留在基线文档中，不应被解释为已经达成。
+
+全局 Packet Writer 池经顺序和 128 并发基准验证后未引入，原因和结果见 `perf/baseline/packet-writer-pool-0.5.0-alpha.1.md`。完整 Broker 对 Broker 的 TCP/QoS/多连接比较方法见 `perf/baseline/broker-comparison-methodology.md`。
 
 ## 构建与测试
 

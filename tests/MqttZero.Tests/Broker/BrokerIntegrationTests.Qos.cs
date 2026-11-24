@@ -258,7 +258,9 @@ namespace MqttZero.Tests.Broker
             {
                 await broker.PublishAsync(
                     "queue/value",
-                    System.Text.Encoding.UTF8.GetBytes(index.ToString(CultureInfo.InvariantCulture)),
+                    new ReadOnlySequence<byte>(
+                        System.Text.Encoding.UTF8.GetBytes(
+                            index.ToString(CultureInfo.InvariantCulture))),
                     MqttQualityOfServiceLevel.AtLeastOnce,
                     false,
                     cancellationToken);

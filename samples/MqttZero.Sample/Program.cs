@@ -9,7 +9,11 @@ WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 
 builder.WebHost.ConfigureKestrel(kestrel =>
 {
-    kestrel.Listen(IPAddress.Any, 1883, listen => listen.UseMqttZero());
+    kestrel.Listen(IPAddress.Any, 1883, listen => listen.UseMqttZero(options =>
+    {
+        options.AcceptedSockets.NoDelay = true;
+        options.AcceptedSockets.KeepAlive = true;
+    }));
 });
 
 builder.Services.AddMqttZero(options =>

@@ -4,6 +4,7 @@ using MqttZero.Memory;
 using MqttZero.Protocol;
 using MqttZero.Routing;
 using MqttZero.Sessions;
+using System.Buffers;
 using System.Reflection;
 
 namespace MqttZero.Tests
@@ -22,7 +23,7 @@ namespace MqttZero.Tests
 
             await broker.PublishAsync(
                 "retained/topic",
-                "retained-payload"u8.ToArray(),
+                new ReadOnlySequence<byte>("retained-payload"u8.ToArray()),
                 MqttQualityOfServiceLevel.AtMostOnce,
                 true,
                 TestContext.Current.CancellationToken);
@@ -30,7 +31,7 @@ namespace MqttZero.Tests
 
             await broker.PublishAsync(
                 "retained/topic",
-                ReadOnlyMemory<byte>.Empty,
+                ReadOnlySequence<byte>.Empty,
                 MqttQualityOfServiceLevel.AtMostOnce,
                 true,
                 TestContext.Current.CancellationToken);

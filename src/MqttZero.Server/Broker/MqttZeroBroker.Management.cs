@@ -1,6 +1,7 @@
 using MqttZero.Interceptors;
 using MqttZero.Memory;
 using MqttZero.Protocol;
+using MqttZero.Publishing;
 using MqttZero.Routing;
 using MqttZero.Sessions;
 using System.Buffers;
@@ -97,33 +98,54 @@ public sealed partial class MqttZeroBroker
     /// <summary>
     /// Publishes a server-originated message to matching subscribers.
     /// </summary>
-    /// <param name="topic">The UTF-8 topic name.</param>
-    /// <param name="payload">The message payload bytes.</param>
-    /// <param name="qualityOfServiceLevel">The requested quality of service.</param>
-    /// <param name="retain">Whether the message should be retained.</param>
+    /// <param name="message">The message to publish.</param>
     /// <param name="cancellationToken">A token that cancels the operation.</param>
     /// <returns>A task representing the publish operation.</returns>
     public async ValueTask PublishAsync(
-        string topic,
-        ReadOnlyMemory<byte> payload,
-        MqttQualityOfServiceLevel qualityOfServiceLevel,
-        bool retain,
+        MqttZeroPublishMessage message,
         CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(topic);
+        ArgumentNullException.ThrowIfNull(message);
+        ArgumentException.ThrowIfNullOrWhiteSpace(message.Topic);
         if (State != MqttZeroBrokerState.Running)
         {
             throw new InvalidOperationException("The MQTTZero broker is not running.");
         }
 
+        ReadOnlySequence<byte> topic = new(Encoding.UTF8.GetBytes(message.Topic));
         MqttPublishPacket packet = new()
         {
-            TopicName = new ReadOnlySequence<byte>(Encoding.UTF8.GetBytes(topic)),
-            Payload = new ReadOnlySequence<byte>(payload),
-            QualityOfServiceLevel = qualityOfServiceLevel,
-            Retain = retain
+            TopicName = topic,
+            Payload = message.Payload,
+            QualityOfServiceLevel = message.QualityOfServiceLevel,
+            Retain = message.Retain
         };
+        MqttZeroPublishView view = new(
+            topic,
+            ReadOnlySequence<byte>.Empty,
+            message.Payload,
+            message.QualityOfServiceLevel,
+            0,
+            false,
+            message.Retain,
+            null,
+            null,
+            null);
+        if (MqttPublishPacketCodec.GetEncodedLength(view) > _options.MaxPacketSize)
+        {
+            throw new InvalidOperationException(
+                "The outbound MQTT packet exceeds the broker maximum packet size.");
+        }
+
         await RoutePublishAsync(null, packet, cancellationToken).ConfigureAwait(false);
+    }
+
+    internal int MaximumPublishPayloadSize
+    {
+        get
+        {
+            return _options.MaxPacketSize;
+        }
     }
 
     /// <summary>

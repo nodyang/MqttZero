@@ -1,5 +1,6 @@
 using MqttZero.Broker;
 using MqttZero.Protocol;
+using System.Buffers;
 using System.Text;
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Builder;
@@ -129,7 +130,7 @@ public static class MqttZeroDashboardEndpointRouteBuilderExtensions
         await antiforgery.ValidateRequestAsync(context).ConfigureAwait(false);
         await broker.PublishAsync(
             request.Topic,
-            Encoding.UTF8.GetBytes(request.Payload),
+            new ReadOnlySequence<byte>(Encoding.UTF8.GetBytes(request.Payload)),
             request.QualityOfServiceLevel,
             request.Retain,
             cancellationToken).ConfigureAwait(false);

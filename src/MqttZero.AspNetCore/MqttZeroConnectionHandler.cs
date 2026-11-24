@@ -2,8 +2,10 @@ using MqttZero.Broker;
 using MqttZero.Interceptors;
 using Microsoft.AspNetCore.Connections;
 using Microsoft.AspNetCore.Connections.Features;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Connections;
 using Microsoft.Extensions.Hosting;
+using System.Net.Sockets;
 
 namespace MqttZero.AspNetCore;
 
@@ -12,6 +14,8 @@ namespace MqttZero.AspNetCore;
 /// </summary>
 public sealed class MqttZeroConnectionHandler : ConnectionHandler
 {
+    internal static readonly object EndpointOptionsKey = new();
+
     private readonly IHostApplicationLifetime _applicationLifetime;
     private readonly MqttZeroBroker _broker;
 
@@ -44,6 +48,29 @@ public sealed class MqttZeroConnectionHandler : ConnectionHandler
         Microsoft.AspNetCore.Http.HttpContext? httpContext = connection.GetHttpContext();
         bool isWebSocket = httpContext?.WebSockets.IsWebSocketRequest == true;
         bool isSecure = httpContext?.Request.IsHttps == true;
+        MqttZeroTransportInfo transportInfo = new()
+        {
+            RemoteEndPoint = connection.RemoteEndPoint,
+            IsSecure = isSecure,
+            IsWebSocket = isWebSocket
+        };
+        MqttZeroEndpointOptions endpointOptions =
+            connection.Items.TryGetValue(EndpointOptionsKey, out object? value) &&
+            value is MqttZeroEndpointOptions configuredOptions
+                ? configuredOptions
+                : new MqttZeroEndpointOptions();
+        IConnectionSocketFeature? socketFeature =
+            connection.Features.Get<IConnectionSocketFeature>();
+        if (socketFeature?.Socket is Socket socket)
+        {
+            endpointOptions.AcceptedSockets.Apply(socket, connection.RemoteEndPoint);
+        }
+
+        MqttZeroWebSocketOptions? webSocketOptions =
+            httpContext?.GetEndpoint()?.Metadata.GetMetadata<MqttZeroWebSocketOptions>();
+        bool allowPacketFragmentation = webSocketOptions != null
+            ? webSocketOptions.ResolveAllowPacketFragmentation(transportInfo)
+            : endpointOptions.ResolveAllowPacketFragmentation(transportInfo);
 
         await _broker.AcceptConnectionAsync(
             connection.Transport.Input,
@@ -51,6 +78,7 @@ public sealed class MqttZeroConnectionHandler : ConnectionHandler
             connection.RemoteEndPoint,
             isSecure,
             isWebSocket,
+            allowPacketFragmentation,
             cancellation.Token).ConfigureAwait(false);
     }
 }

@@ -34,6 +34,36 @@ public sealed partial class MqttZeroBroker
         bool isWebSocket,
         CancellationToken cancellationToken)
     {
+        await AcceptConnectionAsync(
+            input,
+            output,
+            remoteEndPoint,
+            isSecure,
+            isWebSocket,
+            true,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Processes one accepted Kestrel connection until it disconnects.
+    /// </summary>
+    /// <param name="input">The inbound byte pipe.</param>
+    /// <param name="output">The outbound byte pipe.</param>
+    /// <param name="remoteEndPoint">The optional remote network endpoint.</param>
+    /// <param name="isSecure">Whether the connection uses TLS.</param>
+    /// <param name="isWebSocket">Whether the connection uses WebSocket.</param>
+    /// <param name="allowPacketFragmentation">Whether outbound PUBLISH packets may be split across writes.</param>
+    /// <param name="cancellationToken">A token that terminates the connection.</param>
+    /// <returns>A task that completes when the connection closes.</returns>
+    public async ValueTask AcceptConnectionAsync(
+        PipeReader input,
+        PipeWriter output,
+        EndPoint? remoteEndPoint,
+        bool isSecure,
+        bool isWebSocket,
+        bool allowPacketFragmentation,
+        CancellationToken cancellationToken)
+    {
         ArgumentNullException.ThrowIfNull(input);
         ArgumentNullException.ThrowIfNull(output);
 
@@ -130,7 +160,8 @@ public sealed partial class MqttZeroBroker
                             output,
                             remoteEndPoint,
                             isSecure,
-                            isWebSocket).ConfigureAwait(false);
+                            isWebSocket,
+                            allowPacketFragmentation).ConfigureAwait(false);
                         session = attachment.Session;
                         connection = attachment.Connection;
                         closeRegistration = connection.ClosedToken.Register(
@@ -193,7 +224,8 @@ public sealed partial class MqttZeroBroker
         PipeWriter output,
         EndPoint? remoteEndPoint,
         bool isSecure,
-        bool isWebSocket)
+        bool isWebSocket,
+        bool allowPacketFragmentation)
     {
         string clientId = connectPacket.ClientId.IsEmpty
             ? $"mqttzero-{Guid.NewGuid():N}"
@@ -214,7 +246,8 @@ public sealed partial class MqttZeroBroker
             connectPacket.ReceiveMaximum,
             connectPacket.MaximumPacketSize,
             _timeProvider,
-            _bufferPool);
+            _bufferPool,
+            allowPacketFragmentation);
         MqttZeroClientConnection? oldConnection = null;
         MqttZeroWillMessage? takeoverWill = null;
         MqttZeroSessionState session;

@@ -16,20 +16,26 @@ public static class MqttZeroEndpointRouteBuilderExtensions
     /// </summary>
     /// <param name="endpoints">The endpoint route builder.</param>
     /// <param name="pattern">The endpoint route pattern.</param>
+    /// <param name="configure">An optional WebSocket endpoint configuration callback.</param>
     /// <returns>The mapped connection endpoint.</returns>
     public static IEndpointConventionBuilder MapMqttZero(
         this IEndpointRouteBuilder endpoints,
-        string pattern)
+        string pattern,
+        Action<MqttZeroWebSocketOptions>? configure = null)
     {
         ArgumentNullException.ThrowIfNull(endpoints);
         ArgumentException.ThrowIfNullOrWhiteSpace(pattern);
 
-        return endpoints.MapConnectionHandler<MqttZeroConnectionHandler>(
+        MqttZeroWebSocketOptions webSocketOptions = new();
+        configure?.Invoke(webSocketOptions);
+        IEndpointConventionBuilder builder = endpoints.MapConnectionHandler<MqttZeroConnectionHandler>(
             pattern,
             static options =>
             {
                 options.WebSockets.SubProtocolSelector = SelectMqttSubProtocol;
             });
+        builder.WithMetadata(webSocketOptions);
+        return builder;
     }
 
     private static string SelectMqttSubProtocol(IList<string> requestedProtocols)

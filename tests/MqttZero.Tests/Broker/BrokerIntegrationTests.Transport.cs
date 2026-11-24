@@ -26,6 +26,182 @@ namespace MqttZero.Tests.Broker
     public sealed partial class BrokerIntegrationTests
     {
         [Fact(Timeout = 15_000)]
+        public async Task AppliesAcceptedSocketOptionsBeforeCustomSocketCallback()
+        {
+            int port = GetFreePort();
+            TaskCompletionSource<Socket> configuredSocket = new(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            WebApplicationBuilder builder = WebApplication.CreateBuilder();
+            builder.Logging.ClearProviders();
+            builder.WebHost.ConfigureKestrel(kestrel =>
+            {
+                kestrel.Listen(
+                    IPAddress.Loopback,
+                    port,
+                    listen => listen.UseMqttZero(options =>
+                    {
+                        options.AcceptedSockets.NoDelay = false;
+                        options.AcceptedSockets.LingerState = new LingerOption(true, 1);
+                        options.AcceptedSockets.Configure = (socket, _) =>
+                        {
+                            configuredSocket.TrySetResult(socket);
+                        };
+                    }));
+            });
+            builder.Services.AddMqttZero();
+
+            await using WebApplication app = builder.Build();
+            CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+            await app.StartAsync(cancellationToken);
+            MqttClientFactory factory = new();
+            using IMqttClient client = factory.CreateMqttClient();
+            await client.ConnectAsync(
+                CreateClientOptions(port, "socket-options"),
+                cancellationToken);
+
+            Socket socket = await configuredSocket.Task.WaitAsync(
+                TimeSpan.FromSeconds(5),
+                cancellationToken);
+            Assert.False(socket.NoDelay);
+            LingerOption? linger = socket.LingerState;
+            Assert.NotNull(linger);
+            Assert.True(linger.Enabled);
+            Assert.Equal(1, linger.LingerTime);
+
+            await client.DisconnectAsync(cancellationToken: cancellationToken);
+            await app.StopAsync(cancellationToken);
+        }
+
+        [Fact(Timeout = 15_000)]
+        public async Task RoutesMessagesUsingStaticMqttZeroTlsOptions()
+        {
+            int port = GetFreePort();
+            using X509Certificate2 certificate = CreateServerCertificate();
+            WebApplicationBuilder builder = WebApplication.CreateBuilder();
+            builder.Logging.ClearProviders();
+            builder.WebHost.ConfigureKestrel(kestrel =>
+            {
+                kestrel.Listen(
+                    IPAddress.Loopback,
+                    port,
+                    listen => listen.UseMqttZero(options =>
+                    {
+                        options.Tls = new MqttZeroTlsOptions
+                        {
+                            ServerCertificate = certificate,
+                            SslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13
+                        };
+                    }));
+            });
+            builder.Services.AddMqttZero();
+
+            await using WebApplication app = builder.Build();
+            CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+            await app.StartAsync(cancellationToken);
+
+            MqttClientFactory factory = new();
+            using IMqttClient subscriber = factory.CreateMqttClient();
+            using IMqttClient publisher = factory.CreateMqttClient();
+            TaskCompletionSource<string> received = new(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            subscriber.ApplicationMessageReceivedAsync += eventArgs =>
+            {
+                received.TrySetResult(eventArgs.ApplicationMessage.ConvertPayloadToString());
+                return Task.CompletedTask;
+            };
+
+            await subscriber.ConnectAsync(
+                CreateTlsClientOptions(port, "tls-options-subscriber"),
+                cancellationToken);
+            await publisher.ConnectAsync(
+                CreateTlsClientOptions(port, "tls-options-publisher"),
+                cancellationToken);
+            await subscriber.SubscribeAsync(
+                new MqttClientSubscribeOptionsBuilder()
+                    .WithTopicFilter("tls/options")
+                    .Build(),
+                cancellationToken);
+            await publisher.PublishStringAsync(
+                "tls/options",
+                "configured",
+                cancellationToken: cancellationToken);
+
+            Assert.Equal(
+                "configured",
+                await received.Task.WaitAsync(
+                    TimeSpan.FromSeconds(5),
+                    cancellationToken));
+
+            await publisher.DisconnectAsync(cancellationToken: cancellationToken);
+            await subscriber.DisconnectAsync(cancellationToken: cancellationToken);
+            await app.StopAsync(cancellationToken);
+        }
+
+        [Fact]
+        public async Task TlsConfigurationRequiresACertificate()
+        {
+            WebApplicationBuilder builder = WebApplication.CreateBuilder();
+            builder.Logging.ClearProviders();
+            builder.WebHost.ConfigureKestrel(kestrel =>
+            {
+                kestrel.Listen(
+                    IPAddress.Loopback,
+                    GetFreePort(),
+                    listen => listen.UseMqttZero(options =>
+                    {
+                        options.Tls = new MqttZeroTlsOptions();
+                    }));
+            });
+            builder.Services.AddMqttZero();
+
+            Assert.Throws<InvalidOperationException>(
+                () =>
+                {
+                    using WebApplication app = builder.Build();
+                });
+        }
+
+        [Fact(Timeout = 15_000)]
+        public async Task AppliesWebSocketFragmentationSelectorFromEndpointMetadata()
+        {
+            int port = GetFreePort();
+            TaskCompletionSource<MqttZeroTransportInfo> selected = new(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            WebApplicationBuilder builder = WebApplication.CreateBuilder();
+            builder.Logging.ClearProviders();
+            builder.WebHost.UseUrls($"http://127.0.0.1:{port}");
+            builder.Services.AddMqttZero();
+
+            await using WebApplication app = builder.Build();
+            app.UseWebSockets();
+            app.MapMqttZero("/mqtt", options =>
+            {
+                options.AllowPacketFragmentationSelector = transport =>
+                {
+                    selected.TrySetResult(transport);
+                    return false;
+                };
+            });
+            CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+            await app.StartAsync(cancellationToken);
+
+            MqttClientFactory factory = new();
+            using IMqttClient client = factory.CreateMqttClient();
+            await client.ConnectAsync(
+                CreateWebSocketClientOptions(port, "ws-fragmentation"),
+                cancellationToken);
+
+            MqttZeroTransportInfo transport = await selected.Task.WaitAsync(
+                TimeSpan.FromSeconds(5),
+                cancellationToken);
+            Assert.True(transport.IsWebSocket);
+            Assert.False(transport.IsSecure);
+
+            await client.DisconnectAsync(cancellationToken: cancellationToken);
+            await app.StopAsync(cancellationToken);
+        }
+
+        [Fact(Timeout = 15_000)]
         public async Task RoutesPublishedMessageToSubscriber()
         {
             int port = GetFreePort();

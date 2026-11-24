@@ -4,6 +4,7 @@ using MqttZero.Memory;
 using MqttZero.Protocol;
 using MqttZero.Routing;
 using MqttZero.Sessions;
+using System.Buffers;
 using Microsoft.Extensions.DependencyInjection;
 using MqttZero.AspNetCore;
 
@@ -25,7 +26,7 @@ namespace MqttZero.Tests.Interceptors
             await broker.StartAsync(TestContext.Current.CancellationToken);
             await broker.PublishAsync(
                 "devices/a",
-                "value"u8.ToArray(),
+                new ReadOnlySequence<byte>("value"u8.ToArray()),
                 MqttQualityOfServiceLevel.AtMostOnce,
                 false,
                 TestContext.Current.CancellationToken);
@@ -49,7 +50,7 @@ namespace MqttZero.Tests.Interceptors
             await broker.StartAsync(TestContext.Current.CancellationToken);
             await broker.PublishAsync(
                 "devices/a",
-                "value"u8.ToArray(),
+                new ReadOnlySequence<byte>("value"u8.ToArray()),
                 MqttQualityOfServiceLevel.AtMostOnce,
                 false,
                 TestContext.Current.CancellationToken);

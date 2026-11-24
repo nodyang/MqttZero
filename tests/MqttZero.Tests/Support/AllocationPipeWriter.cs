@@ -12,6 +12,8 @@ namespace MqttZero.Tests.Support
             _buffer = new byte[capacity];
         }
 
+        public int WriteAsyncCount { get; private set; }
+
         public override void Advance(int bytes)
         {
             _written += bytes;
@@ -50,6 +52,7 @@ namespace MqttZero.Tests.Support
             ReadOnlyMemory<byte> source,
             CancellationToken cancellationToken = default)
         {
+            WriteAsyncCount++;
             source.Span.CopyTo(_buffer.AsSpan(_written));
             _written += source.Length;
             return ValueTask.FromResult(new FlushResult(false, false));
