@@ -1,5 +1,6 @@
 using MqttZero.Memory;
 using MqttZero.Protocol;
+using System.Collections.Concurrent;
 using System.Text;
 
 namespace MqttZero.Sessions;
@@ -26,6 +27,8 @@ internal sealed class MqttZeroSessionState
     public SemaphoreSlim DrainLock { get; } = new(1, 1);
 
     public List<MqttZeroSubscription> Subscriptions { get; } = [];
+
+    public ConcurrentDictionary<object, object?> Items { get; } = new();
 
     public MqttZeroMessageQueue PendingMessages { get; }
 

@@ -112,6 +112,25 @@ builder.Services.AddMqttZero()
 
 Observer 只观察、不参与 Allow/Deny 决策，异常会被隔离。用户名和客户端证书可提供给扩展；原始密码只在 CONNECT 拦截上下文生效，不进入 Observer。启用 Observer 后允许分配，未注册扩展时原有热路径继续执行零分配检查。
 
+连接成功后，Observer 会获得连接期有效的 `MqttZeroConnectedClient`：
+
+```csharp
+public async ValueTask OnConnectedAsync(
+    MqttZeroClientConnectedContext context,
+    CancellationToken cancellationToken)
+{
+    context.ConnectedClient.Items["role"] = "device";
+    await context.ConnectedClient.SubscribeAsync(
+        [new MqttSubscriptionRequest
+        {
+            TopicFilter = new ReadOnlySequence<byte>("commands/#"u8.ToArray())
+        }],
+        cancellationToken: cancellationToken);
+}
+```
+
+句柄支持服务器代订阅、退订、`SendPublishAsync`、断开、Session Items、状态快照和统计。`SendPublishAsync` 只向目标客户端发送 PUBLISH，不按 Topic 路由，也不更新 Retained Store；按 Topic 路由仍使用 Broker `PublishAsync`。服务器代订阅不会向客户端发送 SUBACK。句柄在断线或 Session 接管后失效。
+
 ## 持久化 Store
 
 Broker 提供三个独立持久化接口：

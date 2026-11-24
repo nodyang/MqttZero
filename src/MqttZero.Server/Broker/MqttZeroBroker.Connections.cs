@@ -11,6 +11,7 @@ using System.Text;
 using System.Security.Cryptography.X509Certificates;
 using MqttZero.Events;
 using MqttZero.Observers;
+using MqttZero.Clients;
 
 namespace MqttZero.Broker;
 
@@ -136,7 +137,10 @@ public sealed partial class MqttZeroBroker
                             out MqttZeroPublishView publishView,
                             out long publishConsumed))
                     {
-                        connection!.MarkPacketReceived(_timeProvider);
+                        connection!.MarkPacketReceived(
+                            _timeProvider,
+                            publishConsumed,
+                            true);
                         try
                         {
                             MqttZeroMessageLease lease = CreateMessageLease(connection, publishView);
@@ -220,7 +224,10 @@ public sealed partial class MqttZeroBroker
                         continue;
                     }
 
-                    connection!.MarkPacketReceived(_timeProvider);
+                    connection!.MarkPacketReceived(
+                        _timeProvider,
+                        consumed,
+                        packet is MqttPublishPacket);
                     await ProcessPacketAsync(session, connection, packet, connectionLifetime.Token)
                         .ConfigureAwait(false);
                     buffer = buffer.Slice(consumed);
@@ -483,7 +490,10 @@ public sealed partial class MqttZeroBroker
             CancellationToken.None).ConfigureAwait(false);
         MqttZeroClientConnectedContext connectedContext = new()
         {
-            Client = clientInfo,
+            ConnectedClient = new MqttZeroConnectedClient(
+                this,
+                session,
+                newConnection),
             SessionPresent = sessionPresent
         };
         foreach (IMqttZeroConnectionObserver observer in _connectionObservers)

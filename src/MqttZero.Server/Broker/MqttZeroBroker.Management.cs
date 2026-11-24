@@ -4,6 +4,7 @@ using MqttZero.Protocol;
 using MqttZero.Publishing;
 using MqttZero.Routing;
 using MqttZero.Sessions;
+using MqttZero.Clients;
 using System.Buffers;
 using System.Collections.Concurrent;
 using System.IO.Pipelines;
@@ -41,10 +42,13 @@ public sealed partial class MqttZeroBroker
             clients.Add(new MqttZeroClientSnapshot
             {
                 ClientId = session.ClientId,
+                UserName = connection.ClientInfo.UserName,
                 RemoteEndPoint = connection.RemoteEndPoint,
                 IsSecure = connection.IsSecure,
                 IsWebSocket = connection.IsWebSocket,
-                SubscriptionCount = subscriptionCount
+                ProtocolVersion = connection.ClientInfo.ProtocolVersion,
+                SubscriptionCount = subscriptionCount,
+                Statistics = connection.GetStatistics()
             });
         }
 

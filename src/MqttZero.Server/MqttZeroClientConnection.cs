@@ -1,5 +1,6 @@
 using MqttZero.Memory;
 using MqttZero.Events;
+using MqttZero.Clients;
 using MqttZero.Protocol;
 using MqttZero.Sessions;
 using System.Buffers;
@@ -18,6 +19,13 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
     private readonly MqttZeroPooledTopicAlias?[] _inboundTopicAliasArray = new MqttZeroPooledTopicAlias?[257];
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private readonly PipeWriter _writer;
+    private readonly DateTimeOffset _connectedAt;
+    private long _packetsReceived;
+    private long _packetsSent;
+    private long _bytesReceived;
+    private long _bytesSent;
+    private long _messagesReceived;
+    private long _messagesSent;
 
     public MqttZeroClientConnection(
         PipeWriter writer,
@@ -41,6 +49,7 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
         MaximumPacketSize = maximumPacketSize;
         AllowPacketFragmentation = allowPacketFragmentation;
         LastPacketReceivedAt = timeProvider.GetUtcNow();
+        _connectedAt = LastPacketReceivedAt;
     }
 
     public EndPoint? RemoteEndPoint { get; }
@@ -76,6 +85,46 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
     public void MarkPacketReceived(TimeProvider timeProvider)
     {
         LastPacketReceivedAt = timeProvider.GetUtcNow();
+        Interlocked.Increment(ref _packetsReceived);
+    }
+
+    public void MarkPacketReceived(
+        TimeProvider timeProvider,
+        long byteCount,
+        bool applicationMessage)
+    {
+        LastPacketReceivedAt = timeProvider.GetUtcNow();
+        Interlocked.Increment(ref _packetsReceived);
+        Interlocked.Add(ref _bytesReceived, byteCount);
+        if (applicationMessage)
+        {
+            Interlocked.Increment(ref _messagesReceived);
+        }
+    }
+
+    public MqttZeroClientStatistics GetStatistics()
+    {
+        return new MqttZeroClientStatistics
+        {
+            ConnectedAt = _connectedAt,
+            LastPacketReceivedAt = LastPacketReceivedAt,
+            PacketsReceived = Interlocked.Read(ref _packetsReceived),
+            PacketsSent = Interlocked.Read(ref _packetsSent),
+            BytesReceived = Interlocked.Read(ref _bytesReceived),
+            BytesSent = Interlocked.Read(ref _bytesSent),
+            MessagesReceived = Interlocked.Read(ref _messagesReceived),
+            MessagesSent = Interlocked.Read(ref _messagesSent)
+        };
+    }
+
+    public void ResetStatistics()
+    {
+        Interlocked.Exchange(ref _packetsReceived, 0);
+        Interlocked.Exchange(ref _packetsSent, 0);
+        Interlocked.Exchange(ref _bytesReceived, 0);
+        Interlocked.Exchange(ref _bytesSent, 0);
+        Interlocked.Exchange(ref _messagesReceived, 0);
+        Interlocked.Exchange(ref _messagesSent, 0);
     }
 
     public void SetInboundTopicAlias(ushort alias, ReadOnlySequence<byte> topic)
@@ -137,6 +186,9 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
 
             _ = await _writer.WriteAsync(_bufferWriter.WrittenMemory, cancellationToken).ConfigureAwait(false);
             _ = await _writer.FlushAsync(cancellationToken).ConfigureAwait(false);
+            MarkPacketSent(
+                _bufferWriter.WrittenCount,
+                packet is MqttPublishPacket);
         }
         finally
         {
@@ -221,6 +273,7 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
             }
 
             _ = await _writer.FlushAsync(cancellationToken).ConfigureAwait(false);
+            MarkPacketSent(includeReason ? 5 : 4, false);
         }
         finally
         {
@@ -444,6 +497,16 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
         }
 
         _ = await _writer.FlushAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private void MarkPacketSent(int byteCount, bool applicationMessage)
+    {
+        Interlocked.Increment(ref _packetsSent);
+        Interlocked.Add(ref _bytesSent, byteCount);
+        if (applicationMessage)
+        {
+            Interlocked.Increment(ref _messagesSent);
+        }
     }
 
     private async ValueTask SendControlPacketDirectAsync(
