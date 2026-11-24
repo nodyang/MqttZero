@@ -1,4 +1,3 @@
-using MqttZero.Server.Events;
 using MqttZero.Protocol;
 
 namespace MqttZero.Server.Observers;

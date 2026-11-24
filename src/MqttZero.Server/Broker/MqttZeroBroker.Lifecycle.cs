@@ -1,6 +1,7 @@
 using MqttZero.Server.Interceptors;
 using MqttZero.Memory;
 using MqttZero.Protocol;
+using MqttZero.Server.Clients;
 using MqttZero.Server.Routing;
 using MqttZero.Server.Sessions;
 using System.Buffers;
@@ -128,7 +129,7 @@ public sealed partial class MqttZeroBroker
             }
 
             Task drained = _connectionsDrained.Task;
-            if (Volatile.Read(ref _connectionCount) > 0)
+            if (Volatile.Read(ref _activeConnectionCount) > 0)
             {
                 await drained.WaitAsync(cancellationToken).ConfigureAwait(false);
             }

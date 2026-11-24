@@ -10,7 +10,6 @@ using System.IO.Pipelines;
 using System.Net;
 using System.Text;
 using System.Security.Cryptography.X509Certificates;
-using MqttZero.Server.Events;
 using MqttZero.Server.Observers;
 using MqttZero.Server.Clients;
 
@@ -102,9 +101,10 @@ public sealed partial class MqttZeroBroker
         {
             if (_options.AcceptNewConnections &&
                 State == MqttZeroBrokerState.Running &&
-                Volatile.Read(ref _connectionCount) < _options.MaxConnections)
+                Volatile.Read(ref _activeConnectionCount) <
+                    _options.MaxActiveConnections)
             {
-                Interlocked.Increment(ref _connectionCount);
+                Interlocked.Increment(ref _activeConnectionCount);
                 _acceptedConnections[acceptedConnectionId] = acceptedCancellation;
                 accepted = true;
             }
@@ -313,6 +313,11 @@ public sealed partial class MqttZeroBroker
             {
                 try
                 {
+                    if (connection != null)
+                    {
+                        ReleaseConnectedClientCount(connection);
+                    }
+
                     if (session != null && connection != null)
                     {
                         connection.IsReadingIncompletePacket = false;
@@ -354,7 +359,7 @@ public sealed partial class MqttZeroBroker
             finally
             {
                 _acceptedConnections.TryRemove(acceptedConnectionId, out _);
-                int remaining = Interlocked.Decrement(ref _connectionCount);
+                int remaining = Interlocked.Decrement(ref _activeConnectionCount);
                 if (remaining == 0)
                 {
                     _connectionsDrained.TrySetResult();
@@ -407,7 +412,7 @@ public sealed partial class MqttZeroBroker
             _timeProvider,
             _bufferPool,
             allowPacketFragmentation);
-        MqttZeroClientInfo clientInfo = new()
+        MqttZeroClientConnectionInfo clientInfo = new()
         {
             ClientId = clientId,
             UserName = connectPacket.HasUserName
@@ -725,6 +730,8 @@ public sealed partial class MqttZeroBroker
                         AssignedClientIdentifier = assignedClientIdentifier ? clientId : null
                     },
                     CancellationToken.None).ConfigureAwait(false);
+                newConnection.IsConnectedClientCounted = true;
+                Interlocked.Increment(ref _connectedClientCount);
                 if (oldConnection != null && !ReferenceEquals(oldConnection, newConnection))
                 {
                     try
@@ -770,6 +777,7 @@ public sealed partial class MqttZeroBroker
             }
             catch
             {
+                ReleaseConnectedClientCount(newConnection);
                 if (replacingSession)
                 {
                     lock (_sessionGate)
@@ -862,6 +870,17 @@ public sealed partial class MqttZeroBroker
                 throw;
             }
         }
+    }
+
+    private void ReleaseConnectedClientCount(MqttZeroClientConnection connection)
+    {
+        if (!connection.IsConnectedClientCounted)
+        {
+            return;
+        }
+
+        connection.IsConnectedClientCounted = false;
+        Interlocked.Decrement(ref _connectedClientCount);
     }
 
     private sealed class ConnectionAttachment

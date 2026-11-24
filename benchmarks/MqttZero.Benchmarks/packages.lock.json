@@ -157,7 +157,7 @@
         "dependencies": {
           "Microsoft.Extensions.Logging.Abstractions": "[10.0.0, )",
           "Microsoft.Extensions.Options": "[10.0.0, )",
-          "MqttZero": "[0.8.0-alpha.1, )"
+          "MqttZero": "[0.9.0-alpha.1, )"
         }
       },
       "Microsoft.CodeAnalysis.CSharp": {

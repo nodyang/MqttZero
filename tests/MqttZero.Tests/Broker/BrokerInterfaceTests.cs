@@ -2,6 +2,7 @@ using MqttQualityOfServiceLevel = MqttZero.Protocol.MqttQualityOfServiceLevel;
 using MqttZero.Server;
 using MqttZero.AspNetCore;
 using MqttZero.Server.Broker;
+using MqttZero.Server.Retained;
 using MqttZero.Publishing;
 using Microsoft.Extensions.DependencyInjection;
 using System.Buffers;

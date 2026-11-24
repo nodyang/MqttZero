@@ -1,6 +1,5 @@
 using MqttZero.Memory;
-using MqttZero.Server.Events;
-using MqttZero.Server.Clients;
+using MqttZero.Server.Observers;
 using MqttZero.Protocol;
 using MqttZero.Server.Sessions;
 using System.Buffers;
@@ -8,7 +7,7 @@ using System.Buffers.Binary;
 using System.IO.Pipelines;
 using System.Net;
 
-namespace MqttZero.Server;
+namespace MqttZero.Server.Clients;
 
 internal sealed class MqttZeroClientConnection : IAsyncDisposable
 {
@@ -68,7 +67,9 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
 
     public bool AllowPacketFragmentation { get; }
 
-    public MqttZeroClientInfo ClientInfo { get; set; } = null!;
+    public MqttZeroClientConnectionInfo ClientInfo { get; set; } = null!;
+
+    public bool IsConnectedClientCounted { get; set; }
 
     public MqttZeroConnectedClient ConnectedClient { get; set; } = null!;
 

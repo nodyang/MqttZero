@@ -1,6 +1,7 @@
 using MqttZero.Memory;
 using MqttZero.Protocol;
 using MqttZero.Server;
+using MqttZero.Server.Clients;
 using System.Buffers;
 using System.IO.Pipelines;
 using System.Net;

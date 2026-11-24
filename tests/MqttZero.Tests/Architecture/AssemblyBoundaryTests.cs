@@ -19,6 +19,47 @@ namespace MqttZero.Tests.Architecture
                 "MqttZero.Server");
         }
 
+        [Fact]
+        public void ServerObservationTypesUseOwningNamespaces()
+        {
+            AssertTypeName(
+                "MqttZero.Server.Clients.MqttZeroClientConnectionInfo, MqttZero.Server");
+            AssertTypeName(
+                "MqttZero.Server.Observers.MqttZeroDisconnectType, MqttZero.Server");
+            AssertTypeName(
+                "MqttZero.Server.Observers.MqttZeroMessageDropReason, MqttZero.Server");
+        }
+
+        [Fact]
+        public void ServerSnapshotsAndConnectionsUseOwningNamespaces()
+        {
+            AssertTypeName(
+                "MqttZero.Server.Clients.MqttZeroClientSnapshot, MqttZero.Server");
+            AssertTypeName(
+                "MqttZero.Server.Clients.MqttZeroClientConnection, MqttZero.Server");
+            AssertTypeName(
+                "MqttZero.Server.Sessions.MqttZeroSessionSnapshot, MqttZero.Server");
+            AssertTypeName(
+                "MqttZero.Server.Retained.MqttZeroRetainedMessageSnapshot, MqttZero.Server");
+            AssertTypeName(
+                "MqttZero.Server.Retained.MqttZeroRetainedMessage, MqttZero.Server");
+        }
+
+        [Fact]
+        public void TopicMatcherIsNotPartOfThePublicServerApi()
+        {
+            Type matcher = AssertTypeName(
+                "MqttZero.Server.Routing.MqttZeroTopicMatcher, MqttZero.Server");
+            Assert.False(matcher.IsPublic);
+        }
+
+        private static Type AssertTypeName(string assemblyQualifiedTypeName)
+        {
+            Type? type = Type.GetType(assemblyQualifiedTypeName, false);
+            Assert.NotNull(type);
+            return type;
+        }
+
         private static void AssertAssembly(string assemblyQualifiedTypeName, string expectedAssembly)
         {
             Type? type = Type.GetType(assemblyQualifiedTypeName, false);

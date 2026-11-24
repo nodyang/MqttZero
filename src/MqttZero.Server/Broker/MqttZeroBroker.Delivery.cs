@@ -1,6 +1,5 @@
 using MqttZero.Server.Interceptors;
 using MqttZero.Memory;
-using MqttZero.Server.Events;
 using MqttZero.Server.Observers;
 using MqttZero.Server.Clients;
 using MqttZero.Protocol;
@@ -265,7 +264,7 @@ public sealed partial class MqttZeroBroker
 
             if (messageHeld && _deliveryObservers.Length > 0)
             {
-                MqttZeroClientInfo receiver = enqueueContext?.ReceiverInfo ??
+                MqttZeroClientConnectionInfo receiver = enqueueContext?.ReceiverInfo ??
                     session.Connection?.ClientInfo ??
                     CreateOfflineClientInfo(session);
                 MqttZeroMessageEnqueuedContext observerContext = new()
@@ -334,9 +333,10 @@ public sealed partial class MqttZeroBroker
         return evicted;
     }
 
-    private static MqttZeroClientInfo CreateOfflineClientInfo(MqttZeroSessionState session)
+    private static MqttZeroClientConnectionInfo CreateOfflineClientInfo(
+        MqttZeroSessionState session)
     {
-        return new MqttZeroClientInfo
+        return new MqttZeroClientConnectionInfo
         {
             ClientId = session.ClientId
         };
@@ -600,7 +600,7 @@ public sealed partial class MqttZeroBroker
 
     private async ValueTask NotifyOverwrittenAsync(
         MqttZeroSessionState session,
-        MqttZeroClientInfo receiver,
+        MqttZeroClientConnectionInfo receiver,
         MqttZeroQueuedMessage evicted,
         CancellationToken cancellationToken)
     {

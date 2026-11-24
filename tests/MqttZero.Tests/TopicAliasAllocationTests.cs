@@ -1,5 +1,6 @@
 using MqttZero.Server;
 using MqttZero.Server.Broker;
+using MqttZero.Server.Clients;
 using MqttZero.Server.Interceptors;
 using MqttZero.Memory;
 using MqttZero.Protocol;

@@ -175,19 +175,19 @@
       "mqttzero.aspnetcore": {
         "type": "Project",
         "dependencies": {
-          "MqttZero.Server": "[0.8.0-alpha.1, )"
+          "MqttZero.Server": "[0.9.0-alpha.1, )"
         }
       },
       "mqttzero.aspnetcore.dashboard": {
         "type": "Project",
         "dependencies": {
-          "MqttZero.AspNetCore": "[0.8.0-alpha.1, )"
+          "MqttZero.AspNetCore": "[0.9.0-alpha.1, )"
         }
       },
       "mqttzero.server": {
         "type": "Project",
         "dependencies": {
-          "MqttZero": "[0.8.0-alpha.1, )"
+          "MqttZero": "[0.9.0-alpha.1, )"
         }
       }
     }

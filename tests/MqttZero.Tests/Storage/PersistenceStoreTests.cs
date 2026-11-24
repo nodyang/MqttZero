@@ -3,6 +3,7 @@ using MqttZero.Server;
 using MqttZero.AspNetCore;
 using MqttZero.Server.Broker;
 using MqttZero.Protocol;
+using MqttZero.Server.Sessions;
 using MqttZero.Server.Storage;
 using MqttZero.Memory;
 using System.Buffers;

@@ -1,6 +1,6 @@
 # MQTTZero
 
-MQTTZero 是一个面向 ASP.NET Core Kestrel 的独立 MQTT 5 Broker。生产代码不依赖 MQTTnet，目标框架为 .NET 10。当前版本为 `0.8.0-alpha.1`。
+MQTTZero 是一个面向 ASP.NET Core Kestrel 的独立 MQTT 5 Broker。生产代码不依赖 MQTTnet，目标框架为 .NET 10。当前版本为 `0.9.0-alpha.1`。
 
 ## 当前能力
 
@@ -12,6 +12,7 @@ MQTTZero 是一个面向 ASP.NET Core Kestrel 的独立 MQTT 5 Broker。生产�
 - UTF-8 Topic 通配符、Topic Alias、共享订阅轮询、Retained 回放和内存 PayloadOwner。
 - CONNECT 认证、订阅/退订授权、发布和投递拦截，以及连接与投递 Observer。
 - Broker 生命周期、客户端快照和健康检查。
+- 活跃传输连接和已完成 CONNECT/CONNACK 的在线客户端分别计数。
 - 统一 `MqttZeroPublishMessage` 发布入口，以及 `ReadOnlySequence<byte>`、PipeWriter 工厂和 Stream 便捷扩展。
 - Kestrel Accepted Socket、静态 TLS 和 WebSocket 分片策略。
 - 池化字节池、引用计数 Payload Lease、无分配 PUBLISH 解码/路由/QoS 1/2 队列/编码和内存 Transport 热路径。
@@ -20,7 +21,7 @@ MQTTZero 是一个面向 ASP.NET Core Kestrel 的独立 MQTT 5 Broker。生产�
 ## 包结构
 
 - `MqttZero`：客户端与服务端共享的 MQTT 5 协议、发布消息和池化内存基础设施，命名空间包括 `MqttZero.Protocol`、`MqttZero.Publishing` 和 `MqttZero.Memory`。
-- `MqttZero.Server`：Broker、Session、路由、拦截器、Observer 和持久化 Store，服务端命名空间统一位于 `MqttZero.Server.*`。
+- `MqttZero.Server`：Broker、Session、路由、拦截器、Observer 和持久化 Store，服务端命名空间统一位于 `MqttZero.Server.*`；配置类型位于根命名空间，客户端、Session 和 Retained 类型分别位于 `Clients`、`Sessions` 和 `Retained`。
 - `MqttZero.AspNetCore`：Kestrel TCP、TLS、WebSocket、健康检查和依赖注入入口。
 - `MqttZero.AspNetCore.Dashboard`：可选管理面板。
 
@@ -45,7 +46,10 @@ builder.WebHost.ConfigureKestrel(kestrel =>
     }));
 });
 
-builder.Services.AddMqttZero();
+builder.Services.AddMqttZero(options =>
+{
+    options.MaxActiveConnections = 20_000;
+});
 builder.Services.AddMqttZeroDashboard(options =>
 {
     options.ReadAuthorizationPolicy = "MqttZeroDashboardRead";
@@ -63,6 +67,8 @@ await app.RunAsync();
 ```
 
 完整示例位于 `samples/MqttZero.Sample`。
+
+`ActiveConnectionCount` 表示已接受、尚未完成清理的 TCP/TLS/WebSocket 连接数，包括尚未完成 CONNECT 的连接；`ConnectedClientCount` 只表示已经成功完成 CONNECT/CONNACK 的在线 MQTT 客户端数。
 
 ## 发布 API
 

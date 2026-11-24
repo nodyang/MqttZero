@@ -1,5 +1,4 @@
 using MqttZero.Server.Clients;
-using MqttZero.Server.Events;
 using System.Buffers;
 
 namespace MqttZero.Server.Observers;
@@ -10,7 +9,7 @@ public sealed class MqttZeroMessageDroppedContext
     /// <summary>Gets the connected sender.</summary>
     public MqttZeroConnectedClient? Sender { get; init; }
     /// <summary>Gets the receiver information.</summary>
-    public MqttZeroClientInfo? ReceiverInfo { get; init; }
+    public MqttZeroClientConnectionInfo? ReceiverInfo { get; init; }
     /// <summary>Gets the connected receiver when online.</summary>
     public MqttZeroConnectedClient? Receiver { get; init; }
     /// <summary>Gets the topic.</summary>

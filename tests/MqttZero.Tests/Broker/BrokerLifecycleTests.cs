@@ -1,6 +1,7 @@
 using MqttQualityOfServiceLevel = MqttZero.Protocol.MqttQualityOfServiceLevel;
 using MqttZero.Server;
 using MqttZero.Server.Broker;
+using MqttZero.Server.Retained;
 using MqttZero.Server.Interceptors;
 using MqttZero.Memory;
 using MqttZero.Protocol;
@@ -106,10 +107,12 @@ namespace MqttZero.Tests.Broker
                 true,
                 CancellationToken.None).AsTask();
 
-            Assert.Equal(1, broker.ConnectedClientCount);
+            Assert.Equal(1, broker.ActiveConnectionCount);
+            Assert.Equal(0, broker.ConnectedClientCount);
             await broker.StopAsync(TestContext.Current.CancellationToken);
             await accept;
 
+            Assert.Equal(0, broker.ActiveConnectionCount);
             Assert.Equal(0, broker.ConnectedClientCount);
             Assert.Equal(MqttZeroBrokerState.Stopped, broker.State);
             await broker.DisposeAsync();
@@ -147,14 +150,60 @@ namespace MqttZero.Tests.Broker
             _ = await ReadConnAckAsync(
                 output.Reader,
                 TestContext.Current.CancellationToken);
+            await WaitForConnectedClientCountAsync(
+                broker,
+                1,
+                TestContext.Current.CancellationToken);
 
             Task stop = broker.StopAsync(
                 TestContext.Current.CancellationToken).AsTask();
             Task dispose = broker.DisposeAsync().AsTask();
             await Task.WhenAll(stop, dispose, accept);
 
+            Assert.Equal(0, broker.ActiveConnectionCount);
             Assert.Equal(0, broker.ConnectedClientCount);
             Assert.Equal(MqttZeroBrokerState.Stopped, broker.State);
+        }
+
+        [Fact(Timeout = 10_000)]
+        public async Task ActiveConnectionLimitRejectsBeforeConnect()
+        {
+            MqttZeroBroker broker = MqttZeroBroker.Create(
+                new MqttZeroOptions
+                {
+                    MaxActiveConnections = 1
+                },
+                TimeProvider.System);
+            await broker.StartAsync(TestContext.Current.CancellationToken);
+            Pipe firstInput = new();
+            Pipe firstOutput = new();
+            Task firstAccept = broker.AcceptConnectionAsync(
+                firstInput.Reader,
+                firstOutput.Writer,
+                new IPEndPoint(IPAddress.Loopback, 0),
+                false,
+                false,
+                null,
+                true,
+                CancellationToken.None).AsTask();
+            Pipe secondInput = new();
+            Pipe secondOutput = new();
+
+            await broker.AcceptConnectionAsync(
+                secondInput.Reader,
+                secondOutput.Writer,
+                new IPEndPoint(IPAddress.Loopback, 0),
+                false,
+                false,
+                null,
+                true,
+                CancellationToken.None);
+
+            Assert.Equal(1, broker.ActiveConnectionCount);
+            Assert.Equal(0, broker.ConnectedClientCount);
+            await broker.StopAsync(TestContext.Current.CancellationToken);
+            await firstAccept;
+            await broker.DisposeAsync();
         }
 
         private static async Task<MqttConnAckPacket> ReadConnAckAsync(
@@ -179,6 +228,27 @@ namespace MqttZero.Tests.Broker
                     throw new EndOfStreamException();
                 }
             }
+        }
+
+        private static async Task WaitForConnectedClientCountAsync(
+            MqttZeroBroker broker,
+            int expected,
+            CancellationToken cancellationToken)
+        {
+            for (int attempt = 0; attempt < 40; attempt++)
+            {
+                if (broker.ConnectedClientCount == expected)
+                {
+                    return;
+                }
+
+                await Task.Delay(
+                    TimeSpan.FromMilliseconds(50),
+                    cancellationToken);
+            }
+
+            throw new TimeoutException(
+                $"Connected client count did not reach {expected}.");
         }
     }
 }

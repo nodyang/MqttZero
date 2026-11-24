@@ -12,7 +12,11 @@ import {
 import { formatBrokerState } from './format'
 
 const activePage = ref('overview')
-const overview = ref<OverviewDto>({ state: 'Created', connectedClients: 0 })
+const overview = ref<OverviewDto>({
+  state: 'Created',
+  activeConnections: 0,
+  connectedClients: 0
+})
 const clients = ref<ClientDto[]>([])
 const clientPage = ref(1)
 const clientPageSize = ref(50)
@@ -106,6 +110,10 @@ onUnmounted(() => {
           <el-card>
             <div class="metric-label">在线客户端</div>
             <div class="metric-value">{{ overview.connectedClients }}</div>
+          </el-card>
+          <el-card>
+            <div class="metric-label">活跃连接</div>
+            <div class="metric-value">{{ overview.activeConnections }}</div>
           </el-card>
           <el-card>
             <div class="metric-label">运行状态</div>

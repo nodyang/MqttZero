@@ -14,7 +14,7 @@ namespace MqttZero.Tests
         {
             MqttZeroOptions options = new();
 
-            Assert.Equal(20_000, options.MaxConnections);
+            Assert.Equal(20_000, options.MaxActiveConnections);
             Assert.Equal(20_000, options.MaxSessions);
             Assert.Equal(1_000, options.MaxSubscriptionsPerSession);
             Assert.Equal(32, options.MaxInflight);

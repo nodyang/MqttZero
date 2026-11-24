@@ -1,5 +1,6 @@
 using MqttZero.Server;
 using MqttZero.Server.Broker;
+using MqttZero.Server.Clients;
 using MqttZero.Memory;
 using MqttZero.Protocol;
 using MqttZero.Server.Routing;

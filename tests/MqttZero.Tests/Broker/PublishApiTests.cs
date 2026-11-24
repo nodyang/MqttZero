@@ -1,6 +1,7 @@
 using MqttQualityOfServiceLevel = MqttZero.Protocol.MqttQualityOfServiceLevel;
 using MqttZero.Server;
 using MqttZero.Server.Broker;
+using MqttZero.Server.Retained;
 using MqttZero.Protocol;
 using MqttZero.Publishing;
 using System.Buffers;

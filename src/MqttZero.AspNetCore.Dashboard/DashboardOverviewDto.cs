@@ -6,5 +6,9 @@ namespace MqttZero.AspNetCore.Dashboard;
 /// Provides dashboard overview values.
 /// </summary>
 /// <param name="State">The current broker state.</param>
+/// <param name="ActiveConnections">The current active transport connection count.</param>
 /// <param name="ConnectedClients">The current connected client count.</param>
-public sealed record DashboardOverviewDto(string State, int ConnectedClients);
+public sealed record DashboardOverviewDto(
+    string State,
+    int ActiveConnections,
+    int ConnectedClients);

@@ -1,5 +1,5 @@
 using MqttZero.Protocol;
-namespace MqttZero.Server;
+namespace MqttZero.Server.Retained;
 
 /// <summary>
 /// Represents retained message metadata.

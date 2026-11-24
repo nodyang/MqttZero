@@ -2,6 +2,7 @@ using MqttZero.Protocol;
 using MqttZero.Server;
 using MqttZero.Server.Broker;
 using MqttZero.Server.Interceptors;
+using MqttZero.Server.Sessions;
 using MqttZero.Server.Storage;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;

@@ -1,5 +1,6 @@
 using MqttZero.Memory;
 using MqttZero.Protocol;
+using MqttZero.Server.Retained;
 using MqttZero.Server.Routing;
 using MqttZero.Server.Sessions;
 using MqttZero.Server.Storage;

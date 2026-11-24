@@ -16,12 +16,7 @@ namespace MqttZero.Tests
         private static readonly HashSet<string> AllowedServerRootSources =
             new(StringComparer.OrdinalIgnoreCase)
             {
-                "MqttZeroOptions.cs",
-                "MqttZeroClientSnapshot.cs",
-                "MqttZeroSessionSnapshot.cs",
-                "MqttZeroRetainedMessageSnapshot.cs",
-                "MqttZeroClientConnection.cs",
-                "MqttZeroRetainedMessage.cs"
+                "MqttZeroOptions.cs"
             };
 
         private static readonly HashSet<string> AllowedCommonRootSources =

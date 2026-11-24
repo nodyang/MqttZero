@@ -1,4 +1,4 @@
-using MqttZero.Server.Events;
+using MqttZero.Server.Clients;
 using MqttZero.Protocol;
 using System.Buffers;
 
@@ -8,7 +8,7 @@ namespace MqttZero.Server.Interceptors;
 public sealed class MqttZeroConnectionContext
 {
     /// <summary>Gets the resolved client information.</summary>
-    public required MqttZeroClientInfo Client { get; init; }
+    public required MqttZeroClientConnectionInfo Client { get; init; }
     /// <summary>Gets the raw CONNECT packet.</summary>
     public required MqttConnectPacket ConnectPacket { get; init; }
     /// <summary>Gets the raw password sequence.</summary>

@@ -6,9 +6,9 @@ namespace MqttZero.Server;
 public sealed class MqttZeroOptions
 {
     /// <summary>
-    /// Gets or sets the maximum number of accepted connections.
+    /// Gets or sets the maximum number of active accepted connections.
     /// </summary>
-    public int MaxConnections { get; set; } = 20_000;
+    public int MaxActiveConnections { get; set; } = 20_000;
 
     /// <summary>
     /// Gets or sets the maximum number of stored sessions.

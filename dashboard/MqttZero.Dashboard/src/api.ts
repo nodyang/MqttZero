@@ -1,5 +1,6 @@
 export interface OverviewDto {
   state: string
+  activeConnections: number
   connectedClients: number
 }
 

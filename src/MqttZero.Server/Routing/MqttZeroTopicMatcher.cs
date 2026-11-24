@@ -5,7 +5,7 @@ namespace MqttZero.Server.Routing;
 /// <summary>
 /// Matches MQTT topic filters against topic names without creating strings.
 /// </summary>
-public static class MqttZeroTopicMatcher
+internal static class MqttZeroTopicMatcher
 {
     /// <summary>
     /// Determines whether an MQTT topic filter matches a topic name.

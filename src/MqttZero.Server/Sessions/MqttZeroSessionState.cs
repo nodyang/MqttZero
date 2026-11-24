@@ -1,5 +1,6 @@
 using MqttZero.Memory;
 using MqttZero.Protocol;
+using MqttZero.Server.Clients;
 using System.Collections.Concurrent;
 using System.Text;
 

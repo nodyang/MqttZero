@@ -2,6 +2,8 @@ using MqttZero.Server.Interceptors;
 using MqttZero.Memory;
 using MqttZero.Server.Observers;
 using MqttZero.Protocol;
+using MqttZero.Server.Clients;
+using MqttZero.Server.Retained;
 using MqttZero.Server.Routing;
 using MqttZero.Server.Sessions;
 using MqttZero.Server.Storage;
@@ -57,7 +59,8 @@ public sealed partial class MqttZeroBroker : IMqttZeroBroker, IAsyncDisposable
     private long _nextAcceptedConnectionId;
     private CancellationTokenSource? _maintenanceCancellation;
     private Task? _maintenanceTask;
-    private int _connectionCount;
+    private int _activeConnectionCount;
+    private int _connectedClientCount;
     private int _disposed;
     private long _publishedWillCount;
     private long _retainedBytes;
@@ -152,13 +155,24 @@ public sealed partial class MqttZeroBroker : IMqttZeroBroker, IAsyncDisposable
     }
 
     /// <summary>
-    /// Gets the current connected client count.
+    /// Gets the number of active accepted transport connections.
+    /// </summary>
+    public int ActiveConnectionCount
+    {
+        get
+        {
+            return Volatile.Read(ref _activeConnectionCount);
+        }
+    }
+
+    /// <summary>
+    /// Gets the number of connected MQTT clients.
     /// </summary>
     public int ConnectedClientCount
     {
         get
         {
-            return Volatile.Read(ref _connectionCount);
+            return Volatile.Read(ref _connectedClientCount);
         }
     }
 

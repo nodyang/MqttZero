@@ -2,10 +2,12 @@ using MqttZero.Protocol;
 using System.Net;
 using System.Security.Cryptography.X509Certificates;
 
-namespace MqttZero.Server.Events;
+namespace MqttZero.Server.Clients;
 
-/// <summary>Describes an authenticated client snapshot.</summary>
-public sealed class MqttZeroClientInfo
+/// <summary>
+/// Describes the transport and identity information captured for one MQTT client connection.
+/// </summary>
+public sealed class MqttZeroClientConnectionInfo
 {
     /// <summary>Gets the client identifier.</summary>
     public required string ClientId { get; init; }

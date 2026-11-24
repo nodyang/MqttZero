@@ -74,7 +74,10 @@ public static class MqttZeroDashboardEndpointRouteBuilderExtensions
     private static IResult GetOverview(IMqttZeroBroker broker)
     {
         return Results.Json(
-            new DashboardOverviewDto(broker.State.ToString(), broker.ConnectedClientCount),
+            new DashboardOverviewDto(
+                broker.State.ToString(),
+                broker.ActiveConnectionCount,
+                broker.ConnectedClientCount),
             DashboardJsonSerializerContext.Default.DashboardOverviewDto);
     }
 

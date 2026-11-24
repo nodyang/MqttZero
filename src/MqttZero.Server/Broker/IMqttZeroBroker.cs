@@ -1,6 +1,7 @@
 using MqttZero.Server.Clients;
 using MqttZero.Protocol;
 using MqttZero.Publishing;
+using MqttZero.Server.Retained;
 using MqttZero.Server.Sessions;
 
 namespace MqttZero.Server.Broker;
@@ -16,7 +17,12 @@ public interface IMqttZeroBroker
     MqttZeroBrokerState State { get; }
 
     /// <summary>
-    /// Gets the current connected client count.
+    /// Gets the number of active accepted transport connections.
+    /// </summary>
+    int ActiveConnectionCount { get; }
+
+    /// <summary>
+    /// Gets the number of connected MQTT clients.
     /// </summary>
     int ConnectedClientCount { get; }
 

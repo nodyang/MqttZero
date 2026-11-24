@@ -1,8 +1,7 @@
 using System.Net;
-using MqttZero.Server.Clients;
 using MqttZero.Protocol;
 
-namespace MqttZero.Server;
+namespace MqttZero.Server.Clients;
 
 /// <summary>
 /// Represents a point-in-time view of a connected MQTT client.

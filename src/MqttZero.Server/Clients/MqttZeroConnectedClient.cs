@@ -1,5 +1,4 @@
 using MqttZero.Server.Broker;
-using MqttZero.Server.Events;
 using MqttZero.Protocol;
 using MqttZero.Publishing;
 using MqttZero.Server.Sessions;
@@ -24,7 +23,7 @@ public sealed class MqttZeroConnectedClient
     }
 
     /// <summary>Gets the client information.</summary>
-    public MqttZeroClientInfo ClientInfo
+    public MqttZeroClientConnectionInfo ClientInfo
     {
         get
         {

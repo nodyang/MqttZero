@@ -4,7 +4,9 @@ internal static class MqttZeroOptionsValidator
 {
     public static void Validate(MqttZeroOptions options)
     {
-        ValidatePositive(options.MaxConnections, nameof(options.MaxConnections));
+        ValidatePositive(
+            options.MaxActiveConnections,
+            nameof(options.MaxActiveConnections));
         ValidatePositive(options.MaxSessions, nameof(options.MaxSessions));
         ValidatePositive(
             options.MaxSubscriptionsPerSession,

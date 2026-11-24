@@ -75,6 +75,7 @@ namespace MqttZero.Dashboard.Tests
             string sessions = await sessionsResponse.Content.ReadAsStringAsync(cancellationToken);
 
             Assert.Equal(HttpStatusCode.OK, overviewResponse.StatusCode);
+            Assert.Contains("\"activeConnections\":0", overview, StringComparison.Ordinal);
             Assert.Contains("\"connectedClients\":0", overview, StringComparison.Ordinal);
             Assert.Equal(HttpStatusCode.OK, indexResponse.StatusCode);
             Assert.Contains("<div id=\"app\"></div>", index, StringComparison.Ordinal);
