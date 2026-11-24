@@ -131,6 +131,8 @@ public async ValueTask OnConnectedAsync(
 
 句柄支持服务器代订阅、退订、`SendPublishAsync`、断开、Session Items、状态快照和统计。`SendPublishAsync` 只向目标客户端发送 PUBLISH，不按 Topic 路由，也不更新 Retained Store；按 Topic 路由仍使用 Broker `PublishAsync`。服务器代订阅不会向客户端发送 SUBACK。句柄在断线或 Session 接管后失效。
 
+连接确定在线时，拦截器和 Observer 只提供 `MqttZeroConnectedClient`，身份信息通过 `ConnectedClient.ClientInfo` 获取。消息接收者可能离线时，上下文同时提供始终存在的 `ReceiverInfo` 和在线时才非空的 `Receiver`；离线场景只能读取 `ReceiverInfo`。
+
 ## 持久化 Store
 
 Broker 提供三个独立持久化接口：

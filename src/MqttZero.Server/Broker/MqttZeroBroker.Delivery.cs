@@ -2,6 +2,7 @@ using MqttZero.Interceptors;
 using MqttZero.Memory;
 using MqttZero.Events;
 using MqttZero.Observers;
+using MqttZero.Clients;
 using MqttZero.Protocol;
 using MqttZero.Routing;
 using MqttZero.Sessions;
@@ -67,7 +68,7 @@ public sealed partial class MqttZeroBroker
         if (expiresAt <= now)
         {
             await NotifyDroppedAsync(
-                senderConnection?.ClientInfo,
+                senderConnection?.ConnectedClient,
                 session,
                 lease,
                 MqttZeroMessageDropReason.Expired,
@@ -80,8 +81,10 @@ public sealed partial class MqttZeroBroker
         {
             enqueueContext = new MqttZeroEnqueueContext
             {
-                Sender = senderConnection?.ClientInfo,
-                Receiver = session.Connection?.ClientInfo ?? CreateOfflineClientInfo(session),
+                Sender = senderConnection?.ConnectedClient,
+                ReceiverInfo = session.Connection?.ClientInfo ??
+                    CreateOfflineClientInfo(session),
+                Receiver = session.Connection?.ConnectedClient,
                 Topic = new ReadOnlySequence<byte>(lease.Topic),
                 PayloadLength = lease.PayloadSequence.Length,
                 QualityOfServiceLevel = qos,
@@ -95,7 +98,7 @@ public sealed partial class MqttZeroBroker
                 if (result == MqttZeroEnqueueInterceptionResult.Drop)
                 {
                     await NotifyDroppedAsync(
-                        senderConnection?.ClientInfo,
+                        senderConnection?.ConnectedClient,
                         session,
                         lease,
                         MqttZeroMessageDropReason.InterceptorRejected,
@@ -237,13 +240,14 @@ public sealed partial class MqttZeroBroker
 
             if (messageHeld && _deliveryObservers.Length > 0)
             {
-                MqttZeroClientInfo receiver = enqueueContext?.Receiver ??
+                MqttZeroClientInfo receiver = enqueueContext?.ReceiverInfo ??
                     session.Connection?.ClientInfo ??
                     CreateOfflineClientInfo(session);
                 MqttZeroMessageEnqueuedContext observerContext = new()
                 {
-                    Sender = senderConnection?.ClientInfo,
-                    Receiver = receiver,
+                    Sender = senderConnection?.ConnectedClient,
+                    ReceiverInfo = receiver,
+                    Receiver = session.Connection?.ConnectedClient,
                     Topic = new ReadOnlySequence<byte>(lease.Topic),
                     PayloadLength = lease.PayloadSequence.Length,
                     QualityOfServiceLevel = qos
@@ -296,7 +300,7 @@ public sealed partial class MqttZeroBroker
                 session.PendingMessages.RemoveAt(oldestQos0Index);
                 if (receiver != null)
                 {
-                    NotifyOverwritten(receiver, evicted);
+                    NotifyOverwritten(session, receiver, evicted);
                 }
             }
             else if (session.PendingMessages.Count > 0)
@@ -305,7 +309,7 @@ public sealed partial class MqttZeroBroker
                 session.PendingMessages.RemoveAt(0);
                 if (receiver != null)
                 {
-                    NotifyOverwritten(receiver, evicted);
+                    NotifyOverwritten(session, receiver, evicted);
                 }
             }
         }
@@ -323,7 +327,7 @@ public sealed partial class MqttZeroBroker
     }
 
     private async ValueTask NotifyNotConsumedAsync(
-        MqttZeroClientInfo? sender,
+        MqttZeroConnectedClient? sender,
         MqttZeroMessageLease lease,
         CancellationToken cancellationToken)
     {
@@ -352,7 +356,7 @@ public sealed partial class MqttZeroBroker
     }
 
     private async ValueTask NotifyDroppedAsync(
-        MqttZeroClientInfo? sender,
+        MqttZeroConnectedClient? sender,
         MqttZeroSessionState session,
         MqttZeroMessageLease lease,
         MqttZeroMessageDropReason reason,
@@ -366,7 +370,8 @@ public sealed partial class MqttZeroBroker
         MqttZeroMessageDroppedContext context = new()
         {
             Sender = sender,
-            Receiver = session.Connection?.ClientInfo,
+            ReceiverInfo = session.Connection?.ClientInfo,
+            Receiver = session.Connection?.ConnectedClient,
             Topic = new ReadOnlySequence<byte>(lease.Topic),
             Reason = reason
         };
@@ -517,12 +522,14 @@ public sealed partial class MqttZeroBroker
     }
 
     private void NotifyOverwritten(
+        MqttZeroSessionState session,
         MqttZeroClientInfo receiver,
         MqttZeroQueuedMessage evicted)
     {
         MqttZeroQueueMessageOverwrittenContext context = new()
         {
-            Receiver = receiver,
+            ReceiverInfo = receiver,
+            Receiver = session.Connection?.ConnectedClient,
             Topic = new ReadOnlySequence<byte>(evicted.Topic)
         };
         foreach (IMqttZeroDeliveryObserver observer in _deliveryObservers)

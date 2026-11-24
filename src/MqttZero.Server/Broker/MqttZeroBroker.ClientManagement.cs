@@ -36,7 +36,7 @@ public sealed partial class MqttZeroBroker
             return false;
         }
 
-        client = new MqttZeroConnectedClient(this, session, connection);
+        client = connection.ConnectedClient;
         return true;
     }
 
@@ -90,7 +90,7 @@ public sealed partial class MqttZeroBroker
             MqttSubscriptionRequest request = subscriptions[index];
             MqttZeroSubscribeContext context = new()
             {
-                Client = connection.ClientInfo,
+                ConnectedClient = connection.ConnectedClient,
                 TopicFilter = request.TopicFilter,
                 QualityOfServiceLevel = request.QualityOfServiceLevel,
                 NoLocal = request.NoLocal,
@@ -242,7 +242,7 @@ public sealed partial class MqttZeroBroker
             ArgumentException.ThrowIfNullOrWhiteSpace(topicFilter);
             MqttZeroUnsubscribeContext context = new()
             {
-                Client = connection.ClientInfo,
+                ConnectedClient = connection.ConnectedClient,
                 TopicFilter = new ReadOnlySequence<byte>(Encoding.UTF8.GetBytes(topicFilter))
             };
             MqttZeroInterceptionResult interception = MqttZeroInterceptionResult.Continue;

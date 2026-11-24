@@ -126,7 +126,7 @@ public sealed partial class MqttZeroBroker
             MqttSubscriptionRequest request = packet.Subscriptions[index];
             MqttZeroSubscribeContext context = new()
             {
-                Client = connection.ClientInfo,
+                ConnectedClient = connection.ConnectedClient,
                 TopicFilter = request.TopicFilter,
                 QualityOfServiceLevel = request.QualityOfServiceLevel,
                 NoLocal = request.NoLocal,
@@ -302,7 +302,7 @@ public sealed partial class MqttZeroBroker
             byte[] topicFilter = packet.TopicFilters[index].ToArray();
             MqttZeroUnsubscribeContext context = new()
             {
-                Client = connection.ClientInfo,
+                ConnectedClient = connection.ConnectedClient,
                 TopicFilter = new ReadOnlySequence<byte>(topicFilter)
             };
             MqttZeroInterceptionResult interception = MqttZeroInterceptionResult.Continue;

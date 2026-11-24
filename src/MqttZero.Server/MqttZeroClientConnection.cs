@@ -68,6 +68,8 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
 
     public MqttZeroClientInfo ClientInfo { get; set; } = null!;
 
+    public MqttZeroConnectedClient ConnectedClient { get; set; } = null!;
+
     public MqttZeroDisconnectType DisconnectType { get; set; } = MqttZeroDisconnectType.ConnectionLost;
 
     public MqttReasonCode? CloseReasonCode { get; private set; }

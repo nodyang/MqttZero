@@ -1,4 +1,5 @@
 using MqttZero.Interceptors;
+using MqttZero.Clients;
 using MqttZero.Memory;
 using MqttZero.Protocol;
 using MqttZero.Routing;
@@ -80,6 +81,15 @@ public sealed partial class MqttZeroBroker
         MqttPublishPacket packet,
         CancellationToken cancellationToken)
     {
+        MqttZeroConnectedClient? senderClient = null;
+        if (sender != null)
+        {
+            lock (sender.SyncRoot)
+            {
+                senderClient = sender.Connection?.ConnectedClient;
+            }
+        }
+
         MqttZeroPublishContext context = new()
         {
             Topic = packet.TopicName,
@@ -87,7 +97,7 @@ public sealed partial class MqttZeroBroker
             Properties = packet.Properties,
             QualityOfServiceLevel = packet.QualityOfServiceLevel,
             Retain = packet.Retain,
-            SenderClientId = sender?.ClientId
+            Sender = senderClient
         };
 
         if (_publishInterceptors.Length > 0)
@@ -285,8 +295,7 @@ public sealed partial class MqttZeroBroker
                 : new ReadOnlySequence<byte>(lease.Properties);
             context.QualityOfServiceLevel = lease.QualityOfServiceLevel;
             context.Retain = lease.RetainFlag;
-            context.SenderClientId = sender.ClientId;
-            context.SenderClientInfo = senderConnection.ClientInfo;
+            context.Sender = senderConnection.ConnectedClient;
             try
             {
                 foreach (IMqttZeroPublishInterceptor interceptor in _publishInterceptors)
@@ -351,7 +360,7 @@ public sealed partial class MqttZeroBroker
             if (deliveries.Count == 0 && _deliveryObservers.Length > 0)
             {
                 await NotifyNotConsumedAsync(
-                    senderConnection.ClientInfo,
+                    senderConnection.ConnectedClient,
                     effectiveLease,
                     cancellationToken).ConfigureAwait(false);
             }

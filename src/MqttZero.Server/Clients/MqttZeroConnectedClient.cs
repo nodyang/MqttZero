@@ -24,7 +24,7 @@ public sealed class MqttZeroConnectedClient
     }
 
     /// <summary>Gets the client information.</summary>
-    public MqttZeroClientInfo Info
+    public MqttZeroClientInfo ClientInfo
     {
         get
         {

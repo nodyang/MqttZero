@@ -218,8 +218,9 @@ namespace MqttZero.Tests.Broker
                 MqttZeroEnqueueContext context,
                 CancellationToken cancellationToken)
             {
+                Assert.NotNull(context.Receiver);
                 return ValueTask.FromResult(
-                    context.Receiver.ClientId == "drop"
+                    context.ReceiverInfo.ClientId == "drop"
                         ? MqttZeroEnqueueInterceptionResult.Drop
                         : MqttZeroEnqueueInterceptionResult.Enqueue);
             }

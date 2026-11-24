@@ -488,12 +488,14 @@ public sealed partial class MqttZeroBroker
                 SessionExpiryInterval = effectiveExpiry
             },
             CancellationToken.None).ConfigureAwait(false);
+        MqttZeroConnectedClient connectedClient = new(
+            this,
+            session,
+            newConnection);
+        newConnection.ConnectedClient = connectedClient;
         MqttZeroClientConnectedContext connectedContext = new()
         {
-            ConnectedClient = new MqttZeroConnectedClient(
-                this,
-                session,
-                newConnection),
+            ConnectedClient = connectedClient,
             SessionPresent = sessionPresent
         };
         foreach (IMqttZeroConnectionObserver observer in _connectionObservers)

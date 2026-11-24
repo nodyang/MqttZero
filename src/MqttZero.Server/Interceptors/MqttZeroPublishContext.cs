@@ -1,5 +1,5 @@
 using MqttZero.Protocol;
-using MqttZero.Events;
+using MqttZero.Clients;
 using System.Buffers;
 using System.Collections.Concurrent;
 
@@ -37,13 +37,8 @@ public sealed class MqttZeroPublishContext
     /// </summary>
     public bool Retain { get; set; }
 
-    /// <summary>
-    /// Gets the originating client identifier, or <see langword="null"/> for server-originated messages.
-    /// </summary>
-    public string? SenderClientId { get; internal set; }
-
-    /// <summary>Gets the originating client information.</summary>
-    public MqttZeroClientInfo? SenderClientInfo { get; internal set; }
+    /// <summary>Gets the originating connected client, or null for server-originated messages.</summary>
+    public MqttZeroConnectedClient? Sender { get; internal set; }
 
     /// <summary>Gets or sets the result reason code.</summary>
     public MqttReasonCode ResultReasonCode { get; set; } = MqttReasonCode.Success;
@@ -68,8 +63,7 @@ public sealed class MqttZeroPublishContext
         Properties = ReadOnlySequence<byte>.Empty;
         QualityOfServiceLevel = MqttQualityOfServiceLevel.AtMostOnce;
         Retain = false;
-        SenderClientId = null;
-        SenderClientInfo = null;
+        Sender = null;
         ResultReasonCode = MqttReasonCode.Success;
         ReasonString = null;
         ContextPool.Enqueue(this);

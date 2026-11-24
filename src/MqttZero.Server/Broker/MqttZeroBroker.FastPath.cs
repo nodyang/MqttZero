@@ -1,4 +1,5 @@
 using MqttZero.Interceptors;
+using MqttZero.Clients;
 using MqttZero.Memory;
 using MqttZero.Protocol;
 using MqttZero.Routing;
@@ -27,8 +28,7 @@ public sealed partial class MqttZeroBroker
                 : new ReadOnlySequence<byte>(lease.Properties);
             context.QualityOfServiceLevel = lease.QualityOfServiceLevel;
             context.Retain = lease.RetainFlag;
-            context.SenderClientId = sender.ClientId;
-            context.SenderClientInfo = senderConnection.ClientInfo;
+            context.Sender = senderConnection.ConnectedClient;
             try
             {
                 foreach (IMqttZeroPublishInterceptor interceptor in _publishInterceptors)
