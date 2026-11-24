@@ -45,7 +45,10 @@ public sealed partial class MqttZeroBroker
                             if (applyKeepAlive &&
                                 secondsWithoutPacket > session.Connection.KeepAliveSeconds * 1.5)
                             {
-                                _keepAliveExpired.Add(session.Connection);
+                                _keepAliveExpired.Add((
+                                    session.Connection,
+                                    session.OutboundPump));
+                                session.OutboundPump = null;
                             }
                         }
 
@@ -64,10 +67,13 @@ public sealed partial class MqttZeroBroker
                     }
                 }
 
-                foreach (MqttZeroClientConnection connection in _keepAliveExpired)
+                foreach ((
+                    MqttZeroClientConnection connection,
+                    MqttZeroSessionOutboundPump? pump) in _keepAliveExpired)
                 {
                     try
                     {
+                        await StopSessionOutboundPumpAsync(pump).ConfigureAwait(false);
                         await connection.CloseAsync(MqttReasonCode.KeepAliveTimeout, cancellationToken)
                             .ConfigureAwait(false);
                     }
@@ -160,6 +166,14 @@ public sealed partial class MqttZeroBroker
 
                     if (removed)
                     {
+                        MqttZeroSessionOutboundPump? pump;
+                        lock (session.SyncRoot)
+                        {
+                            pump = session.OutboundPump;
+                            session.OutboundPump = null;
+                        }
+
+                        await StopSessionOutboundPumpAsync(pump).ConfigureAwait(false);
                         try
                         {
                             await DeleteClientPersistenceAsync(

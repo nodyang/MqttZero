@@ -128,10 +128,15 @@ namespace MqttZero.Tests.Broker
                     Retain = true
                 },
                 TestContext.Current.CancellationToken);
-            (_, MqttZeroClientConnection connection) = CreateConnection(
+            (MqttZeroSessionState session, MqttZeroClientConnection connection) = CreateConnection(
                 broker,
                 "retained");
             await using MqttZeroClientConnection connectionLifetime = connection;
+            await using MqttZeroSessionOutboundPump pump =
+                broker.StartSessionOutboundPump(
+                    session,
+                    connection,
+                    TestContext.Current.CancellationToken);
             MqttSubscriptionRequest request = CreateSubscription(
                 "retained/#",
                 MqttQualityOfServiceLevel.ExactlyOnce);
@@ -140,7 +145,10 @@ namespace MqttZero.Tests.Broker
             _ = await connection.ConnectedClient.SubscribeAsync(
                 [request],
                 cancellationToken: TestContext.Current.CancellationToken);
-            long messagesAfterFirst = connection.GetStatistics().MessagesSent;
+            long messagesAfterFirst = await WaitForMessagesSentAsync(
+                connection,
+                1,
+                TestContext.Current.CancellationToken);
             _ = await connection.ConnectedClient.SubscribeAsync(
                 [
                     new MqttSubscriptionRequest
@@ -154,6 +162,7 @@ namespace MqttZero.Tests.Broker
                 cancellationToken: TestContext.Current.CancellationToken);
 
             Assert.Equal(1, messagesAfterFirst);
+            Assert.Equal(0, session.PendingMessages.Count);
             Assert.Equal(messagesAfterFirst, connection.GetStatistics().MessagesSent);
         }
 
@@ -299,6 +308,28 @@ namespace MqttZero.Tests.Broker
                     System.Text.Encoding.UTF8.GetBytes(filter)),
                 QualityOfServiceLevel = qos
             };
+        }
+
+        private static async Task<long> WaitForMessagesSentAsync(
+            MqttZeroClientConnection connection,
+            long expected,
+            CancellationToken cancellationToken)
+        {
+            for (int attempt = 0; attempt < 100; attempt++)
+            {
+                long actual = connection.GetStatistics().MessagesSent;
+                if (actual == expected)
+                {
+                    return actual;
+                }
+
+                await Task.Delay(
+                    TimeSpan.FromMilliseconds(10),
+                    cancellationToken);
+            }
+
+            throw new TimeoutException(
+                $"Expected {expected} sent messages.");
         }
 
         private sealed class ConsumingSubscribeInterceptor :

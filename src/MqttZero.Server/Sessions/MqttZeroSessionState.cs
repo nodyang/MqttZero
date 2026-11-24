@@ -25,13 +25,13 @@ internal sealed class MqttZeroSessionState
 
     public object SyncRoot { get; } = new();
 
-    public SemaphoreSlim DrainLock { get; } = new(1, 1);
-
     public List<MqttZeroSubscription> Subscriptions { get; } = [];
 
     public ConcurrentDictionary<object, object?> Items { get; } = new();
 
     public MqttZeroMessageQueue PendingMessages { get; }
+
+    public List<MqttZeroQueuedMessage> ExpiredMessages { get; } = [];
 
     public Dictionary<ushort, MqttZeroQueuedMessage> InflightMessages { get; } = [];
 
@@ -40,6 +40,8 @@ internal sealed class MqttZeroSessionState
     public Dictionary<ushort, MqttReasonCode> RoutedInboundQos2Messages { get; } = [];
 
     public MqttZeroClientConnection? Connection { get; set; }
+
+    public MqttZeroSessionOutboundPump? OutboundPump { get; set; }
 
     public bool CleanStart { get; set; }
 

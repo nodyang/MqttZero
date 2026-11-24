@@ -172,7 +172,6 @@ public sealed partial class MqttZeroBroker
 
         MqttZeroQueuedMessage? message = null;
         MqttZeroClientConnection? connection = null;
-        bool sendImmediately;
         bool packetTooLarge = false;
         bool messageHeld = false;
         lock (session.SyncRoot)
@@ -188,28 +187,7 @@ public sealed partial class MqttZeroBroker
                 packetTooLarge = true;
             }
 
-            int inflightLimit = GetInflightLimit(connection);
-            sendImmediately = !packetTooLarge &&
-                connection != null &&
-                session.PendingMessages.Count == 0 &&
-                (qos == MqttQualityOfServiceLevel.AtMostOnce ||
-                    session.InflightMessages.Count < inflightLimit);
-            if (!packetTooLarge &&
-                sendImmediately &&
-                qos != MqttQualityOfServiceLevel.AtMostOnce)
-            {
-                message = MqttZeroQueuedMessage.RentWithIdentifiers(
-                    lease,
-                    qos,
-                    retain,
-                    subscriptionIdentifiers,
-                    expiresAt);
-                message.SetMessageId(GetNextMessageId());
-                message.PacketIdentifier = session.GetNextPacketIdentifier();
-                session.InflightMessages[message.PacketIdentifier] = message;
-                messageHeld = true;
-            }
-            else if (!packetTooLarge && !sendImmediately)
+            if (!packetTooLarge)
             {
                 if (qos == MqttQualityOfServiceLevel.AtMostOnce &&
                     connection == null &&
@@ -238,26 +216,9 @@ public sealed partial class MqttZeroBroker
 
         try
         {
-            if (sendImmediately)
+            if (messageHeld)
             {
-                if (qos == MqttQualityOfServiceLevel.AtMostOnce)
-                {
-                    await connection!.SendPublishAsyncWithIdentifiers(
-                        lease,
-                        qos,
-                        retain,
-                        subscriptionIdentifiers,
-                        0,
-                        false,
-                        cancellationToken).ConfigureAwait(false);
-                }
-                else
-                {
-                    await connection!.SendPublishAsync(
-                        message!,
-                        false,
-                        cancellationToken).ConfigureAwait(false);
-                }
+                session.OutboundPump?.Signal();
             }
         }
         finally

@@ -465,11 +465,19 @@ public sealed partial class MqttZeroBroker
         MqttReasonCode reasonCode,
         CancellationToken cancellationToken)
     {
-        if (!IsConnectionAttached(session, connection))
+        MqttZeroSessionOutboundPump? pump;
+        lock (session.SyncRoot)
         {
-            return false;
+            if (!ReferenceEquals(session.Connection, connection))
+            {
+                return false;
+            }
+
+            pump = session.OutboundPump;
+            session.OutboundPump = null;
         }
 
+        await StopSessionOutboundPumpAsync(pump).ConfigureAwait(false);
         await connection.CloseAsync(reasonCode, cancellationToken).ConfigureAwait(false);
         return true;
     }

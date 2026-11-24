@@ -108,9 +108,17 @@ public sealed partial class MqttZeroBroker
             foreach (MqttZeroSessionState session in _sessions.Values)
             {
                 MqttZeroClientConnection? connection;
+                MqttZeroSessionOutboundPump? pump;
                 lock (session.SyncRoot)
                 {
                     connection = session.Connection;
+                    pump = session.OutboundPump;
+                    session.OutboundPump = null;
+                }
+
+                if (pump != null)
+                {
+                    await StopSessionOutboundPumpAsync(pump).ConfigureAwait(false);
                 }
 
                 if (connection == null)
@@ -136,6 +144,14 @@ public sealed partial class MqttZeroBroker
 
             foreach (MqttZeroSessionState session in _sessions.Values)
             {
+                MqttZeroSessionOutboundPump? pump;
+                lock (session.SyncRoot)
+                {
+                    pump = session.OutboundPump;
+                    session.OutboundPump = null;
+                }
+
+                await StopSessionOutboundPumpAsync(pump).ConfigureAwait(false);
                 ReleaseSessionMessages(session);
             }
 

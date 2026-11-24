@@ -41,7 +41,9 @@ public sealed partial class MqttZeroBroker : IMqttZeroBroker, IAsyncDisposable
     private MqttZeroSubscriptionRouteSnapshot _subscriptionRouteSnapshot =
         MqttZeroSubscriptionRouteSnapshot.Empty;
     private readonly MqttZeroRouteScopePool _routeScopes = new();
-    private readonly List<MqttZeroClientConnection> _keepAliveExpired = [];
+    private readonly List<(
+        MqttZeroClientConnection Connection,
+        MqttZeroSessionOutboundPump? Pump)> _keepAliveExpired = [];
     private readonly List<(MqttZeroSessionState Session, MqttZeroWillMessage Will)> _dueWills = [];
     private readonly List<MqttZeroSessionState> _expiredSessions = [];
     private readonly List<string> _expiredRetainedTopics = [];

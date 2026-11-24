@@ -43,3 +43,5 @@ dotnet run -c Release --project benchmarks/MqttZero.BrokerBenchmarks -- `
 ## 结果记录
 
 容量结论必须附带执行日期、机器型号、操作系统、.NET 版本、完整命令和三次运行结果。短时快速验证只用于检查工具链，不作为性能声明。
+
+Session outbound pump 的专项前后对照见 `broker-outbound-pump-2026-11-24.md`。
