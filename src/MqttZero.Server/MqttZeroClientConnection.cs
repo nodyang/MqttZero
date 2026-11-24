@@ -1,14 +1,14 @@
 using MqttZero.Memory;
-using MqttZero.Events;
-using MqttZero.Clients;
+using MqttZero.Server.Events;
+using MqttZero.Server.Clients;
 using MqttZero.Protocol;
-using MqttZero.Sessions;
+using MqttZero.Server.Sessions;
 using System.Buffers;
 using System.Buffers.Binary;
 using System.IO.Pipelines;
 using System.Net;
 
-namespace MqttZero;
+namespace MqttZero.Server;
 
 internal sealed class MqttZeroClientConnection : IAsyncDisposable
 {

@@ -5,11 +5,12 @@ using System.IO.Pipelines;
 using System.Net;
 using System.Reflection;
 using BenchmarkDotNet.Attributes;
-using MqttZero.Broker;
+using MqttZero.Server;
+using MqttZero.Server.Broker;
 using MqttZero.Memory;
 using MqttZero.Protocol;
-using MqttZero.Routing;
-using MqttZero.Sessions;
+using MqttZero.Server.Routing;
+using MqttZero.Server.Sessions;
 
 namespace MqttZero.Benchmarks;
 

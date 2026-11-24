@@ -1,4 +1,4 @@
-namespace MqttZero.Storage;
+namespace MqttZero.Server.Storage;
 
 /// <summary>Queues persistence writes behind the broker hot path.</summary>
 public interface IMqttZeroPersistenceWriter

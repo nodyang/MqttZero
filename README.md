@@ -1,6 +1,6 @@
 # MQTTZero
 
-MQTTZero 是一个面向 ASP.NET Core Kestrel 的独立 MQTT 5 Broker。生产代码不依赖 MQTTnet，目标框架为 .NET 10。当前版本为 `0.5.0-alpha.1`。
+MQTTZero 是一个面向 ASP.NET Core Kestrel 的独立 MQTT 5 Broker。生产代码不依赖 MQTTnet，目标框架为 .NET 10。当前版本为 `0.6.0-alpha.1`。
 
 ## 当前能力
 
@@ -16,6 +16,15 @@ MQTTZero 是一个面向 ASP.NET Core Kestrel 的独立 MQTT 5 Broker。生产�
 - Kestrel Accepted Socket、静态 TLS、分片策略和 Unix Domain Socket 原生承载配置。
 - 池化字节池、引用计数 Payload Lease、无分配 PUBLISH 解码/路由/QoS 1/2 队列/编码和内存 Transport 热路径。
 - 可选 Vue 3 + Element Plus 管理面板，构建资源内嵌在 NuGet 程序集中。
+
+## 包结构
+
+- `MqttZero`：客户端与服务端共享的 MQTT 5 协议、发布消息和池化内存基础设施，命名空间包括 `MqttZero.Protocol`、`MqttZero.Publishing` 和 `MqttZero.Memory`。
+- `MqttZero.Server`：Broker、Session、路由、拦截器、Observer 和持久化 Store，服务端命名空间统一位于 `MqttZero.Server.*`。
+- `MqttZero.AspNetCore`：Kestrel TCP、TLS、WebSocket、健康检查和依赖注入入口。
+- `MqttZero.AspNetCore.Dashboard`：可选管理面板。
+
+当前尚无客户端 SDK，但公共 `MqttZero` 包已经作为后续客户端的协议和内存边界保留。
 
 ## 快速开始
 
@@ -60,9 +69,9 @@ await app.RunAsync();
 业务代码注入 `IMqttZeroBroker`。`PublishAsync` 接收单个消息实体，后续消息字段扩展不会改变核心方法签名：
 
 ```csharp
-using MqttZero.Broker;
 using MqttZero.Protocol;
 using MqttZero.Publishing;
+using MqttZero.Server.Broker;
 using System.Buffers;
 
 IMqttZeroBroker broker = app.Services.GetRequiredService<IMqttZeroBroker>();

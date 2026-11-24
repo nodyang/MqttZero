@@ -1,4 +1,4 @@
-namespace MqttZero.Routing;
+namespace MqttZero.Server.Routing;
 
 internal sealed class MqttZeroSharedRouteGroup
 {

@@ -1,8 +1,8 @@
-using MqttZero.Clients;
-using MqttZero.Events;
+using MqttZero.Server.Clients;
+using MqttZero.Server.Events;
 using System.Buffers;
 
-namespace MqttZero.Observers;
+namespace MqttZero.Server.Observers;
 
 /// <summary>Describes an overwritten queued message.</summary>
 public sealed class MqttZeroQueueMessageOverwrittenContext

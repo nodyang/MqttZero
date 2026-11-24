@@ -1,5 +1,5 @@
 using MqttZero.Protocol;
-namespace MqttZero.Interceptors;
+namespace MqttZero.Server.Interceptors;
 
 /// <summary>
 /// Controls how a broker pipeline continues after an interceptor call.

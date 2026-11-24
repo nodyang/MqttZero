@@ -1,4 +1,4 @@
-namespace MqttZero;
+namespace MqttZero.Server;
 
 /// <summary>
 /// Configures MQTTZero broker behavior and resource limits.

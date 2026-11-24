@@ -1,4 +1,4 @@
-namespace MqttZero.Interceptors;
+namespace MqttZero.Server.Interceptors;
 
 /// <summary>Controls CONNECT processing.</summary>
 public enum MqttZeroConnectionInterceptionResult

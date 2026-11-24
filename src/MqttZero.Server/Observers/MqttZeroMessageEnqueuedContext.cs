@@ -1,9 +1,9 @@
-using MqttZero.Clients;
-using MqttZero.Events;
+using MqttZero.Server.Clients;
+using MqttZero.Server.Events;
 using MqttZero.Protocol;
 using System.Buffers;
 
-namespace MqttZero.Observers;
+namespace MqttZero.Server.Observers;
 
 /// <summary>Describes an enqueued delivery.</summary>
 public sealed class MqttZeroMessageEnqueuedContext

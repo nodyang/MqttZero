@@ -1,6 +1,6 @@
 using MqttZero.Protocol;
 
-namespace MqttZero.Clients;
+namespace MqttZero.Server.Clients;
 
 /// <summary>Describes one server-originated unsubscribe result.</summary>
 public sealed class MqttZeroUnsubscribeResult

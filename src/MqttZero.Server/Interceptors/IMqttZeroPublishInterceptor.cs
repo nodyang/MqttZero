@@ -1,5 +1,5 @@
 using MqttZero.Protocol;
-namespace MqttZero.Interceptors;
+namespace MqttZero.Server.Interceptors;
 
 /// <summary>
 /// Intercepts MQTT publish operations before routing.

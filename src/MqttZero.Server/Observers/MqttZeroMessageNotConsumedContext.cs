@@ -1,7 +1,7 @@
-using MqttZero.Clients;
+using MqttZero.Server.Clients;
 using System.Buffers;
 
-namespace MqttZero.Observers;
+namespace MqttZero.Server.Observers;
 
 /// <summary>Describes a publish with no matching subscriber.</summary>
 public sealed class MqttZeroMessageNotConsumedContext

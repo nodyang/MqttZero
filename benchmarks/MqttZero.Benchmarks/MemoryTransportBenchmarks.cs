@@ -1,8 +1,9 @@
-using MqttZero.Broker;
+using MqttZero.Server;
+using MqttZero.Server.Broker;
 using MqttZero.Memory;
 using MqttZero.Protocol;
-using MqttZero.Routing;
-using MqttZero.Sessions;
+using MqttZero.Server.Routing;
+using MqttZero.Server.Sessions;
 using System.Buffers;
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;

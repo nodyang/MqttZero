@@ -1,6 +1,6 @@
 using MqttZero.Protocol;
 
-namespace MqttZero.Clients;
+namespace MqttZero.Server.Clients;
 
 /// <summary>Describes one server-originated subscription result.</summary>
 public sealed class MqttZeroSubscribeResult

@@ -1,15 +1,15 @@
-using MqttZero.Interceptors;
-using MqttZero.Clients;
+using MqttZero.Server.Interceptors;
+using MqttZero.Server.Clients;
 using MqttZero.Memory;
 using MqttZero.Protocol;
-using MqttZero.Routing;
-using MqttZero.Sessions;
-using MqttZero.Storage;
+using MqttZero.Server.Routing;
+using MqttZero.Server.Sessions;
+using MqttZero.Server.Storage;
 using System.Buffers;
 using System.Collections.Concurrent;
 using System.IO.Pipelines;
 
-namespace MqttZero.Broker;
+namespace MqttZero.Server.Broker;
 
 /// <summary>
 /// Implements publish routing, topic aliases, and subscription snapshots.

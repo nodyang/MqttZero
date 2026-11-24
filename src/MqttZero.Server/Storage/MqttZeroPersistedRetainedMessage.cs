@@ -1,6 +1,6 @@
 using MqttZero.Protocol;
 
-namespace MqttZero.Storage;
+namespace MqttZero.Server.Storage;
 
 /// <summary>Describes a persisted retained message.</summary>
 public sealed class MqttZeroPersistedRetainedMessage

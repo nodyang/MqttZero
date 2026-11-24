@@ -1,4 +1,4 @@
-namespace MqttZero.Storage;
+namespace MqttZero.Server.Storage;
 
 internal sealed class MqttZeroNoopSessionStore : IMqttZeroSessionStore
 {

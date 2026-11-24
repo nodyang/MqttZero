@@ -1,6 +1,6 @@
 using MqttZero.Memory;
 using MqttZero.Protocol;
-namespace MqttZero;
+namespace MqttZero.Server;
 
 internal sealed class MqttZeroRetainedMessage
 {

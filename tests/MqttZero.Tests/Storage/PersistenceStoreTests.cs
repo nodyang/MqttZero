@@ -1,8 +1,9 @@
 using Microsoft.Extensions.DependencyInjection;
+using MqttZero.Server;
 using MqttZero.AspNetCore;
-using MqttZero.Broker;
+using MqttZero.Server.Broker;
 using MqttZero.Protocol;
-using MqttZero.Storage;
+using MqttZero.Server.Storage;
 
 namespace MqttZero.Tests.Storage
 {

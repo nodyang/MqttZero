@@ -1,17 +1,17 @@
-using MqttZero.Interceptors;
+using MqttZero.Server.Interceptors;
 using MqttZero.Memory;
-using MqttZero.Events;
-using MqttZero.Observers;
-using MqttZero.Clients;
+using MqttZero.Server.Events;
+using MqttZero.Server.Observers;
+using MqttZero.Server.Clients;
 using MqttZero.Protocol;
-using MqttZero.Routing;
-using MqttZero.Sessions;
+using MqttZero.Server.Routing;
+using MqttZero.Server.Sessions;
 using System.Buffers;
 using System.Collections.Concurrent;
 using System.IO.Pipelines;
 using System.Text;
 
-namespace MqttZero.Broker;
+namespace MqttZero.Server.Broker;
 
 /// <summary>
 /// Implements delivery, queues, inflight messages, and session drain.

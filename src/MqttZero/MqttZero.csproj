@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>MqttZero</RootNamespace>
+    <AssemblyName>MqttZero</AssemblyName>
+    <Description>Shared MQTT 5 protocol and memory primitives for MQTTZero clients and servers.</Description>
+    <PackageId>MqttZero</PackageId>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <IsPackable>true</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="MqttZero.Server" />
+    <InternalsVisibleTo Include="MqttZero.Tests" />
+    <InternalsVisibleTo Include="MqttZero.Benchmarks" />
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+    <None Include="..\..\LICENSE" Pack="true" PackagePath="\" />
+  </ItemGroup>
+</Project>

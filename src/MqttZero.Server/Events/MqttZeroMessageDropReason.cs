@@ -1,4 +1,4 @@
-namespace MqttZero.Events;
+namespace MqttZero.Server.Events;
 
 /// <summary>Describes why a delivery was dropped.</summary>
 public enum MqttZeroMessageDropReason

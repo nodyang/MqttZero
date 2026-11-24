@@ -208,16 +208,20 @@
           "xunit.v3.runner.common": "[4.0.3]"
         }
       },
+      "mqttzero": {
+        "type": "Project"
+      },
       "mqttzero.aspnetcore": {
         "type": "Project",
         "dependencies": {
-          "MqttZero.Server": "[0.5.0-alpha.1, )"
+          "MqttZero.Server": "[0.6.0-alpha.1, )"
         }
       },
       "mqttzero.server": {
         "type": "Project",
         "dependencies": {
-          "Microsoft.Extensions.Options": "[10.0.0, )"
+          "Microsoft.Extensions.Options": "[10.0.0, )",
+          "MqttZero": "[0.6.0-alpha.1, )"
         }
       },
       "Microsoft.Extensions.Options": {

@@ -2,14 +2,20 @@
   "version": 2,
   "dependencies": {
     "net10.0": {
+      "mqttzero": {
+        "type": "Project"
+      },
       "mqttzero.aspnetcore": {
         "type": "Project",
         "dependencies": {
-          "MqttZero.Server": "[0.5.0-alpha.1, )"
+          "MqttZero.Server": "[0.6.0-alpha.1, )"
         }
       },
       "mqttzero.server": {
-        "type": "Project"
+        "type": "Project",
+        "dependencies": {
+          "MqttZero": "[0.6.0-alpha.1, )"
+        }
       }
     }
   }

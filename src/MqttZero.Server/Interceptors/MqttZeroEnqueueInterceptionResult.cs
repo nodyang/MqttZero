@@ -1,4 +1,4 @@
-namespace MqttZero.Interceptors;
+namespace MqttZero.Server.Interceptors;
 
 /// <summary>Controls one receiver delivery.</summary>
 public enum MqttZeroEnqueueInterceptionResult

@@ -1,5 +1,6 @@
-using MqttZero.Broker;
-using MqttZero.Storage;
+using MqttZero.Server;
+using MqttZero.Server.Broker;
+using MqttZero.Server.Storage;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 

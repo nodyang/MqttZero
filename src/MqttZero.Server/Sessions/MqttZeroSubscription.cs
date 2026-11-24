@@ -2,7 +2,7 @@ using MqttZero.Memory;
 using MqttZero.Protocol;
 using System.Text;
 
-namespace MqttZero.Sessions;
+namespace MqttZero.Server.Sessions;
 
 internal sealed class MqttZeroSubscription
 {

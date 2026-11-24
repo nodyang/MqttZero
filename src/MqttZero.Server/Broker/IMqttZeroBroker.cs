@@ -1,9 +1,9 @@
-using MqttZero.Clients;
+using MqttZero.Server.Clients;
 using MqttZero.Protocol;
 using MqttZero.Publishing;
-using MqttZero.Sessions;
+using MqttZero.Server.Sessions;
 
-namespace MqttZero.Broker;
+namespace MqttZero.Server.Broker;
 
 /// <summary>
 /// Defines the consumer-facing operations of an MQTTZero broker.

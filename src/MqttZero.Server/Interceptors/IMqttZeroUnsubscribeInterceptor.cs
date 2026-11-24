@@ -1,4 +1,4 @@
-namespace MqttZero.Interceptors;
+namespace MqttZero.Server.Interceptors;
 
 /// <summary>Authorizes one unsubscribe filter.</summary>
 public interface IMqttZeroUnsubscribeInterceptor

@@ -1,7 +1,7 @@
-using MqttZero.Sessions;
+using MqttZero.Server.Sessions;
 using System.Text;
 
-namespace MqttZero.Routing;
+namespace MqttZero.Server.Routing;
 
 internal static class MqttZeroSubscriptionRouteSnapshotBuilder
 {

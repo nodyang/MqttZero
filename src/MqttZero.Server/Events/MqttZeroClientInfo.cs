@@ -2,7 +2,7 @@ using MqttZero.Protocol;
 using System.Net;
 using System.Security.Cryptography.X509Certificates;
 
-namespace MqttZero.Events;
+namespace MqttZero.Server.Events;
 
 /// <summary>Describes an authenticated client snapshot.</summary>
 public sealed class MqttZeroClientInfo

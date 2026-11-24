@@ -1,4 +1,4 @@
-namespace MqttZero.Storage;
+namespace MqttZero.Server.Storage;
 
 /// <summary>Persists session metadata and subscriptions.</summary>
 public interface IMqttZeroSessionStore

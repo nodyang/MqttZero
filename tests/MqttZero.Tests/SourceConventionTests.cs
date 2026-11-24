@@ -1,9 +1,10 @@
-using MqttZero.Broker;
-using MqttZero.Interceptors;
+using MqttZero.Server;
+using MqttZero.Server.Broker;
+using MqttZero.Server.Interceptors;
 using MqttZero.Memory;
 using MqttZero.Protocol;
-using MqttZero.Routing;
-using MqttZero.Sessions;
+using MqttZero.Server.Routing;
+using MqttZero.Server.Sessions;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -19,17 +20,23 @@ namespace MqttZero.Tests
                 "MqttZeroClientSnapshot.cs",
                 "MqttZeroSessionSnapshot.cs",
                 "MqttZeroRetainedMessageSnapshot.cs",
+                "MqttZeroClientConnection.cs",
+                "MqttZeroRetainedMessage.cs"
+            };
+
+        private static readonly HashSet<string> AllowedCommonRootSources =
+            new(StringComparer.OrdinalIgnoreCase)
+            {
                 "MqttZeroPayloadOwner.cs",
                 "MqttZeroPayloadOwnerFactory.cs",
-                "MqttZeroClientConnection.cs",
-                "MqttZeroPooledTopicAlias.cs",
-                "MqttZeroRetainedMessage.cs"
+                "MqttZeroPooledTopicAlias.cs"
             };
 
         private static readonly Dictionary<string, string> ProjectRootNamespaces =
             new(StringComparer.OrdinalIgnoreCase)
             {
-                ["src/MqttZero.Server"] = "MqttZero",
+                ["src/MqttZero"] = "MqttZero",
+                ["src/MqttZero.Server"] = "MqttZero.Server",
                 ["src/MqttZero.AspNetCore"] = "MqttZero.AspNetCore",
                 ["src/MqttZero.AspNetCore.Dashboard"] = "MqttZero.AspNetCore.Dashboard",
                 ["tests/MqttZero.Tests"] = "MqttZero.Tests",
@@ -116,6 +123,29 @@ namespace MqttZero.Tests
             Assert.True(
                 unexpected.Length == 0,
                 "Move these sources into responsibility folders: " +
+                string.Join(", ", unexpected));
+        }
+
+        [Fact]
+        public void CommonProjectRootContainsOnlyApprovedSharedTypes()
+        {
+            string repositoryRoot = FindRepositoryRoot();
+            string commonProject = Path.Combine(
+                repositoryRoot,
+                "src",
+                "MqttZero");
+            string[] unexpected = Directory
+                .EnumerateFiles(commonProject, "*.cs", SearchOption.TopDirectoryOnly)
+                .Select(Path.GetFileName)
+                .Where(static name =>
+                    name != null &&
+                    !AllowedCommonRootSources.Contains(name))
+                .Order(StringComparer.Ordinal)
+                .ToArray()!;
+
+            Assert.True(
+                unexpected.Length == 0,
+                "Move these shared sources into responsibility folders: " +
                 string.Join(", ", unexpected));
         }
 

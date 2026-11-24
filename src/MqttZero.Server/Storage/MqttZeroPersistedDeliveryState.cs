@@ -1,4 +1,4 @@
-namespace MqttZero.Storage;
+namespace MqttZero.Server.Storage;
 
 /// <summary>Describes persisted delivery progress.</summary>
 public enum MqttZeroPersistedDeliveryState

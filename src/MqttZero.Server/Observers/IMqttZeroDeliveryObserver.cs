@@ -1,4 +1,4 @@
-namespace MqttZero.Observers;
+namespace MqttZero.Server.Observers;
 
 /// <summary>Observes delivery and queue outcomes.</summary>
 public interface IMqttZeroDeliveryObserver

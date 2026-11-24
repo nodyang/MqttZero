@@ -1,4 +1,4 @@
-namespace MqttZero.Interceptors;
+namespace MqttZero.Server.Interceptors;
 
 /// <summary>Validates CONNECT requests before sessions are changed.</summary>
 public interface IMqttZeroConnectionInterceptor

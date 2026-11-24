@@ -7,6 +7,7 @@
     <Project Path="samples/MqttZero.Sample/MqttZero.Sample.csproj" />
   </Folder>
   <Folder Name="/src/">
+    <Project Path="src/MqttZero/MqttZero.csproj" />
     <Project Path="src/MqttZero.AspNetCore.Dashboard/MqttZero.AspNetCore.Dashboard.csproj" />
     <Project Path="src/MqttZero.AspNetCore/MqttZero.AspNetCore.csproj" />
     <Project Path="src/MqttZero.Server/MqttZero.Server.csproj" />

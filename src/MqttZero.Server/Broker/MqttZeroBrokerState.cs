@@ -1,9 +1,9 @@
-using MqttZero.Interceptors;
+using MqttZero.Server.Interceptors;
 using MqttZero.Memory;
 using MqttZero.Protocol;
-using MqttZero.Routing;
-using MqttZero.Sessions;
-namespace MqttZero.Broker;
+using MqttZero.Server.Routing;
+using MqttZero.Server.Sessions;
+namespace MqttZero.Server.Broker;
 
 /// <summary>
 /// Describes the MQTTZero broker lifecycle state.

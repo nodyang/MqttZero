@@ -1,6 +1,6 @@
-using MqttZero.Clients;
+using MqttZero.Server.Clients;
 
-namespace MqttZero.Observers;
+namespace MqttZero.Server.Observers;
 
 /// <summary>Describes a connected client.</summary>
 public sealed class MqttZeroClientConnectedContext

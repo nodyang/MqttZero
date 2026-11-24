@@ -1,8 +1,8 @@
-using MqttZero.Clients;
+using MqttZero.Server.Clients;
 using MqttZero.Protocol;
 using System.Buffers;
 
-namespace MqttZero.Interceptors;
+namespace MqttZero.Server.Interceptors;
 
 /// <summary>Contains unsubscribe authorization data.</summary>
 public sealed class MqttZeroUnsubscribeContext

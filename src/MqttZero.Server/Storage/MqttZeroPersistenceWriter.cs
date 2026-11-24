@@ -1,6 +1,6 @@
 using System.Threading.Channels;
 
-namespace MqttZero.Storage;
+namespace MqttZero.Server.Storage;
 
 internal sealed class MqttZeroPersistenceWriter : IMqttZeroPersistenceWriter
 {

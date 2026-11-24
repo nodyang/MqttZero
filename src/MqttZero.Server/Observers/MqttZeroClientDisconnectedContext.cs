@@ -1,7 +1,7 @@
-using MqttZero.Events;
+using MqttZero.Server.Events;
 using MqttZero.Protocol;
 
-namespace MqttZero.Observers;
+namespace MqttZero.Server.Observers;
 
 /// <summary>Describes a disconnected client.</summary>
 public sealed class MqttZeroClientDisconnectedContext

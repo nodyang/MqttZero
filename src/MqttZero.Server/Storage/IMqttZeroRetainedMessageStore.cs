@@ -1,4 +1,4 @@
-namespace MqttZero.Storage;
+namespace MqttZero.Server.Storage;
 
 /// <summary>Persists retained messages.</summary>
 public interface IMqttZeroRetainedMessageStore

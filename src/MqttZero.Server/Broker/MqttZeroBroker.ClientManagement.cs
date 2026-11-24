@@ -1,14 +1,14 @@
-using MqttZero.Clients;
-using MqttZero.Events;
-using MqttZero.Interceptors;
+using MqttZero.Server.Clients;
+using MqttZero.Server.Events;
+using MqttZero.Server.Interceptors;
 using MqttZero.Memory;
 using MqttZero.Protocol;
 using MqttZero.Publishing;
-using MqttZero.Sessions;
+using MqttZero.Server.Sessions;
 using System.Buffers;
 using System.Text;
 
-namespace MqttZero.Broker;
+namespace MqttZero.Server.Broker;
 
 public sealed partial class MqttZeroBroker
 {
@@ -189,7 +189,7 @@ public sealed partial class MqttZeroBroker
                     continue;
                 }
 
-                if (!MqttZero.Routing.MqttZeroTopicMatcher.Matches(
+                if (!MqttZero.Server.Routing.MqttZeroTopicMatcher.Matches(
                         filter,
                         retained.Topic.Span))
                 {

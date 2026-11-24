@@ -1,4 +1,5 @@
-using MqttZero.Broker;
+using MqttZero.Server;
+using MqttZero.Server.Broker;
 using MqttZero.Memory;
 using MqttZero.Protocol;
 using MqttZero.Tests.Support;

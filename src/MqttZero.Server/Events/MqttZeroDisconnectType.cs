@@ -1,4 +1,4 @@
-namespace MqttZero.Events;
+namespace MqttZero.Server.Events;
 
 /// <summary>Describes why a client connection ended.</summary>
 public enum MqttZeroDisconnectType

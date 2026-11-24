@@ -1,10 +1,11 @@
 using MqttQualityOfServiceLevel = MqttZero.Protocol.MqttQualityOfServiceLevel;
-using MqttZero.Broker;
-using MqttZero.Interceptors;
+using MqttZero.Server;
+using MqttZero.Server.Broker;
+using MqttZero.Server.Interceptors;
 using MqttZero.Memory;
 using MqttZero.Protocol;
-using MqttZero.Routing;
-using MqttZero.Sessions;
+using MqttZero.Server.Routing;
+using MqttZero.Server.Sessions;
 using System.Buffers;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using MqttZero.AspNetCore;

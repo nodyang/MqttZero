@@ -1,6 +1,6 @@
-using MqttZero.Sessions;
+using MqttZero.Server.Sessions;
 
-namespace MqttZero.Routing;
+namespace MqttZero.Server.Routing;
 
 internal sealed class MqttZeroSharedRouteEntry
 {

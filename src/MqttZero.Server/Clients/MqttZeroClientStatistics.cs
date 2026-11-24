@@ -1,4 +1,4 @@
-namespace MqttZero.Clients;
+namespace MqttZero.Server.Clients;
 
 /// <summary>Represents point-in-time connection statistics.</summary>
 public sealed class MqttZeroClientStatistics

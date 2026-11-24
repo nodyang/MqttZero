@@ -1,9 +1,9 @@
 using MqttZero.Protocol;
-using MqttZero.Clients;
+using MqttZero.Server.Clients;
 using System.Buffers;
 using System.Collections.Concurrent;
 
-namespace MqttZero.Interceptors;
+namespace MqttZero.Server.Interceptors;
 
 /// <summary>
 /// Contains mutable publish data for an interceptor.

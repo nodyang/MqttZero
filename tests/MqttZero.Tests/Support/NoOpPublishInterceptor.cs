@@ -1,4 +1,4 @@
-using MqttZero.Interceptors;
+using MqttZero.Server.Interceptors;
 
 namespace MqttZero.Tests.Support
 {

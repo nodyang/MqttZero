@@ -1,4 +1,4 @@
-namespace MqttZero.Sessions;
+namespace MqttZero.Server.Sessions;
 
 internal enum MqttZeroOutboundState
 {

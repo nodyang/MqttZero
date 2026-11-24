@@ -1,4 +1,4 @@
-namespace MqttZero;
+namespace MqttZero.Server;
 
 /// <summary>
 /// Represents one MQTT session and its current retained state.

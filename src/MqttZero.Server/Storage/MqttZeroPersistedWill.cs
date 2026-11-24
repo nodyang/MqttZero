@@ -1,6 +1,6 @@
 using MqttZero.Protocol;
 
-namespace MqttZero.Storage;
+namespace MqttZero.Server.Storage;
 
 /// <summary>Describes a persisted will message.</summary>
 public sealed class MqttZeroPersistedWill

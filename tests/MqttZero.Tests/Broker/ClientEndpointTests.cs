@@ -1,3 +1,4 @@
+using MqttZero.Server;
 using MqttZero.Tests.Support;
 using System.Net;
 using System.Net.Sockets;

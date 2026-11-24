@@ -3,7 +3,7 @@ using MqttZero.Protocol;
 using System.Buffers;
 using System.Collections.Concurrent;
 
-namespace MqttZero.Sessions;
+namespace MqttZero.Server.Sessions;
 
 internal sealed class MqttZeroQueuedMessage
 {

@@ -1,11 +1,11 @@
 using MqttZero.Memory;
 using MqttZero.Protocol;
-using MqttZero.Sessions;
-using MqttZero.Storage;
+using MqttZero.Server.Sessions;
+using MqttZero.Server.Storage;
 using System.Buffers;
 using System.Text;
 
-namespace MqttZero.Broker;
+namespace MqttZero.Server.Broker;
 
 public sealed partial class MqttZeroBroker
 {

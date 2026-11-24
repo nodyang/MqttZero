@@ -1,4 +1,4 @@
-namespace MqttZero.Storage;
+namespace MqttZero.Server.Storage;
 
 /// <summary>Identifies a persisted message category.</summary>
 public enum MqttZeroPersistedMessageKind

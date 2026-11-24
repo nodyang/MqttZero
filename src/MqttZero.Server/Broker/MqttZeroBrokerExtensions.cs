@@ -4,7 +4,7 @@ using MqttZero.Publishing;
 using System.Buffers;
 using System.IO.Pipelines;
 
-namespace MqttZero.Broker;
+namespace MqttZero.Server.Broker;
 
 /// <summary>
 /// Provides convenience overloads for server-originated publishing.

@@ -1,8 +1,8 @@
 using MqttZero.Protocol;
-using MqttZero.Sessions;
+using MqttZero.Server.Sessions;
 using System.Collections.Concurrent;
 
-namespace MqttZero.Routing;
+namespace MqttZero.Server.Routing;
 
 internal static class MqttZeroRouteSelector
 {

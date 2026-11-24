@@ -1,6 +1,6 @@
 using MqttZero.Protocol;
-using MqttZero.Sessions;
-namespace MqttZero.Routing;
+using MqttZero.Server.Sessions;
+namespace MqttZero.Server.Routing;
 
 internal readonly struct MqttZeroDeliveryCandidate
 {

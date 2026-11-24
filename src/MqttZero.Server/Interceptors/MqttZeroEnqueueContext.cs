@@ -1,9 +1,9 @@
-using MqttZero.Clients;
-using MqttZero.Events;
+using MqttZero.Server.Clients;
+using MqttZero.Server.Events;
 using MqttZero.Protocol;
 using System.Buffers;
 
-namespace MqttZero.Interceptors;
+namespace MqttZero.Server.Interceptors;
 
 /// <summary>Contains delivery authorization metadata.</summary>
 public sealed class MqttZeroEnqueueContext

@@ -1,5 +1,5 @@
-using MqttZero.Broker;
-using MqttZero.Interceptors;
+using MqttZero.Server.Broker;
+using MqttZero.Server.Interceptors;
 using Microsoft.AspNetCore.Connections;
 using Microsoft.AspNetCore.Connections.Features;
 using Microsoft.AspNetCore.Http;

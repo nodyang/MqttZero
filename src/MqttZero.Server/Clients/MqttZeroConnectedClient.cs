@@ -1,10 +1,10 @@
-using MqttZero.Broker;
-using MqttZero.Events;
+using MqttZero.Server.Broker;
+using MqttZero.Server.Events;
 using MqttZero.Protocol;
 using MqttZero.Publishing;
-using MqttZero.Sessions;
+using MqttZero.Server.Sessions;
 
-namespace MqttZero.Clients;
+namespace MqttZero.Server.Clients;
 
 /// <summary>Provides connection-scoped operations for one connected client.</summary>
 public sealed class MqttZeroConnectedClient

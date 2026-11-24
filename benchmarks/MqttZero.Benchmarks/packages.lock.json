@@ -154,10 +154,14 @@
         "resolved": "4.7.0",
         "contentHash": "VybpaOQQhqE6siHppMktjfGBw1GCwvCqiufqmP8F1nj7fTUNtW35LOEt3UZTEsECfo+ELAl/9o9nJx3U91i7vA=="
       },
+      "mqttzero": {
+        "type": "Project"
+      },
       "mqttzero.server": {
         "type": "Project",
         "dependencies": {
-          "Microsoft.Extensions.Options": "[10.0.0, )"
+          "Microsoft.Extensions.Options": "[10.0.0, )",
+          "MqttZero": "[0.6.0-alpha.1, )"
         }
       },
       "Microsoft.CodeAnalysis.CSharp": {

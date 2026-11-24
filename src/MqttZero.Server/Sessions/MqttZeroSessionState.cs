@@ -3,7 +3,7 @@ using MqttZero.Protocol;
 using System.Collections.Concurrent;
 using System.Text;
 
-namespace MqttZero.Sessions;
+namespace MqttZero.Server.Sessions;
 
 internal sealed class MqttZeroSessionState
 {

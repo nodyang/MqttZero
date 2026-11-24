@@ -1,12 +1,12 @@
-using MqttZero.Interceptors;
-using MqttZero.Clients;
+using MqttZero.Server.Interceptors;
+using MqttZero.Server.Clients;
 using MqttZero.Memory;
 using MqttZero.Protocol;
-using MqttZero.Routing;
-using MqttZero.Sessions;
+using MqttZero.Server.Routing;
+using MqttZero.Server.Sessions;
 using System.Buffers;
 
-namespace MqttZero.Broker;
+namespace MqttZero.Server.Broker;
 
 public sealed partial class MqttZeroBroker
 {

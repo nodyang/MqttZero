@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <RootNamespace>MqttZero</RootNamespace>
+    <RootNamespace>MqttZero.Server</RootNamespace>
     <AssemblyName>MqttZero.Server</AssemblyName>
     <Description>High-performance MQTT 5 broker core.</Description>
     <PackageId>MqttZero.Server</PackageId>
@@ -10,6 +10,7 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Options" />
+    <ProjectReference Include="..\MqttZero\MqttZero.csproj" />
     <InternalsVisibleTo Include="MqttZero.Benchmarks" />
     <InternalsVisibleTo Include="MqttZero.AspNetCore" />
     <InternalsVisibleTo Include="MqttZero.Tests" />

@@ -1,8 +1,8 @@
-using MqttZero.Events;
+using MqttZero.Server.Events;
 using MqttZero.Protocol;
 using System.Buffers;
 
-namespace MqttZero.Interceptors;
+namespace MqttZero.Server.Interceptors;
 
 /// <summary>Contains CONNECT authentication data.</summary>
 public sealed class MqttZeroConnectionContext

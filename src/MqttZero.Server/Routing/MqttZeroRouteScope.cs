@@ -1,11 +1,11 @@
 using MqttZero.Protocol;
-using MqttZero.Sessions;
+using MqttZero.Server.Sessions;
 using System.Buffers;
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 
-namespace MqttZero.Routing;
+namespace MqttZero.Server.Routing;
 
 internal sealed class MqttZeroRouteScope : IDisposable
 {

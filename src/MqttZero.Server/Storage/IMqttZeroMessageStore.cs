@@ -1,4 +1,4 @@
-namespace MqttZero.Storage;
+namespace MqttZero.Server.Storage;
 
 /// <summary>Persists queued, outbound, and inbound QoS 2 messages.</summary>
 public interface IMqttZeroMessageStore

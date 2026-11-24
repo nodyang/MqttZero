@@ -1,4 +1,4 @@
-namespace MqttZero.Interceptors;
+namespace MqttZero.Server.Interceptors;
 
 /// <summary>Controls delivery to one receiver.</summary>
 public interface IMqttZeroEnqueueInterceptor

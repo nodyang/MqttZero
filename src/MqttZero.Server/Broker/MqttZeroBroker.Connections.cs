@@ -1,19 +1,19 @@
-using MqttZero.Interceptors;
+using MqttZero.Server.Interceptors;
 using MqttZero.Memory;
 using MqttZero.Protocol;
-using MqttZero.Routing;
-using MqttZero.Sessions;
+using MqttZero.Server.Routing;
+using MqttZero.Server.Sessions;
 using System.Buffers;
 using System.Collections.Concurrent;
 using System.IO.Pipelines;
 using System.Net;
 using System.Text;
 using System.Security.Cryptography.X509Certificates;
-using MqttZero.Events;
-using MqttZero.Observers;
-using MqttZero.Clients;
+using MqttZero.Server.Events;
+using MqttZero.Server.Observers;
+using MqttZero.Server.Clients;
 
-namespace MqttZero.Broker;
+namespace MqttZero.Server.Broker;
 
 /// <summary>
 /// Implements connection acceptance, CONNECT processing, and takeover.

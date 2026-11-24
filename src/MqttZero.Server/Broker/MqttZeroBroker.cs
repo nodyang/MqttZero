@@ -1,17 +1,17 @@
-using MqttZero.Interceptors;
+using MqttZero.Server.Interceptors;
 using MqttZero.Memory;
-using MqttZero.Observers;
+using MqttZero.Server.Observers;
 using MqttZero.Protocol;
-using MqttZero.Routing;
-using MqttZero.Sessions;
-using MqttZero.Storage;
+using MqttZero.Server.Routing;
+using MqttZero.Server.Sessions;
+using MqttZero.Server.Storage;
 using Microsoft.Extensions.Options;
 using System.Buffers;
 using System.Collections.Concurrent;
 using System.IO.Pipelines;
 using System.Text;
 
-namespace MqttZero.Broker;
+namespace MqttZero.Server.Broker;
 
 /// <summary>
 /// Provides the in-memory MQTT 5 broker pipeline.

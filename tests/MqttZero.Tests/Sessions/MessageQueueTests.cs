@@ -1,6 +1,6 @@
 using MqttZero.Memory;
 using MqttZero.Protocol;
-using MqttZero.Sessions;
+using MqttZero.Server.Sessions;
 using System.Buffers;
 
 namespace MqttZero.Tests.Sessions
