@@ -15,7 +15,34 @@ namespace MqttZero.Broker;
 /// </summary>
 public sealed partial class MqttZeroBroker
 {
-    private void StoreRetainedMessage(MqttZeroMessageLease lease)
+    private async ValueTask StoreRetainedMessageAsync(
+        MqttZeroMessageLease lease,
+        CancellationToken cancellationToken)
+    {
+        if (!_persistenceWriter.IsEnabled)
+        {
+            StoreRetainedMessageInMemory(lease);
+            return;
+        }
+
+        string topicKey = Encoding.UTF8.GetString(lease.Topic.Span);
+        if (lease.PayloadSequence.IsEmpty)
+        {
+            RemoveRetainedMessage(topicKey);
+            await _persistenceWriter.EnqueueRetainedDeleteAsync(topicKey, cancellationToken)
+                .ConfigureAwait(false);
+            return;
+        }
+
+        lease.EnsureOwned();
+        DateTimeOffset? expiresAt = lease.MessageExpiryInterval.HasValue
+            ? _timeProvider.GetUtcNow().AddSeconds(lease.MessageExpiryInterval.Value)
+            : null;
+        await SaveRetainedAsync(lease, expiresAt, cancellationToken).ConfigureAwait(false);
+        StoreRetainedMessageInMemory(lease, topicKey, expiresAt);
+    }
+
+    private void StoreRetainedMessageInMemory(MqttZeroMessageLease lease)
     {
         string topicKey = Encoding.UTF8.GetString(lease.Topic.Span);
         if (lease.PayloadSequence.IsEmpty)
@@ -25,6 +52,17 @@ public sealed partial class MqttZeroBroker
         }
 
         lease.EnsureOwned();
+        DateTimeOffset? expiresAt = lease.MessageExpiryInterval.HasValue
+            ? _timeProvider.GetUtcNow().AddSeconds(lease.MessageExpiryInterval.Value)
+            : null;
+        StoreRetainedMessageInMemory(lease, topicKey, expiresAt);
+    }
+
+    private void StoreRetainedMessageInMemory(
+        MqttZeroMessageLease lease,
+        string topicKey,
+        DateTimeOffset? expiresAt)
+    {
         lock (_sessionGate)
         {
             _retainedMessages.TryGetValue(topicKey, out MqttZeroRetainedMessage? existing);
@@ -45,10 +83,7 @@ public sealed partial class MqttZeroBroker
             MqttZeroRetainedMessage replacement = new(
                 lease,
                 lease.QualityOfServiceLevel,
-                lease.MessageExpiryInterval.HasValue
-                    ? _timeProvider.GetUtcNow().AddSeconds(
-                        lease.MessageExpiryInterval.Value)
-                    : null);
+                expiresAt);
             _retainedMessages[topicKey] = replacement;
             _retainedBytes = retainedBytes;
             existing?.Release();

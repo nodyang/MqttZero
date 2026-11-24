@@ -20,19 +20,20 @@ public sealed partial class MqttZeroBroker
     /// </summary>
     /// <param name="cancellationToken">A token that cancels startup.</param>
     /// <returns>A task representing startup.</returns>
-    public ValueTask StartAsync(CancellationToken cancellationToken = default)
+    public async ValueTask StartAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (State == MqttZeroBrokerState.Running)
         {
-            return ValueTask.CompletedTask;
+            return;
         }
 
+        await RestorePersistenceAsync(cancellationToken).ConfigureAwait(false);
+        await _persistenceWriter.StartAsync(cancellationToken).ConfigureAwait(false);
         Volatile.Write(ref _stopping, 0);
         Volatile.Write(ref _state, (int)MqttZeroBrokerState.Running);
         _maintenanceCancellation = new CancellationTokenSource();
         _maintenanceTask = RunMaintenanceAsync(_maintenanceCancellation.Token);
-        return ValueTask.CompletedTask;
     }
 
     /// <summary>
@@ -88,6 +89,7 @@ public sealed partial class MqttZeroBroker
             }
         }
 
+        await _persistenceWriter.StopAsync(cancellationToken).ConfigureAwait(false);
         foreach (MqttZeroSessionState session in _sessions.Values)
         {
             ReleaseSessionMessages(session);

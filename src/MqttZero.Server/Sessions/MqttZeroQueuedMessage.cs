@@ -59,6 +59,8 @@ internal sealed class MqttZeroQueuedMessage
 
     public MqttZeroOutboundState State { get; private set; }
 
+    public long MessageId { get; private set; }
+
     public static MqttZeroQueuedMessage Rent(
         MqttZeroMessageLease lease,
         MqttQualityOfServiceLevel qualityOfServiceLevel,
@@ -79,6 +81,7 @@ internal sealed class MqttZeroQueuedMessage
         message.SubscriptionIdentifier = subscriptionIdentifier;
         message.ExpiresAt = expiresAt;
         message.PacketIdentifier = 0;
+        message.MessageId = 0;
         message.State = qualityOfServiceLevel switch
         {
             MqttQualityOfServiceLevel.ExactlyOnce => MqttZeroOutboundState.AwaitPubRec,
@@ -91,6 +94,24 @@ internal sealed class MqttZeroQueuedMessage
     public void SetAwaitPubComp()
     {
         State = MqttZeroOutboundState.AwaitPubComp;
+    }
+
+    public void SetMessageId(long messageId)
+    {
+        MessageId = messageId;
+    }
+
+    public void Restore(ushort packetIdentifier, MqttZeroOutboundState state)
+    {
+        PacketIdentifier = packetIdentifier;
+        State = state;
+    }
+
+    public void Restore(long messageId, ushort packetIdentifier, MqttZeroOutboundState state)
+    {
+        MessageId = messageId;
+        PacketIdentifier = packetIdentifier;
+        State = state;
     }
 
     public bool IsExpired(DateTimeOffset now)
@@ -138,6 +159,7 @@ internal sealed class MqttZeroQueuedMessage
         SubscriptionIdentifier = null;
         ExpiresAt = null;
         PacketIdentifier = 0;
+        MessageId = 0;
         State = MqttZeroOutboundState.AwaitPubAck;
         MessagePool.Enqueue(this);
     }

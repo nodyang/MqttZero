@@ -87,11 +87,14 @@ public sealed partial class MqttZeroBroker
             foreach (string topic in _expiredRetainedTopics)
             {
                 RemoveRetainedMessage(topic);
+                await _persistenceWriter.EnqueueRetainedDeleteAsync(topic, cancellationToken)
+                    .ConfigureAwait(false);
             }
 
             foreach (MqttZeroSessionState session in _expiredSessions)
             {
                 ReleaseSessionMessages(session);
+                bool removed = false;
                 lock (_sessionGate)
                 {
                     if (_sessions.TryGetValue(session.ClientId, out MqttZeroSessionState? current) &&
@@ -99,7 +102,15 @@ public sealed partial class MqttZeroBroker
                     {
                         _sessions.TryRemove(session.ClientId, out _);
                         RebuildSubscriptionRouteSnapshot();
+                        removed = true;
                     }
+                }
+
+                if (removed)
+                {
+                    await _persistenceWriter.EnqueueSessionDeleteAsync(
+                        session.ClientId,
+                        cancellationToken).ConfigureAwait(false);
                 }
             }
         }

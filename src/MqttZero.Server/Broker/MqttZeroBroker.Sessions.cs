@@ -61,6 +61,7 @@ public sealed partial class MqttZeroBroker
         if (removeSession)
         {
             ReleaseSessionMessages(session);
+            bool removed = false;
             lock (_sessionGate)
             {
                 if (_sessions.TryGetValue(session.ClientId, out MqttZeroSessionState? current) &&
@@ -68,7 +69,15 @@ public sealed partial class MqttZeroBroker
                 {
                     _sessions.TryRemove(session.ClientId, out _);
                     RebuildSubscriptionRouteSnapshot();
+                    removed = true;
                 }
+            }
+
+            if (removed)
+            {
+                await _persistenceWriter.EnqueueSessionDeleteAsync(
+                    session.ClientId,
+                    CancellationToken.None).ConfigureAwait(false);
             }
         }
     }

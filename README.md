@@ -112,6 +112,25 @@ builder.Services.AddMqttZero()
 
 Observer 只观察、不参与 Allow/Deny 决策，异常会被隔离。用户名和客户端证书可提供给扩展；原始密码只在 CONNECT 拦截上下文生效，不进入 Observer。启用 Observer 后允许分配，未注册扩展时原有热路径继续执行零分配检查。
 
+## 持久化 Store
+
+Broker 提供三个独立持久化接口：
+
+- `IMqttZeroSessionStore`
+- `IMqttZeroMessageStore`
+- `IMqttZeroRetainedMessageStore`
+
+默认注册的是无操作 Store，支持同一进程内的断线重连，但不支持进程重启恢复，也不复制运行时 Payload。替换任意 Store 即可接入外部持久化：
+
+```csharp
+builder.Services.AddSingleton<IMqttZeroSessionStore, MySessionStore>();
+builder.Services.AddSingleton<IMqttZeroMessageStore, MyMessageStore>();
+builder.Services.AddSingleton<IMqttZeroRetainedMessageStore, MyRetainedMessageStore>();
+builder.Services.AddMqttZero();
+```
+
+外部 Store 在保存二进制字段时必须复制数据，不能引用 Broker 的池化 Lease。持久化模式允许异步和分配；默认无操作模式仍执行零分配热路径检查。
+
 ## Kestrel 入口配置
 
 `UseMqttZero` 支持连接级 TCP 选项和静态 TLS。Listening Socket 的 `ReuseAddress` 等选项仍由 Kestrel `SocketTransportOptions` 管理。

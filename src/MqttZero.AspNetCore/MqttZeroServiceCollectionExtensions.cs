@@ -1,4 +1,5 @@
 using MqttZero.Broker;
+using MqttZero.Storage;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
@@ -29,6 +30,10 @@ public static class MqttZeroServiceCollectionExtensions
         }
 
         services.TryAddSingleton(TimeProvider.System);
+        services.TryAddSingleton<IMqttZeroSessionStore, MqttZeroNoopSessionStore>();
+        services.TryAddSingleton<IMqttZeroMessageStore, MqttZeroNoopMessageStore>();
+        services.TryAddSingleton<IMqttZeroRetainedMessageStore, MqttZeroNoopRetainedMessageStore>();
+        services.TryAddSingleton<IMqttZeroPersistenceWriter, MqttZeroPersistenceWriter>();
         services.TryAddSingleton<MqttZeroBroker>();
         services.TryAddSingleton<MqttZeroConnectionHandler>();
         services.AddHostedService<MqttZeroHostedService>();

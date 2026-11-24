@@ -4,6 +4,7 @@ using MqttZero.Observers;
 using MqttZero.Protocol;
 using MqttZero.Routing;
 using MqttZero.Sessions;
+using MqttZero.Storage;
 using Microsoft.Extensions.Options;
 using System.Buffers;
 using System.Collections.Concurrent;
@@ -26,6 +27,10 @@ public sealed partial class MqttZeroBroker : IAsyncDisposable
     private readonly IMqttZeroEnqueueInterceptor[] _enqueueInterceptors;
     private readonly IMqttZeroConnectionObserver[] _connectionObservers;
     private readonly IMqttZeroDeliveryObserver[] _deliveryObservers;
+    private readonly IMqttZeroSessionStore _sessionStore;
+    private readonly IMqttZeroMessageStore _messageStore;
+    private readonly IMqttZeroRetainedMessageStore _retainedMessageStore;
+    private readonly IMqttZeroPersistenceWriter _persistenceWriter;
     private readonly ConcurrentDictionary<string, MqttZeroRetainedMessage> _retainedMessages =
         new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, MqttZeroSessionState> _sessions =
@@ -49,6 +54,12 @@ public sealed partial class MqttZeroBroker : IAsyncDisposable
     private long _retainedBytes;
     private int _stopping;
     private int _state;
+    private long _nextMessageId;
+
+    internal long GetNextMessageId()
+    {
+        return Interlocked.Increment(ref _nextMessageId);
+    }
 
     /// <summary>Initializes a broker and its extension pipeline.</summary>
     /// <param name="options">The broker options accessor.</param>
@@ -60,6 +71,10 @@ public sealed partial class MqttZeroBroker : IAsyncDisposable
     /// <param name="enqueueInterceptors">The ordered enqueue interceptors.</param>
     /// <param name="connectionObservers">The ordered connection observers.</param>
     /// <param name="deliveryObservers">The ordered delivery observers.</param>
+    /// <param name="sessionStore">The session persistence store.</param>
+    /// <param name="messageStore">The message persistence store.</param>
+    /// <param name="retainedMessageStore">The retained-message persistence store.</param>
+    /// <param name="persistenceWriter">The write-behind persistence writer.</param>
     public MqttZeroBroker(
         IOptions<MqttZeroOptions> options,
         TimeProvider timeProvider,
@@ -69,7 +84,11 @@ public sealed partial class MqttZeroBroker : IAsyncDisposable
         IEnumerable<IMqttZeroUnsubscribeInterceptor> unsubscribeInterceptors,
         IEnumerable<IMqttZeroEnqueueInterceptor> enqueueInterceptors,
         IEnumerable<IMqttZeroConnectionObserver> connectionObservers,
-        IEnumerable<IMqttZeroDeliveryObserver> deliveryObservers)
+        IEnumerable<IMqttZeroDeliveryObserver> deliveryObservers,
+        IMqttZeroSessionStore sessionStore,
+        IMqttZeroMessageStore messageStore,
+        IMqttZeroRetainedMessageStore retainedMessageStore,
+        IMqttZeroPersistenceWriter persistenceWriter)
     {
         ArgumentNullException.ThrowIfNull(options);
         _options = options.Value ?? throw new ArgumentNullException(nameof(options));
@@ -83,6 +102,12 @@ public sealed partial class MqttZeroBroker : IAsyncDisposable
         _enqueueInterceptors = enqueueInterceptors.ToArray();
         _connectionObservers = connectionObservers.ToArray();
         _deliveryObservers = deliveryObservers.ToArray();
+        _sessionStore = sessionStore ?? throw new ArgumentNullException(nameof(sessionStore));
+        _messageStore = messageStore ?? throw new ArgumentNullException(nameof(messageStore));
+        _retainedMessageStore = retainedMessageStore ??
+            throw new ArgumentNullException(nameof(retainedMessageStore));
+        _persistenceWriter = persistenceWriter ??
+            throw new ArgumentNullException(nameof(persistenceWriter));
     }
 
     internal static MqttZeroBroker Create(
@@ -99,7 +124,14 @@ public sealed partial class MqttZeroBroker : IAsyncDisposable
             [],
             [],
             [],
-            []);
+            [],
+            new MqttZeroNoopSessionStore(),
+            new MqttZeroNoopMessageStore(),
+            new MqttZeroNoopRetainedMessageStore(),
+            new MqttZeroPersistenceWriter(
+                new MqttZeroNoopSessionStore(),
+                new MqttZeroNoopMessageStore(),
+                new MqttZeroNoopRetainedMessageStore()));
     }
 
     /// <summary>

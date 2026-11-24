@@ -438,6 +438,25 @@ public sealed partial class MqttZeroBroker
         }
 
         RebuildSubscriptionRouteSnapshot();
+        try
+        {
+            await SaveSessionAsync(session, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch
+        {
+            if (!sessionPresent)
+            {
+                lock (_sessionGate)
+                {
+                    _sessions.TryRemove(session.ClientId, out _);
+                }
+
+                ReleaseSessionMessages(session);
+                RebuildSubscriptionRouteSnapshot();
+            }
+
+            throw;
+        }
 
         if (oldConnection != null && !ReferenceEquals(oldConnection, newConnection))
         {

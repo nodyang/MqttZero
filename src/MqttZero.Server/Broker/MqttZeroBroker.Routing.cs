@@ -3,6 +3,7 @@ using MqttZero.Memory;
 using MqttZero.Protocol;
 using MqttZero.Routing;
 using MqttZero.Sessions;
+using MqttZero.Storage;
 using System.Buffers;
 using System.Collections.Concurrent;
 using System.IO.Pipelines;
@@ -61,6 +62,12 @@ public sealed partial class MqttZeroBroker
             return false;
         }
 
+        if (_persistenceWriter.IsEnabled)
+        {
+            await _persistenceWriter.EnqueueInboundQos2Async(
+                CreateInboundPersistedMessage(lease, session.ClientId, packetIdentifier),
+                cancellationToken).ConfigureAwait(false);
+        }
         await connection.SendPubRecAsync(
             packetIdentifier,
             MqttReasonCode.Success,
@@ -117,7 +124,7 @@ public sealed partial class MqttZeroBroker
         {
             if (lease.RetainFlag)
             {
-                StoreRetainedMessage(lease);
+                await StoreRetainedMessageAsync(lease, cancellationToken).ConfigureAwait(false);
             }
 
             MqttZeroSubscriptionRouteSnapshot routeSnapshot =
@@ -128,7 +135,7 @@ public sealed partial class MqttZeroBroker
                 sender,
                 _sharedSubscriptionCursors,
                 _routeScopes);
-            if (deliveries.Count == 0)
+            if (deliveries.Count == 0 && _deliveryObservers.Length > 0)
             {
                 await NotifyNotConsumedAsync(null, lease, cancellationToken).ConfigureAwait(false);
             }
@@ -218,10 +225,52 @@ public sealed partial class MqttZeroBroker
         return lease;
     }
 
-    internal async ValueTask<MqttReasonCode> RoutePublishLeaseAsync(
+    internal ValueTask RoutePublishLeaseAsync(
         MqttZeroSessionState sender,
         MqttZeroClientConnection senderConnection,
         MqttZeroMessageLease lease,
+        CancellationToken cancellationToken)
+    {
+        if (!_persistenceWriter.IsEnabled &&
+            _enqueueInterceptors.Length == 0 &&
+            _deliveryObservers.Length == 0)
+        {
+            return RoutePublishLeaseFastAsync(
+                sender,
+                senderConnection,
+                lease,
+                cancellationToken);
+        }
+
+        return RoutePublishLeaseCoreAsync(
+            sender,
+            senderConnection,
+            lease,
+            null,
+            cancellationToken);
+    }
+
+    internal async ValueTask<MqttReasonCode> RoutePublishLeaseWithResultAsync(
+        MqttZeroSessionState sender,
+        MqttZeroClientConnection senderConnection,
+        MqttZeroMessageLease lease,
+        CancellationToken cancellationToken)
+    {
+        MqttReasonCode[] result = [MqttReasonCode.Success];
+        await RoutePublishLeaseCoreAsync(
+            sender,
+            senderConnection,
+            lease,
+            result,
+            cancellationToken).ConfigureAwait(false);
+        return result[0];
+    }
+
+    private async ValueTask RoutePublishLeaseCoreAsync(
+        MqttZeroSessionState sender,
+        MqttZeroClientConnection senderConnection,
+        MqttZeroMessageLease lease,
+        MqttReasonCode[]? resultHolder,
         CancellationToken cancellationToken)
     {
         MqttZeroMessageLease effectiveLease = lease;
@@ -255,7 +304,12 @@ public sealed partial class MqttZeroBroker
                                 cancellationToken).ConfigureAwait(false);
                         }
 
-                        return context.ResultReasonCode;
+                        if (resultHolder != null)
+                        {
+                            resultHolder[0] = context.ResultReasonCode;
+                        }
+
+                        return;
                     }
                 }
 
@@ -281,7 +335,9 @@ public sealed partial class MqttZeroBroker
         {
             if (effectiveLease.RetainFlag)
             {
-                StoreRetainedMessage(effectiveLease);
+                await StoreRetainedMessageAsync(
+                    effectiveLease,
+                    cancellationToken).ConfigureAwait(false);
             }
 
             MqttZeroSubscriptionRouteSnapshot routeSnapshot =
@@ -292,7 +348,7 @@ public sealed partial class MqttZeroBroker
                 sender,
                 _sharedSubscriptionCursors,
                 _routeScopes);
-            if (deliveries.Count == 0)
+            if (deliveries.Count == 0 && _deliveryObservers.Length > 0)
             {
                 await NotifyNotConsumedAsync(
                     senderConnection.ClientInfo,
@@ -317,6 +373,7 @@ public sealed partial class MqttZeroBroker
                     cancellationToken).ConfigureAwait(false);
             }
 
+
             if (effectiveLease.QualityOfServiceLevel == MqttQualityOfServiceLevel.AtLeastOnce)
             {
                 await senderConnection.SendPubAckAsync(
@@ -325,7 +382,10 @@ public sealed partial class MqttZeroBroker
                     cancellationToken).ConfigureAwait(false);
             }
 
-            return MqttReasonCode.Success;
+            if (resultHolder != null)
+            {
+                resultHolder[0] = MqttReasonCode.Success;
+            }
         }
         finally
         {

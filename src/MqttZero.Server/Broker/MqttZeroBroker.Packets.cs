@@ -39,17 +39,26 @@ public sealed partial class MqttZeroBroker
                 await connection.SendPingRespAsync(cancellationToken).ConfigureAwait(false);
                 break;
             case MqttPubAckPacket pubAckPacket:
+                MqttZeroQueuedMessage? acknowledgedMessage = null;
                 lock (session.SyncRoot)
                 {
                     if (session.InflightMessages.TryGetValue(
                             pubAckPacket.PacketIdentifier,
-                            out MqttZeroQueuedMessage? acknowledged) &&
-                        acknowledged.QualityOfServiceLevel ==
+                            out acknowledgedMessage) &&
+                        acknowledgedMessage.QualityOfServiceLevel ==
                             MqttQualityOfServiceLevel.AtLeastOnce)
                     {
                         session.InflightMessages.Remove(pubAckPacket.PacketIdentifier);
-                        acknowledged.Release();
                     }
+                }
+
+                if (acknowledgedMessage != null)
+                {
+                    await _persistenceWriter.EnqueueOutboundDeleteAsync(
+                        session.ClientId,
+                        acknowledgedMessage.MessageId,
+                        cancellationToken).ConfigureAwait(false);
+                    acknowledgedMessage.Release();
                 }
 
                 await DrainSessionAsync(session, cancellationToken).ConfigureAwait(false);
@@ -103,6 +112,14 @@ public sealed partial class MqttZeroBroker
         byte[] reasonCodes = new byte[packet.Subscriptions.Count];
         bool[] existed = new bool[packet.Subscriptions.Count];
         bool changed = false;
+        List<MqttZeroSubscription>? subscriptionSnapshot = null;
+        if (_persistenceWriter.IsEnabled)
+        {
+            lock (session.SyncRoot)
+            {
+                subscriptionSnapshot = [.. session.Subscriptions];
+            }
+        }
 
         for (int index = 0; index < packet.Subscriptions.Count; index++)
         {
@@ -182,6 +199,25 @@ public sealed partial class MqttZeroBroker
         if (changed)
         {
             RebuildSubscriptionRouteSnapshot();
+            try
+            {
+                await SaveSessionAsync(session, cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                if (subscriptionSnapshot != null)
+                {
+                    lock (session.SyncRoot)
+                    {
+                        session.Subscriptions.Clear();
+                        session.Subscriptions.AddRange(subscriptionSnapshot);
+                    }
+
+                    RebuildSubscriptionRouteSnapshot();
+                }
+
+                throw;
+            }
         }
 
         await connection.SendSubAckAsync(
@@ -253,6 +289,14 @@ public sealed partial class MqttZeroBroker
     {
         byte[] reasonCodes = new byte[packet.TopicFilters.Count];
         bool changed = false;
+        List<MqttZeroSubscription>? subscriptionSnapshot = null;
+        if (_persistenceWriter.IsEnabled)
+        {
+            lock (session.SyncRoot)
+            {
+                subscriptionSnapshot = [.. session.Subscriptions];
+            }
+        }
         for (int index = 0; index < packet.TopicFilters.Count; index++)
         {
             byte[] topicFilter = packet.TopicFilters[index].ToArray();
@@ -305,6 +349,25 @@ public sealed partial class MqttZeroBroker
         if (changed)
         {
             RebuildSubscriptionRouteSnapshot();
+            try
+            {
+                await SaveSessionAsync(session, cancellationToken).ConfigureAwait(false);
+            }
+            catch
+            {
+                if (subscriptionSnapshot != null)
+                {
+                    lock (session.SyncRoot)
+                    {
+                        session.Subscriptions.Clear();
+                        session.Subscriptions.AddRange(subscriptionSnapshot);
+                    }
+
+                    RebuildSubscriptionRouteSnapshot();
+                }
+
+                throw;
+            }
         }
 
         await connection.SendUnsubAckAsync(
