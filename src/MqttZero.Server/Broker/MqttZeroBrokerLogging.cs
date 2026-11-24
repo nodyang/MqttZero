@@ -37,4 +37,13 @@ internal static partial class MqttZeroBrokerLogging
         string operation,
         string clientId,
         Exception exception);
+
+    [LoggerMessage(
+        EventId = 1004,
+        Level = LogLevel.Error,
+        Message = "MQTTZero outbound pump failed for client {ClientId}.")]
+    public static partial void LogOutboundPumpFailure(
+        ILogger<MqttZeroBroker> logger,
+        string clientId,
+        Exception exception);
 }

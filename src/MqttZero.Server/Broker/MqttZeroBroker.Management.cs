@@ -190,9 +190,12 @@ public sealed partial class MqttZeroBroker
         }
 
         MqttZeroClientConnection? connection;
+        MqttZeroSessionOutboundPump? pump;
         lock (session.SyncRoot)
         {
             connection = session.Connection;
+            pump = session.OutboundPump;
+            session.OutboundPump = null;
         }
 
         if (connection == null)
@@ -200,6 +203,7 @@ public sealed partial class MqttZeroBroker
             return false;
         }
 
+        await StopSessionOutboundPumpAsync(pump).ConfigureAwait(false);
         await connection.CloseAsync(reasonCode, cancellationToken).ConfigureAwait(false);
         return true;
     }

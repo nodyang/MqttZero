@@ -77,7 +77,7 @@ public sealed partial class MqttZeroBroker
                     acknowledgedMessage.Release();
                 }
 
-                await DrainSessionAsync(session, cancellationToken).ConfigureAwait(false);
+                session.OutboundPump?.Signal();
                 break;
             case MqttPubRecPacket pubRecPacket:
                 await ProcessOutboundPubRecAsync(

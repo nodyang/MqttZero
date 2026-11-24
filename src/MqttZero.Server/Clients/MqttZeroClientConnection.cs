@@ -759,6 +759,30 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
         }
     }
 
+    public void Abort()
+    {
+        if (Volatile.Read(ref _disposed) != 0)
+        {
+            return;
+        }
+
+        try
+        {
+            _closed.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+
+        try
+        {
+            _writer.CancelPendingFlush();
+        }
+        catch (InvalidOperationException)
+        {
+        }
+    }
+
     private static int GetVariableByteIntegerSize(long value)
     {
         if (value < 128)

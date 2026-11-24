@@ -23,7 +23,10 @@ namespace MqttZero.Tests.Broker
         {
             MqttZeroBufferPool pool = new(1024 * 1024);
             MqttZeroBroker broker = MqttZeroBroker.Create(
-                new MqttZeroOptions(),
+                new MqttZeroOptions
+                {
+                    MaxMessageQueueLength = 1
+                },
                 TimeProvider.System);
             await broker.StartAsync(TestContext.Current.CancellationToken);
             FieldInfo bufferPoolField = typeof(MqttZeroBroker).GetField(
@@ -332,23 +335,14 @@ namespace MqttZero.Tests.Broker
 
             lock (receiver.SyncRoot)
             {
-                ushort packetIdentifier = 0;
-                MqttZeroQueuedMessage? acknowledged = null;
-                foreach (KeyValuePair<ushort, MqttZeroQueuedMessage> pair in
-                    receiver.InflightMessages)
+                if (receiver.PendingMessages.Count == 0)
                 {
-                    packetIdentifier = pair.Key;
-                    acknowledged = pair.Value;
-                    break;
+                    throw new InvalidOperationException("The QoS 1 PUBLISH was not queued.");
                 }
 
-                if (acknowledged == null)
-                {
-                    throw new InvalidOperationException("The QoS 1 PUBLISH was not in flight.");
-                }
-
-                receiver.InflightMessages.Remove(packetIdentifier);
-                acknowledged.Release();
+                MqttZeroQueuedMessage queued =
+                    receiver.PendingMessages.Dequeue();
+                queued.Release();
             }
         }
 
@@ -356,7 +350,10 @@ namespace MqttZero.Tests.Broker
             IMqttZeroPublishInterceptor[] interceptors)
         {
             MqttZeroBroker broker = MqttZeroBroker.Create(
-                new MqttZeroOptions(),
+                new MqttZeroOptions
+                {
+                    MaxMessageQueueLength = 1
+                },
                 TimeProvider.System,
                 interceptors);
             FieldInfo sessionsField = typeof(MqttZeroBroker).GetField(
@@ -405,6 +402,7 @@ namespace MqttZero.Tests.Broker
                 await RouteEncodedPublishAsync(
                     broker,
                     sender,
+                    receiver,
                     receiverConnection,
                     encodedPublish,
                     cancellationToken);
@@ -417,6 +415,7 @@ namespace MqttZero.Tests.Broker
                 await RouteEncodedPublishAsync(
                     broker,
                     sender,
+                    receiver,
                     receiverConnection,
                     encodedPublish,
                     cancellationToken);
@@ -430,6 +429,7 @@ namespace MqttZero.Tests.Broker
         private static async ValueTask RouteEncodedPublishAsync(
             MqttZeroBroker broker,
             MqttZeroSessionState sender,
+            MqttZeroSessionState receiver,
             MqttZeroClientConnection receiverConnection,
             ReadOnlySequence<byte> encodedPublish,
             CancellationToken cancellationToken)
@@ -454,6 +454,18 @@ namespace MqttZero.Tests.Broker
             finally
             {
                 lease.Release();
+            }
+
+            lock (receiver.SyncRoot)
+            {
+                if (receiver.PendingMessages.Count == 0)
+                {
+                    throw new InvalidOperationException("The PUBLISH was not queued.");
+                }
+
+                MqttZeroQueuedMessage queued =
+                    receiver.PendingMessages.Dequeue();
+                queued.Release();
             }
         }
 

@@ -26,6 +26,7 @@ public sealed partial class MqttZeroBroker
             CancellationToken.None).ConfigureAwait(false);
         DateTimeOffset now = _timeProvider.GetUtcNow();
         bool removeSession = false;
+        MqttZeroSessionOutboundPump? pump;
 
         lock (session.SyncRoot)
         {
@@ -34,6 +35,8 @@ public sealed partial class MqttZeroBroker
                 return;
             }
 
+            pump = session.OutboundPump;
+            session.OutboundPump = null;
             session.Connection = null;
             session.DisconnectedAt = now;
             uint expiryInterval = session.ExpiryInterval;
@@ -59,8 +62,11 @@ public sealed partial class MqttZeroBroker
             }
         }
 
-        await session.DrainLock.WaitAsync().ConfigureAwait(false);
-        session.DrainLock.Release();
+        if (pump != null)
+        {
+            connection.Abort();
+            await StopSessionOutboundPumpAsync(pump).ConfigureAwait(false);
+        }
 
         if (!removeSession && _sessionStore.IsEnabled)
         {
@@ -131,6 +137,15 @@ public sealed partial class MqttZeroBroker
 
                 ReleaseSessionMessages(session);
             }
+        }
+    }
+
+    private static async ValueTask StopSessionOutboundPumpAsync(
+        MqttZeroSessionOutboundPump? pump)
+    {
+        if (pump != null)
+        {
+            await pump.StopAsync().ConfigureAwait(false);
         }
     }
 

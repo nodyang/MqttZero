@@ -301,8 +301,10 @@ public sealed partial class MqttZeroBroker
                         closeRegistration = connection.ClosedToken.Register(
                             static state => ((CancellationTokenSource)state!).Cancel(),
                             connectionLifetime);
-                        await ResumeSessionAsync(session, connection, connectionLifetime.Token)
-                            .ConfigureAwait(false);
+                        StartSessionOutboundPump(
+                            session,
+                            connection,
+                            connectionLifetime.Token);
                         buffer = buffer.Slice(consumed);
                         continue;
                     }
@@ -585,6 +587,9 @@ public sealed partial class MqttZeroBroker
             DateTimeOffset? previousDisconnectedAt = null;
             MqttZeroWillMessage? previousWillMessage = null;
             DateTimeOffset? previousWillDueAt = null;
+            MqttZeroSessionState? previousPumpSession = null;
+            MqttZeroSessionOutboundPump? previousPump = null;
+            bool previousPumpStopped = false;
 
             try
             {
@@ -599,6 +604,9 @@ public sealed partial class MqttZeroBroker
                         lock (existing.SyncRoot)
                         {
                             oldConnection = existing.Connection;
+                            previousPumpSession = existing;
+                            previousPump = existing.OutboundPump;
+                            existing.OutboundPump = null;
                             if (oldConnection != null &&
                                 existing.WillMessage != null &&
                                 existing.WillMessage.DelayInterval == 0)
@@ -631,6 +639,9 @@ public sealed partial class MqttZeroBroker
                             previousDisconnectedAt = session.DisconnectedAt;
                             previousWillMessage = session.WillMessage;
                             previousWillDueAt = session.WillDueAt;
+                            previousPumpSession = session;
+                            previousPump = session.OutboundPump;
+                            session.OutboundPump = null;
                         }
                     }
 
@@ -729,6 +740,12 @@ public sealed partial class MqttZeroBroker
                         replacedSession.Connection = oldConnection;
                     }
 
+                    RestoreSessionOutboundPump(
+                        previousPumpSession,
+                        oldConnection,
+                        previousPump,
+                        previousPumpStopped);
+
                     if (existingPersistenceDeleted)
                     {
                         try
@@ -758,6 +775,12 @@ public sealed partial class MqttZeroBroker
                         session.WillMessage = previousWillMessage;
                         session.WillDueAt = previousWillDueAt;
                     }
+
+                    RestoreSessionOutboundPump(
+                        previousPumpSession,
+                        oldConnection,
+                        previousPump,
+                        previousPumpStopped);
                 }
                 else
                 {
@@ -797,6 +820,8 @@ public sealed partial class MqttZeroBroker
 
             try
             {
+                await StopSessionOutboundPumpAsync(previousPump).ConfigureAwait(false);
+                previousPumpStopped = previousPump != null;
                 if (takeoverWill != null)
                 {
                     await RoutePublishAsync(null, takeoverWill.CreatePacket(), CancellationToken.None)
@@ -884,6 +909,12 @@ public sealed partial class MqttZeroBroker
                         replacedSession.Connection = oldConnection;
                     }
 
+                    RestoreSessionOutboundPump(
+                        previousPumpSession,
+                        oldConnection,
+                        previousPump,
+                        previousPumpStopped);
+
                     try
                     {
                         await RestoreSessionPersistenceAsync(
@@ -937,6 +968,12 @@ public sealed partial class MqttZeroBroker
                         session.WillDueAt = previousWillDueAt;
                     }
 
+                    RestoreSessionOutboundPump(
+                        previousPumpSession,
+                        oldConnection,
+                        previousPump,
+                        previousPumpStopped);
+
                     try
                     {
                         await SaveSessionAsync(session, CancellationToken.None).ConfigureAwait(false);
@@ -958,6 +995,54 @@ public sealed partial class MqttZeroBroker
 
                 await newConnection.DisposeAsync().ConfigureAwait(false);
                 throw;
+            }
+        }
+    }
+
+    private void RestoreSessionOutboundPump(
+        MqttZeroSessionState? session,
+        MqttZeroClientConnection? connection,
+        MqttZeroSessionOutboundPump? pump,
+        bool pumpStopped)
+    {
+        if (session == null || connection == null)
+        {
+            return;
+        }
+
+        if (!pumpStopped && pump != null)
+        {
+            lock (session.SyncRoot)
+            {
+                if (!ReferenceEquals(session.Connection, connection) ||
+                    session.OutboundPump != null)
+                {
+                    return;
+                }
+
+                session.OutboundPump = pump;
+            }
+
+            pump.Signal();
+            return;
+        }
+
+        if (!connection.ClosedToken.IsCancellationRequested)
+        {
+            try
+            {
+                StartSessionOutboundPump(
+                    session,
+                    connection,
+                    connection.ClosedToken);
+            }
+            catch (Exception exception)
+            {
+                MqttZeroBrokerLogging.LogOutboundPumpFailure(
+                    _logger,
+                    session.ClientId,
+                    exception);
+                connection.Abort();
             }
         }
     }
