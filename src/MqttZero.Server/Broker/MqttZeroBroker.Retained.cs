@@ -72,14 +72,18 @@ public sealed partial class MqttZeroBroker
         lock (_sessionGate)
         {
             _retainedMessages.TryGetValue(topicKey, out MqttZeroRetainedMessage? existing);
-            if (existing == null && _retainedMessages.Count >= _options.MaxRetainedMessages)
+            if (existing == null &&
+                _options.MaxRetainedMessages > 0 &&
+                _retainedMessages.Count >= _options.MaxRetainedMessages)
             {
                 throw new InvalidOperationException("The retained message count limit was reached.");
             }
 
             long previousBytes = existing?.ByteLength ?? 0;
             long replacementBytes =
-                lease.TopicSequence.Length + lease.PayloadSequence.Length;
+                lease.TopicSequence.Length +
+                lease.PropertiesSequence.Length +
+                lease.PayloadSequence.Length;
             long retainedBytes = _retainedBytes - previousBytes + replacementBytes;
             if (retainedBytes > _options.MaxRetainedBytes)
             {
@@ -101,7 +105,9 @@ public sealed partial class MqttZeroBroker
         lock (_sessionGate)
         {
             _retainedMessages.TryGetValue(topicKey, out MqttZeroRetainedMessage? existing);
-            if (existing == null && _retainedMessages.Count >= _options.MaxRetainedMessages)
+            if (existing == null &&
+                _options.MaxRetainedMessages > 0 &&
+                _retainedMessages.Count >= _options.MaxRetainedMessages)
             {
                 throw new InvalidOperationException("The retained message count limit was reached.");
             }

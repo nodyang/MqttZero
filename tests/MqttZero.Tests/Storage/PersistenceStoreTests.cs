@@ -95,6 +95,66 @@ namespace MqttZero.Tests.Storage
         }
 
         [Fact]
+        public async Task RestoreLimitsInboundQos2ByMaxAwaitingRel()
+        {
+            TestSessionStore sessionStore = new();
+            sessionStore.Sessions["awaiting"] = new MqttZeroPersistedSession
+            {
+                ClientId = "awaiting",
+                ExpiryInterval = 60
+            };
+            TestMessageStore messageStore = new();
+            messageStore.Messages.Add(CreateInboundMessage(1));
+            messageStore.Messages.Add(CreateInboundMessage(2));
+            ServiceCollection services = new();
+            services.AddSingleton<IMqttZeroSessionStore>(sessionStore);
+            services.AddSingleton<IMqttZeroMessageStore>(messageStore);
+            services.AddSingleton<IMqttZeroRetainedMessageStore, TestRetainedStore>();
+            services.AddMqttZero(options =>
+            {
+                options.MaxInflight = 100;
+                options.MaxAwaitingRel = 1;
+            });
+            await using ServiceProvider provider = services.BuildServiceProvider();
+            MqttZeroBroker broker = provider.GetRequiredService<MqttZeroBroker>();
+
+            await broker.StartAsync(TestContext.Current.CancellationToken);
+
+            MqttZeroSessionSnapshot session = Assert.Single(broker.GetSessions());
+            Assert.Equal(1, session.InboundQos2MessageCount);
+            Assert.Single(
+                messageStore.Messages,
+                message => message.Kind == MqttZeroPersistedMessageKind.InboundQos2);
+        }
+
+        [Fact]
+        public async Task RestoreTreatsZeroRetainedCountAsUnlimited()
+        {
+            TestRetainedStore retainedStore = new();
+            retainedStore.Messages["retained/one"] = new MqttZeroPersistedRetainedMessage
+            {
+                Topic = "retained/one"u8.ToArray(),
+                Payload = "one"u8.ToArray()
+            };
+            retainedStore.Messages["retained/two"] = new MqttZeroPersistedRetainedMessage
+            {
+                Topic = "retained/two"u8.ToArray(),
+                Payload = "two"u8.ToArray()
+            };
+            ServiceCollection services = new();
+            services.AddSingleton<IMqttZeroSessionStore, TestSessionStore>();
+            services.AddSingleton<IMqttZeroMessageStore, TestMessageStore>();
+            services.AddSingleton<IMqttZeroRetainedMessageStore>(retainedStore);
+            services.AddMqttZero(options => options.MaxRetainedMessages = 0);
+            await using ServiceProvider provider = services.BuildServiceProvider();
+            MqttZeroBroker broker = provider.GetRequiredService<MqttZeroBroker>();
+
+            await broker.StartAsync(TestContext.Current.CancellationToken);
+
+            Assert.Equal(2, broker.GetRetainedMessages().Count);
+        }
+
+        [Fact]
         public async Task RestoreFailureLeavesBrokerEmptyAndReleasesStagedLeases()
         {
             TestSessionStore sessionStore = new();
@@ -186,6 +246,22 @@ namespace MqttZero.Tests.Storage
                 Topic = "limited/topic"u8.ToArray(),
                 Payload = new byte[256],
                 QualityOfServiceLevel = MqttQualityOfServiceLevel.AtLeastOnce
+            };
+        }
+
+        private static MqttZeroPersistedMessage CreateInboundMessage(
+            ushort packetIdentifier)
+        {
+            return new MqttZeroPersistedMessage
+            {
+                ClientId = "awaiting",
+                MessageId = packetIdentifier,
+                PacketIdentifier = packetIdentifier,
+                Kind = MqttZeroPersistedMessageKind.InboundQos2,
+                State = MqttZeroPersistedDeliveryState.Queued,
+                Topic = "awaiting/topic"u8.ToArray(),
+                Payload = "value"u8.ToArray(),
+                QualityOfServiceLevel = MqttQualityOfServiceLevel.ExactlyOnce
             };
         }
 

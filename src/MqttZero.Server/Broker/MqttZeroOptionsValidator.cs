@@ -15,6 +15,7 @@ internal static class MqttZeroOptionsValidator
             options.MaxSubscriptionsPerSession,
             nameof(options.MaxSubscriptionsPerSession));
         ValidatePositive(options.MaxInflight, nameof(options.MaxInflight));
+        ValidatePositive(options.MaxAwaitingRel, nameof(options.MaxAwaitingRel));
         ValidatePositive(
             options.MaxMessageQueueLength,
             nameof(options.MaxMessageQueueLength));
@@ -26,9 +27,12 @@ internal static class MqttZeroOptionsValidator
                 "MqttZeroOptions.MaxBufferedBytes must be positive.");
         }
 
-        ValidatePositive(
-            options.MaxRetainedMessages,
-            nameof(options.MaxRetainedMessages));
+        if (options.MaxRetainedMessages < 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(options),
+                "MqttZeroOptions.MaxRetainedMessages cannot be negative.");
+        }
         if (options.MaxRetainedBytes <= 0)
         {
             throw new ArgumentOutOfRangeException(
@@ -43,7 +47,8 @@ internal static class MqttZeroOptionsValidator
         ValidatePositive(
             options.KeepAliveCheckInterval,
             nameof(options.KeepAliveCheckInterval));
-        if (options.MaxSessionExpiryInterval < TimeSpan.Zero)
+        if (options.MaxSessionExpiryInterval.HasValue &&
+            options.MaxSessionExpiryInterval.Value < TimeSpan.Zero)
         {
             throw new ArgumentOutOfRangeException(
                 nameof(options),

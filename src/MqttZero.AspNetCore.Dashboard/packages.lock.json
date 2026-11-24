@@ -8,13 +8,13 @@
       "mqttzero.aspnetcore": {
         "type": "Project",
         "dependencies": {
-          "MqttZero.Server": "[0.10.0-alpha.1, )"
+          "MqttZero.Server": "[0.11.0-alpha.1, )"
         }
       },
       "mqttzero.server": {
         "type": "Project",
         "dependencies": {
-          "MqttZero": "[0.10.0-alpha.1, )"
+          "MqttZero": "[0.11.0-alpha.1, )"
         }
       }
     }

@@ -21,9 +21,14 @@ public sealed class MqttZeroOptions
     public int MaxSubscriptionsPerSession { get; set; } = 1_000;
 
     /// <summary>
-    /// Gets or sets the maximum number of unacknowledged QoS 1 messages.
+    /// Gets or sets the maximum number of unacknowledged outbound QoS 1/2 messages.
     /// </summary>
     public int MaxInflight { get; set; } = 32;
+
+    /// <summary>
+    /// Gets or sets the maximum number of inbound QoS 2 messages awaiting PUBREL.
+    /// </summary>
+    public int MaxAwaitingRel { get; set; } = 100;
 
     /// <summary>
     /// Gets or sets the maximum number of queued messages for one session.
@@ -46,9 +51,9 @@ public sealed class MqttZeroOptions
     public long MaxBufferedBytes { get; set; } = 512L * 1024 * 1024;
 
     /// <summary>
-    /// Gets or sets the maximum number of retained messages.
+    /// Gets or sets the maximum number of retained messages. Zero means no count limit.
     /// </summary>
-    public int MaxRetainedMessages { get; set; } = 100_000;
+    public int MaxRetainedMessages { get; set; }
 
     /// <summary>
     /// Gets or sets the maximum total retained payload bytes.
@@ -58,7 +63,7 @@ public sealed class MqttZeroOptions
     /// <summary>
     /// Gets or sets the time allowed for the MQTT CONNECT packet.
     /// </summary>
-    public TimeSpan ConnectTimeout { get; set; } = TimeSpan.FromSeconds(10);
+    public TimeSpan ConnectTimeout { get; set; } = TimeSpan.FromSeconds(15);
 
     /// <summary>
     /// Gets or sets the time allowed for an incomplete MQTT packet body.
@@ -67,8 +72,9 @@ public sealed class MqttZeroOptions
 
     /// <summary>
     /// Gets or sets the maximum session expiry interval accepted from clients.
+    /// A null value applies no broker-side cap.
     /// </summary>
-    public TimeSpan MaxSessionExpiryInterval { get; set; } = TimeSpan.FromHours(24);
+    public TimeSpan? MaxSessionExpiryInterval { get; set; }
 
     /// <summary>
     /// Gets or sets the interval used for keep-alive and session maintenance.
@@ -83,7 +89,7 @@ public sealed class MqttZeroOptions
     /// <summary>
     /// Gets or sets the maximum topic alias advertised to clients.
     /// </summary>
-    public ushort TopicAliasMaximum { get; set; } = 32;
+    public ushort TopicAliasMaximum { get; set; } = ushort.MaxValue;
 
     /// <summary>
     /// Gets or sets optional response information returned when requested by a client.

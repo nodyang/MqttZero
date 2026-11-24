@@ -31,7 +31,7 @@ public sealed partial class MqttZeroBroker
             {
                 duplicate = true;
             }
-            else if (session.InboundQos2Messages.Count >= _options.MaxInflight)
+            else if (session.InboundQos2Messages.Count >= _options.MaxAwaitingRel)
             {
                 receiveMaximumExceeded = true;
             }

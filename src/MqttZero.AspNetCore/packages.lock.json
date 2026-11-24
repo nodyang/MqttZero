@@ -8,7 +8,7 @@
       "mqttzero.server": {
         "type": "Project",
         "dependencies": {
-          "MqttZero": "[0.10.0-alpha.1, )"
+          "MqttZero": "[0.11.0-alpha.1, )"
         }
       }
     }

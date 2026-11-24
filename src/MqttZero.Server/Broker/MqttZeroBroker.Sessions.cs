@@ -155,4 +155,18 @@ public sealed partial class MqttZeroBroker
         return Math.Min(_options.MaxInflight, connection.ReceiveMaximum);
     }
 
+    private uint ClampSessionExpiry(uint requestedExpiry)
+    {
+        if (!_options.MaxSessionExpiryInterval.HasValue)
+        {
+            return requestedExpiry;
+        }
+
+        uint maximumExpiry = (uint)Math.Clamp(
+            _options.MaxSessionExpiryInterval.Value.TotalSeconds,
+            0,
+            uint.MaxValue);
+        return Math.Min(requestedExpiry, maximumExpiry);
+    }
+
 }

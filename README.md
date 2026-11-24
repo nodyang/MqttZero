@@ -1,6 +1,6 @@
 # MQTTZero
 
-MQTTZero 是一个面向 ASP.NET Core Kestrel 的独立 MQTT 5 Broker。生产代码不依赖 MQTTnet，目标框架为 .NET 10。当前版本为 `0.10.0-alpha.1`。
+MQTTZero 是一个面向 ASP.NET Core Kestrel 的独立 MQTT 5 Broker。生产代码不依赖 MQTTnet，目标框架为 .NET 10。当前版本为 `0.11.0-alpha.1`。
 
 ## 当前能力
 
@@ -71,6 +71,32 @@ await app.RunAsync();
 完整示例位于 `samples/MqttZero.Sample`。
 
 `ActiveConnectionCount` 表示已接受、尚未完成清理的 TCP/TLS/WebSocket 连接数，包括尚未完成 CONNECT 的连接；`ConnectedClientCount` 只表示已经成功完成 CONNECT/CONNACK 的在线 MQTT 客户端数。
+
+## 默认资源限制
+
+默认值以 EMQX 6.3.3 为参考，对可安全采用的行为保持一致，同时保留 MQTTZero 的连接、Session、订阅和全局字节预算：
+
+| 配置 | 默认值 |
+|---|---:|
+| `MaxActiveConnections` | `20_000` |
+| `MaxSessions` | `20_000` |
+| `MaxSubscriptionsPerSession` | `1_000` |
+| `MaxInflight` | `32` |
+| `MaxAwaitingRel` | `100` |
+| `MaxMessageQueueLength` | `1_000` |
+| `StoreQos0InQueue` | `true` |
+| `MaxPacketSize` | `1 MiB` |
+| `MaxBufferedBytes` | `512 MiB` |
+| `MaxRetainedMessages` | `0`，表示不限数量 |
+| `MaxRetainedBytes` | `256 MiB` |
+| `ConnectTimeout` | `15 秒` |
+| `IncompletePacketTimeout` | `30 秒` |
+| `MaxSessionExpiryInterval` | `null`，表示不截断 |
+| `KeepAliveCheckInterval` | `500 毫秒` |
+| `TopicAliasMaximum` | `65_535` |
+| `ResponseInformation` | `null` |
+
+EMQX 默认不对 Listener 连接数和客户端订阅数设置全局上限。MQTTZero 保留有限默认值，避免在缺少进程、容器或反向代理限制时耗尽内存和文件描述符。`KeepAliveCheckInterval` 也保持 `500ms`，因为它同时驱动 Will、Session 和 Retained 清理。
 
 ## 发布 API
 

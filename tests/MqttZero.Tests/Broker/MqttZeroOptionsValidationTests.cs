@@ -11,9 +11,9 @@ namespace MqttZero.Tests.Broker
         [InlineData(nameof(MqttZeroOptions.MaxSessions))]
         [InlineData(nameof(MqttZeroOptions.MaxSubscriptionsPerSession))]
         [InlineData(nameof(MqttZeroOptions.MaxInflight))]
+        [InlineData(nameof(MqttZeroOptions.MaxAwaitingRel))]
         [InlineData(nameof(MqttZeroOptions.MaxMessageQueueLength))]
         [InlineData(nameof(MqttZeroOptions.MaxPacketSize))]
-        [InlineData(nameof(MqttZeroOptions.MaxRetainedMessages))]
         public void RejectsNonPositiveIntegerLimits(string propertyName)
         {
             MqttZeroOptions options = new();
@@ -64,6 +64,17 @@ namespace MqttZero.Tests.Broker
         }
 
         [Fact]
+        public void AcceptsNullSessionExpiryLimit()
+        {
+            MqttZeroOptions options = new()
+            {
+                MaxSessionExpiryInterval = null
+            };
+
+            MqttZeroOptionsValidator.Validate(options);
+        }
+
+        [Fact]
         public void AcceptsZeroSessionExpiryLimit()
         {
             MqttZeroOptions options = new()
@@ -72,6 +83,29 @@ namespace MqttZero.Tests.Broker
             };
 
             MqttZeroOptionsValidator.Validate(options);
+        }
+
+        [Fact]
+        public void AcceptsZeroRetainedMessageLimitAsUnlimited()
+        {
+            MqttZeroOptions options = new()
+            {
+                MaxRetainedMessages = 0
+            };
+
+            MqttZeroOptionsValidator.Validate(options);
+        }
+
+        [Fact]
+        public void RejectsNegativeRetainedMessageLimit()
+        {
+            MqttZeroOptions options = new()
+            {
+                MaxRetainedMessages = -1
+            };
+
+            Assert.Throws<ArgumentOutOfRangeException>(
+                () => MqttZeroOptionsValidator.Validate(options));
         }
 
         [Fact]

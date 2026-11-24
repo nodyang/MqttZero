@@ -13,6 +13,62 @@ namespace MqttZero.Tests.Broker
     public sealed partial class BrokerIntegrationTests
     {
         [Fact(Timeout = 15_000)]
+        public async Task MaxAwaitingRelIsIndependentFromOutboundInflight()
+        {
+            int port = GetFreePort();
+            await using WebApplication app = await StartTcpBrokerAsync(
+                port,
+                options =>
+                {
+                    options.MaxInflight = 100;
+                    options.MaxAwaitingRel = 1;
+                });
+            using TcpClient client = new();
+            await client.ConnectAsync(
+                IPAddress.Loopback,
+                port,
+                TestContext.Current.CancellationToken);
+            NetworkStream stream = client.GetStream();
+            await SendPacketAsync(
+                stream,
+                new MqttConnectPacket
+                {
+                    ClientId = new ReadOnlySequence<byte>("awaiting-rel"u8.ToArray())
+                },
+                TestContext.Current.CancellationToken);
+            _ = Assert.IsType<MqttConnAckPacket>(
+                await ReadPacketAsync(stream, TestContext.Current.CancellationToken));
+
+            await SendPacketAsync(
+                stream,
+                new MqttPublishPacket
+                {
+                    TopicName = new ReadOnlySequence<byte>("awaiting/rel"u8.ToArray()),
+                    Payload = new ReadOnlySequence<byte>("value"u8.ToArray()),
+                    QualityOfServiceLevel = MqttQualityOfServiceLevel.ExactlyOnce,
+                    PacketIdentifier = 1
+                },
+                TestContext.Current.CancellationToken);
+            MqttPubRecPacket accepted = Assert.IsType<MqttPubRecPacket>(
+                await ReadPacketAsync(stream, TestContext.Current.CancellationToken));
+            Assert.Equal(MqttReasonCode.Success, accepted.ReasonCode);
+
+            await SendPacketAsync(
+                stream,
+                new MqttPublishPacket
+                {
+                    TopicName = new ReadOnlySequence<byte>("awaiting/rel"u8.ToArray()),
+                    Payload = new ReadOnlySequence<byte>("value"u8.ToArray()),
+                    QualityOfServiceLevel = MqttQualityOfServiceLevel.ExactlyOnce,
+                    PacketIdentifier = 2
+                },
+                TestContext.Current.CancellationToken);
+            MqttPubRecPacket exceeded = Assert.IsType<MqttPubRecPacket>(
+                await ReadPacketAsync(stream, TestContext.Current.CancellationToken));
+            Assert.Equal(MqttReasonCode.ReceiveMaximumExceeded, exceeded.ReasonCode);
+        }
+
+        [Fact(Timeout = 15_000)]
         public async Task UnknownInboundPubRelReturnsPacketIdentifierNotFound()
         {
             int port = GetFreePort();

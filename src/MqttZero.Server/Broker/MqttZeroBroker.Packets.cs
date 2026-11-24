@@ -110,15 +110,10 @@ public sealed partial class MqttZeroBroker
 
                 if (disconnectPacket.SessionExpiryInterval.HasValue)
                 {
-                    uint maximumExpiry = (uint)Math.Clamp(
-                        _options.MaxSessionExpiryInterval.TotalSeconds,
-                        0,
-                        uint.MaxValue);
                     lock (session.SyncRoot)
                     {
-                        session.ExpiryInterval = Math.Min(
-                            disconnectPacket.SessionExpiryInterval.Value,
-                            maximumExpiry);
+                        session.ExpiryInterval = ClampSessionExpiry(
+                            disconnectPacket.SessionExpiryInterval.Value);
                     }
                 }
 

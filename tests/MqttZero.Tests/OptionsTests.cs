@@ -18,17 +18,18 @@ namespace MqttZero.Tests
             Assert.Equal(20_000, options.MaxSessions);
             Assert.Equal(1_000, options.MaxSubscriptionsPerSession);
             Assert.Equal(32, options.MaxInflight);
+            Assert.Equal(100, options.MaxAwaitingRel);
             Assert.Equal(1_000, options.MaxMessageQueueLength);
             Assert.True(options.StoreQos0InQueue);
             Assert.Equal(1024 * 1024, options.MaxPacketSize);
             Assert.Equal(512L * 1024 * 1024, options.MaxBufferedBytes);
-            Assert.Equal(100_000, options.MaxRetainedMessages);
+            Assert.Equal(0, options.MaxRetainedMessages);
             Assert.Equal(256L * 1024 * 1024, options.MaxRetainedBytes);
-            Assert.Equal(TimeSpan.FromSeconds(10), options.ConnectTimeout);
+            Assert.Equal(TimeSpan.FromSeconds(15), options.ConnectTimeout);
             Assert.Equal(TimeSpan.FromSeconds(30), options.IncompletePacketTimeout);
-            Assert.Equal(TimeSpan.FromHours(24), options.MaxSessionExpiryInterval);
+            Assert.Null(options.MaxSessionExpiryInterval);
             Assert.Equal(TimeSpan.FromMilliseconds(500), options.KeepAliveCheckInterval);
-            Assert.Equal((ushort)32, options.TopicAliasMaximum);
+            Assert.Equal(ushort.MaxValue, options.TopicAliasMaximum);
         }
 
         [Fact]

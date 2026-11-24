@@ -164,7 +164,7 @@ namespace MqttZero.Tests.Broker
                 new MqttPublishPacket
                 {
                     TopicName = new ReadOnlySequence<byte>("alias/topic"u8.ToArray()),
-                    TopicAlias = 1,
+                    TopicAlias = 1000,
                     Payload = new ReadOnlySequence<byte>("first"u8.ToArray())
                 },
                 cancellationToken);
@@ -172,7 +172,7 @@ namespace MqttZero.Tests.Broker
                 stream,
                 new MqttPublishPacket
                 {
-                    TopicAlias = 1,
+                    TopicAlias = 1000,
                     Payload = new ReadOnlySequence<byte>("second"u8.ToArray())
                 },
                 cancellationToken);

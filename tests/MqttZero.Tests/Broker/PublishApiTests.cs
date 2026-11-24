@@ -192,6 +192,36 @@ namespace MqttZero.Tests.Broker
             }
         }
 
+        [Fact]
+        public async Task ZeroRetainedMessageLimitAllowsMultipleMessages()
+        {
+            MqttZeroBroker broker = MqttZeroBroker.Create(
+                new MqttZeroOptions
+                {
+                    MaxRetainedMessages = 0
+                },
+                TimeProvider.System);
+            await broker.StartAsync(TestContext.Current.CancellationToken);
+            try
+            {
+                foreach (string topic in new[] { "retained/one", "retained/two", "retained/three" })
+                {
+                    await broker.PublishAsync(
+                        topic,
+                        new ReadOnlySequence<byte>("value"u8.ToArray()),
+                        MqttQualityOfServiceLevel.AtMostOnce,
+                        true,
+                        TestContext.Current.CancellationToken);
+                }
+
+                Assert.Equal(3, broker.GetRetainedMessages().Count);
+            }
+            finally
+            {
+                await broker.DisposeAsync();
+            }
+        }
+
         private sealed class TrackingReadStream : MemoryStream
         {
             public TrackingReadStream(byte[] buffer)

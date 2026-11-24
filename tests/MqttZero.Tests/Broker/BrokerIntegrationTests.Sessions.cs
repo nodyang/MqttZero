@@ -159,6 +159,31 @@ namespace MqttZero.Tests.Broker
             await client.DisconnectAsync(cancellationToken: cancellationToken);
             await app.StopAsync(cancellationToken);
         }
+
+        [Fact(Timeout = 10_000)]
+        public async Task DoesNotClampSessionExpiryByDefault()
+        {
+            int port = GetFreePort();
+            await using WebApplication app = await StartTcpBrokerAsync(port);
+            CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+            MqttClientFactory factory = new();
+            using IMqttClient client = factory.CreateMqttClient();
+
+            MQTTnet.MqttClientConnectResult result = await client.ConnectAsync(
+                new MqttClientOptionsBuilder()
+                    .WithTcpServer("127.0.0.1", port)
+                    .WithProtocolVersion(MQTTnet.Formatter.MqttProtocolVersion.V500)
+                    .WithClientId("unclamped-client")
+                    .WithCleanStart(false)
+                    .WithSessionExpiryInterval(86_400)
+                    .Build(),
+                cancellationToken);
+
+            Assert.Equal(86_400U, result.SessionExpiryInterval);
+            await client.DisconnectAsync(cancellationToken: cancellationToken);
+            await app.StopAsync(cancellationToken);
+        }
+
         [Fact(Timeout = 10_000)]
         public async Task DisconnectCanOverrideSessionExpiryToZero()
         {

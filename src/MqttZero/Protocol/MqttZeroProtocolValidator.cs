@@ -55,6 +55,7 @@ internal static class MqttZeroProtocolValidator
             MqttReasonCode.NotAuthorized or
             MqttReasonCode.TopicNameInvalid or
             MqttReasonCode.PacketIdentifierInUse or
+            MqttReasonCode.ReceiveMaximumExceeded or
             MqttReasonCode.QuotaExceeded or
             MqttReasonCode.PayloadFormatInvalid;
     }

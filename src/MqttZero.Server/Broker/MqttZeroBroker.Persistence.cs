@@ -149,7 +149,7 @@ public sealed partial class MqttZeroBroker
                 if (persisted.Kind == MqttZeroPersistedMessageKind.InboundQos2)
                 {
                     if (session.InboundQos2Messages.ContainsKey(persisted.PacketIdentifier) ||
-                        session.InboundQos2Messages.Count >= _options.MaxInflight)
+                        session.InboundQos2Messages.Count >= _options.MaxAwaitingRel)
                     {
                         await DeletePersistedMessageAsync(persisted, cancellationToken)
                             .ConfigureAwait(false);
@@ -274,7 +274,8 @@ public sealed partial class MqttZeroBroker
                     persisted.Topic.Length +
                     persisted.Properties.Length +
                     persisted.Payload.Length;
-                if (stagedRetainedMessages.Count >= _options.MaxRetainedMessages ||
+                if ((_options.MaxRetainedMessages > 0 &&
+                        stagedRetainedMessages.Count >= _options.MaxRetainedMessages) ||
                     stagedRetainedBytes + retainedBytes > _options.MaxRetainedBytes)
                 {
                     await DeleteRetainedAsync(topic, cancellationToken)

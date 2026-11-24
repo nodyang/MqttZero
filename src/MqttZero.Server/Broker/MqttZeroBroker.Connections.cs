@@ -442,11 +442,7 @@ public sealed partial class MqttZeroBroker
             ? $"mqttzero-{Guid.NewGuid():N}"
             : Encoding.UTF8.GetString(connectPacket.ClientId.ToArray());
         uint requestedExpiry = connectPacket.SessionExpiryInterval ?? 0;
-        uint maximumExpiry = (uint)Math.Clamp(
-            _options.MaxSessionExpiryInterval.TotalSeconds,
-            0,
-            uint.MaxValue);
-        uint effectiveExpiry = Math.Min(requestedExpiry, maximumExpiry);
+        uint effectiveExpiry = ClampSessionExpiry(requestedExpiry);
         DateTimeOffset now = _timeProvider.GetUtcNow();
         MqttZeroClientConnection newConnection = new(
             output,
