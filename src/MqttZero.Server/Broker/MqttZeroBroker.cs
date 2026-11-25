@@ -252,6 +252,32 @@ public sealed partial class MqttZeroBroker : IMqttZeroBroker, IAsyncDisposable
         _fanoutDiagnostics.Reset();
     }
 
+    internal MqttZeroBrokerMemorySnapshot GetMemorySnapshotForTest()
+    {
+        MqttZeroBufferPoolSnapshot buffers = _bufferPool.GetSnapshot();
+        MqttZeroRoutePlanBufferPoolSnapshot routePlans =
+            _qosZeroPlanBuffers?.GetSnapshot() ??
+            new MqttZeroRoutePlanBufferPoolSnapshot(0, 0, 0);
+        MqttZeroObjectPoolSnapshot objectPools = new(
+            MqttZeroMessageLease.PoolCountForTest,
+            MqttZeroQueuedMessage.PoolCountForTest,
+            MqttZeroPublishContext.PoolCountForTest,
+            MqttZeroInboundWork.PoolCountForTest,
+            MqttZeroInboundShardWork.PoolCountForTest,
+            MqttZeroFanoutOperation.PoolCountForTest,
+            MqttZeroFanoutBatchWork.PoolCountForTest,
+            MqttZeroFanoutScheduledBatch.PoolCountForTest);
+        return new MqttZeroBrokerMemorySnapshot(
+            buffers.RentedBytes,
+            buffers.CachedBytes,
+            buffers.CommittedBytes,
+            routePlans.AvailableCount,
+            routePlans.InUseCount,
+            routePlans.RetainedBytes,
+            _sharedGroupCursors.Count,
+            objectPools);
+    }
+
     /// <summary>
     /// Gets the time provider used by the broker.
     /// </summary>

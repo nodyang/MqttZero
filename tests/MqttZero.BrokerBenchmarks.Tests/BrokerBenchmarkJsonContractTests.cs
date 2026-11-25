@@ -81,4 +81,57 @@ public sealed class BrokerBenchmarkJsonContractTests
                 "MeasurementDrainMilliseconds",
                 out _));
     }
+
+    [Fact]
+    public void MemoryJsonIncludesBrokerOwnershipAndWaveMetrics()
+    {
+        MemoryBenchmarkResult result = new(
+            [
+                new MemoryWaveResult(
+                    Wave: 1,
+                    PublishedMessages: 10,
+                    ReceivedMessages: 1000,
+                    FailedOperations: 0,
+                    MeasurementDrainMilliseconds: 1,
+                    Snapshot: new BenchmarkMemorySnapshot(
+                        AllocatedBytes: 1,
+                        ManagedHeapBytes: 1,
+                        WorkingSetBytes: 1,
+                        PrivateMemoryBytes: 1,
+                        Gen0CollectionCount: 0,
+                        Gen1CollectionCount: 0,
+                        Gen2CollectionCount: 0,
+                        BufferRentedBytes: 1,
+                        BufferCachedBytes: 1,
+                        BufferCommittedBytes: 2,
+                        RoutePlanAvailableCount: 1,
+                        RoutePlanInUseCount: 0,
+                        RoutePlanRetainedBytes: 1,
+                        SharedCursorCount: 0,
+                        ObjectPools: new MqttZero.Server.Broker.
+                            MqttZeroObjectPoolSnapshot(
+                                LeaseCount: 0,
+                                QueuedMessageCount: 0,
+                                PublishContextCount: 0,
+                                InboundWorkCount: 0,
+                                InboundShardWorkCount: 0,
+                                FanoutOperationCount: 0,
+                                FanoutBatchWorkCount: 0,
+                                FanoutScheduledBatchCount: 0)))
+            ]);
+
+        string json = JsonSerializer.Serialize(
+            result,
+            BrokerBenchmarkJsonContext.Default.MemoryBenchmarkResult);
+        using JsonDocument document = JsonDocument.Parse(json);
+        JsonElement root = document.RootElement;
+        JsonElement wave = root.GetProperty("Waves")[0];
+        JsonElement snapshot = wave.GetProperty("Snapshot");
+
+        Assert.True(snapshot.TryGetProperty("BufferCommittedBytes", out _));
+        Assert.True(snapshot.TryGetProperty("RoutePlanRetainedBytes", out _));
+        Assert.True(snapshot.TryGetProperty("ManagedHeapBytes", out _));
+        Assert.True(snapshot.TryGetProperty("PrivateMemoryBytes", out _));
+        Assert.True(snapshot.TryGetProperty("ObjectPools", out _));
+    }
 }
