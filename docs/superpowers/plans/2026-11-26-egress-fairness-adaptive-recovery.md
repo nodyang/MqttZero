@@ -1,6 +1,7 @@
 # MQTTZero Egress Fairness and Adaptive Send Recovery Plan
 
-> **Status:** Active. Task 1 is complete; Task 2 is next.
+> **Status:** Active. Task 1 is complete; Task 2 was rejected after benchmark;
+> Task 3 is next.
 >
 > **Date:** 2026-11-26
 >
@@ -231,66 +232,45 @@ throughput gain.
 
 ## Task 2: Guarantee Fair Shard Progress
 
+> **Status: Rejected.** The bounded forced-fairness implementation was removed
+> after two-round benchmarking. Diagnostics and tests were retained. Evidence:
+> `perf/baseline/egress-fairness-result-2026-11-26.md`.
+
 ### Files
 
 - Modify: `src/MqttZero.Server/Scheduling/MqttZeroEventLoop.cs`
 - Modify: `src/MqttZero.Server/Scheduling/MqttZeroShardDiagnostics.cs`
-- Modify: `src/MqttZero.Server/Broker/MqttZeroFanoutDiagnostics.cs`
-- Modify: `src/MqttZero.Server/Broker/MqttZeroFanoutDiagnosticsSnapshot.cs`
 - Test: Event Loop, Fanout Scheduler and Egress Scheduler tests
-- Benchmark or outbound diagnostics surface
+- Benchmark: `perf/baseline/egress-fairness-qos01-100-500-64k-2026-11-26.json`
 
-### Changes
+### Prototype Result
 
-- [ ] Replace exclusive high-priority preference with a bounded fair policy.
-- [ ] Give low-priority Egress at least one guaranteed progress opportunity
-  while high-priority Fanout remains continuously non-empty.
-- [ ] Age or promote work that has waited beyond a bounded threshold.
-- [ ] Keep control-frame and data ordering unchanged.
-- [ ] Add queue-age diagnostics for both priorities.
-- [ ] Add a starvation/wait counter that distinguishes "high queue busy" from
-  "low Egress queue absent".
-- [ ] Do not change Kestrel IOQueueCount, ThreadPool settings or default Batch
-  values as part of this task.
+- [x] Prototype a bounded fair policy and verify it through deterministic
+  starvation tests.
+- [x] Keep control-frame, data and intra-priority ordering unchanged.
+- [x] Confirm QoS 0/100 and QoS 1/500 regressed by more than five percent.
+- [x] Confirm no affected cell gained ten-percent throughput.
+- [x] Confirm QoS 1/100 gained 5.7% throughput and 22.4% p99, but not enough to
+  offset the rejected cells.
+- [x] Remove forced priority switching after the performance gate failed.
+- [x] Retain high-priority and low-priority queue depth, oldest-work age and
+  low-priority wait diagnostics.
+- [x] Keep Kestrel IOQueueCount, ThreadPool settings and Batch defaults
+  unchanged.
+- [x] Confirm no connection failures, drain timeouts or Lease leaks.
 
-### Tests
+### Follow-up Attribution
 
-- [ ] A continuously refilled high-priority queue cannot prevent low-priority
-  execution indefinitely.
-- [ ] An aged low-priority item is promoted or served within the configured
-  bound.
-- [ ] High-priority-only traffic does not incur an empty low-priority delay.
-- [ ] Low-priority-only traffic retains current ordering.
-- [ ] Control frames and data batches preserve their required boundaries.
-- [ ] Shard shutdown drains or cancels both priorities deterministically.
-- [ ] Queue-age and starvation counters reset correctly.
-
-### Performance Gate
-
-- [ ] Demonstrate from queue-age and starvation diagnostics that low-priority
-  Egress work was delayed by continuously available high-priority Fanout work.
-- [ ] For affected 64-KiB fanout cells, at least one of end-to-end throughput
-  or publish-call p99 improves by ten percent.
-- [ ] Neither end-to-end throughput nor publish-call p99 regresses by more than
-  five percent in any affected target cell.
-- [ ] QoS 1 / 100 / 64 KiB improves or remains no worse than the corrected
-  baseline. A neutrality result is acceptable when diagnostics show no
-  starvation and Task 3 remains the next measured path.
-- [ ] All 32-B regression cells remain within five percent.
-- [ ] No new connection failures, drain timeouts or Lease leaks occur.
-- [ ] Development comparisons use two repetitions unless the spread rule
-  requires a third run.
-
-### Stop Condition
-
-If both 100- and 500-subscriber large-payload cells show no repeatable benefit,
-keep only diagnostics and tests, remove the scheduling change, and proceed to
-Task 3 only if corrected latency attribution still shows Egress scheduling or
-Flush continuation as dominant.
+- [x] Refresh `QoS 1 / 100 / 64 KiB` outbound diagnostics after reverting the
+  scheduling change.
+- [x] Confirm every data batch waited on asynchronous Flush.
+- [x] Confirm average egress batch size remains below two messages.
+- [x] Proceed to Task 3 because Flush continuation and the Egress send state
+  remain measured dominant costs.
 
 ### Commit
 
-`perf: guarantee fair fanout and egress progress`
+`perf: instrument shard priority wait`
 
 ## Task 3: Add Adaptive Direct And Backlog Egress Modes
 

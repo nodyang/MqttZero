@@ -313,6 +313,77 @@ public sealed class MqttZeroEventLoopTests
     }
 
     [Fact(Timeout = 5_000)]
+    public async Task ReportsPriorityQueueDepthAndLowPriorityWait()
+    {
+        await using MqttZeroEventLoop shard = new(0, 32);
+        TaskCompletionSource blockerStarted = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource releaseBlocker = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource completed = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        int remaining = 13;
+
+        await shard.EnqueueAsync(
+            new DelegateShardWork(
+                async cancellationToken =>
+                {
+                    blockerStarted.TrySetResult();
+                    await releaseBlocker.Task.WaitAsync(cancellationToken);
+                }),
+            TestContext.Current.CancellationToken);
+        await blockerStarted.Task.WaitAsync(
+            TestContext.Current.CancellationToken);
+        await shard.EnqueueAsync(
+            new PriorityShardWork(
+                isLowPriority: true,
+                _ =>
+                {
+                    if (Interlocked.Decrement(ref remaining) == 0)
+                    {
+                        completed.TrySetResult();
+                    }
+
+                    return ValueTask.CompletedTask;
+                }),
+            TestContext.Current.CancellationToken);
+
+        for (int index = 0; index < 12; index++)
+        {
+            await shard.EnqueueAsync(
+                new PriorityShardWork(
+                    isLowPriority: false,
+                    _ =>
+                    {
+                        if (Interlocked.Decrement(ref remaining) == 0)
+                        {
+                            completed.TrySetResult();
+                        }
+
+                        return ValueTask.CompletedTask;
+                    }),
+                TestContext.Current.CancellationToken);
+        }
+
+        MqttZeroShardDiagnostics queued = shard.GetSnapshot();
+        Assert.Equal(12, queued.HighPriorityQueuedCount);
+        Assert.Equal(1, queued.LowPriorityQueuedCount);
+        Assert.True(queued.HighPriorityOldestWorkAgeMilliseconds >= 0);
+        Assert.True(queued.LowPriorityOldestWorkAgeMilliseconds >= 0);
+
+        releaseBlocker.TrySetResult();
+        await completed.Task.WaitAsync(
+            TestContext.Current.CancellationToken);
+
+        MqttZeroShardDiagnostics completedSnapshot =
+            shard.GetSnapshot();
+        Assert.True(completedSnapshot.LowPriorityWaitCount > 0);
+        Assert.Equal(0, completedSnapshot.HighPriorityQueuedCount);
+        Assert.Equal(0, completedSnapshot.LowPriorityQueuedCount);
+        await shard.StopAsync();
+    }
+
+    [Fact(Timeout = 5_000)]
     public async Task TryEnqueueRunsWorkWhenCapacityIsAvailable()
     {
         await using MqttZeroEventLoop shard = new(0, 4);

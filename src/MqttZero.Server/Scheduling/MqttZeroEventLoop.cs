@@ -21,6 +21,9 @@ internal sealed class MqttZeroEventLoop :
     private long _completedCount;
     private long _enqueuedCount;
     private long _failedCount;
+    private int _highPriorityQueuedCount;
+    private int _lowPriorityQueuedCount;
+    private long _lowPriorityWaitCount;
     private long _maxDrainTimestampTicks;
     private int _queuedCount;
     private int _scheduled;
@@ -61,17 +64,7 @@ internal sealed class MqttZeroEventLoop :
             throw new ObjectDisposedException(nameof(MqttZeroEventLoop));
         }
 
-        work.MarkEnqueued();
-        if (work.IsLowPriority)
-        {
-            _lowPriorityQueue.Enqueue(work);
-        }
-        else
-        {
-            _queue.Enqueue(work);
-        }
-        Interlocked.Increment(ref _queuedCount);
-        Interlocked.Increment(ref _enqueuedCount);
+        EnqueueCore(work);
         Schedule();
     }
 
@@ -90,18 +83,7 @@ internal sealed class MqttZeroEventLoop :
             return false;
         }
 
-        work.MarkEnqueued();
-        if (work.IsLowPriority)
-        {
-            _lowPriorityQueue.Enqueue(work);
-        }
-        else
-        {
-            _queue.Enqueue(work);
-        }
-
-        Interlocked.Increment(ref _queuedCount);
-        Interlocked.Increment(ref _enqueuedCount);
+        EnqueueCore(work);
         Schedule();
         return true;
     }
@@ -126,12 +108,19 @@ internal sealed class MqttZeroEventLoop :
 
     public MqttZeroShardDiagnostics GetSnapshot()
     {
-        double oldestWorkAgeMilliseconds = 0;
-        if (_queue.TryPeek(out MqttZeroShardWork? oldestWork) ||
-            _lowPriorityQueue.TryPeek(out oldestWork))
+        double highPriorityOldestWorkAgeMilliseconds = 0;
+        if (_queue.TryPeek(out MqttZeroShardWork? highPriorityWork))
         {
-            oldestWorkAgeMilliseconds = Stopwatch.GetElapsedTime(
-                oldestWork.EnqueuedTimestamp).TotalMilliseconds;
+            highPriorityOldestWorkAgeMilliseconds = Stopwatch.GetElapsedTime(
+                highPriorityWork.EnqueuedTimestamp).TotalMilliseconds;
+        }
+
+        double lowPriorityOldestWorkAgeMilliseconds = 0;
+        if (_lowPriorityQueue.TryPeek(
+            out MqttZeroShardWork? lowPriorityWork))
+        {
+            lowPriorityOldestWorkAgeMilliseconds = Stopwatch.GetElapsedTime(
+                lowPriorityWork.EnqueuedTimestamp).TotalMilliseconds;
         }
 
         return new MqttZeroShardDiagnostics(
@@ -144,7 +133,14 @@ internal sealed class MqttZeroEventLoop :
             Volatile.Read(ref _maxDrainTimestampTicks) *
                 1000d /
                 Stopwatch.Frequency,
-            oldestWorkAgeMilliseconds);
+            Math.Max(
+                highPriorityOldestWorkAgeMilliseconds,
+                lowPriorityOldestWorkAgeMilliseconds),
+            Volatile.Read(ref _highPriorityQueuedCount),
+            Volatile.Read(ref _lowPriorityQueuedCount),
+            highPriorityOldestWorkAgeMilliseconds,
+            lowPriorityOldestWorkAgeMilliseconds,
+            Interlocked.Read(ref _lowPriorityWaitCount));
     }
 
     public ValueTask StopAsync()
@@ -180,16 +176,15 @@ internal sealed class MqttZeroEventLoop :
                 Stopwatch.GetElapsedTime(drainStarted) <
                     TimeSpan.FromTicks(DrainBudgetTimestampTicks))
             {
-                if (!_queue.TryDequeue(out MqttZeroShardWork? work) &&
-                    !_lowPriorityQueue.TryDequeue(out work))
+                if (!TryDequeueWork(out MqttZeroShardWork? work))
                 {
                     break;
                 }
 
-                Interlocked.Decrement(ref _queuedCount);
+                MqttZeroShardWork dequeuedWork = work!;
                 try
                 {
-                    await work.ExecuteAsync(
+                    await dequeuedWork.ExecuteAsync(
                         this,
                         CancellationToken.None).ConfigureAwait(false);
                     Interlocked.Increment(ref _completedCount);
@@ -201,7 +196,7 @@ internal sealed class MqttZeroEventLoop :
                 finally
                 {
                     _queueSpace.Release();
-                    work.Release();
+                    dequeuedWork.Release();
                     processedCount++;
                 }
             }
@@ -233,6 +228,48 @@ internal sealed class MqttZeroEventLoop :
                 this,
                 preferLocal: false);
         }
+    }
+
+    private void EnqueueCore(MqttZeroShardWork work)
+    {
+        work.MarkEnqueued();
+        if (work.IsLowPriority)
+        {
+            _lowPriorityQueue.Enqueue(work);
+            Interlocked.Increment(ref _lowPriorityQueuedCount);
+        }
+        else
+        {
+            _queue.Enqueue(work);
+            Interlocked.Increment(ref _highPriorityQueuedCount);
+        }
+
+        Interlocked.Increment(ref _queuedCount);
+        Interlocked.Increment(ref _enqueuedCount);
+    }
+
+    private bool TryDequeueWork(out MqttZeroShardWork? work)
+    {
+        if (_queue.TryDequeue(out work))
+        {
+            Interlocked.Decrement(ref _highPriorityQueuedCount);
+            Interlocked.Decrement(ref _queuedCount);
+            if (!_lowPriorityQueue.IsEmpty)
+            {
+                Interlocked.Increment(ref _lowPriorityWaitCount);
+            }
+
+            return true;
+        }
+
+        if (_lowPriorityQueue.TryDequeue(out work))
+        {
+            Interlocked.Decrement(ref _lowPriorityQueuedCount);
+            Interlocked.Decrement(ref _queuedCount);
+            return true;
+        }
+
+        return false;
     }
 
     private void ThrowIfStopping()

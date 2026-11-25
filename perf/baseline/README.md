@@ -128,6 +128,11 @@
 - Corrected six-cell 64-KiB development baseline:
   `egress-corrected-development-2026-11-26.json` and
   `egress-corrected-development-2026-11-26.md`.
+- Bounded forced-fairness Shard scheduling was evaluated over QoS 0/1,
+  100/500 subscribers and 64-KiB payloads. It did not produce a repeatable
+  ten-percent gain and regressed two critical cells by more than five percent,
+  so the scheduling behavior was reverted. The result is recorded in
+  `egress-fairness-result-2026-11-26.md`.
 - The next plan targets fair Shard progress and, only if still needed,
   Direct/Backlog modes under one Egress owner:
   `docs/superpowers/plans/2026-11-26-egress-fairness-adaptive-recovery.md`.
