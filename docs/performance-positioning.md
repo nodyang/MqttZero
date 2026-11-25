@@ -60,3 +60,14 @@ does not trigger a third run because short-run tail noise is too high.
 Universal MQTTnet superiority across every benchmark cell remains outside the
 ordinary release gate. Performance claims are limited to measured cells and
 named metrics.
+
+## Current Hardening Track
+
+The post-investigation code review is recorded in
+`docs/superpowers/reviews/2026-11-26-master-hotpath-code-review.md`.
+
+The next implementation plan is
+`docs/superpowers/plans/2026-11-26-master-hotpath-hardening.md`. It prioritizes
+Lease-release correctness, Shard-confined Egress lifecycle, benchmark sampling
+integrity and default-disabled diagnostics before any new performance
+experiment.
