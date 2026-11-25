@@ -1210,6 +1210,7 @@ public sealed partial class MqttZeroBroker
                     }
                 }
 
+                bool qosZeroMessagesReleased = false;
                 try
                 {
                     _fanoutDiagnostics.RecordEgressDataBatch(
@@ -1245,20 +1246,17 @@ public sealed partial class MqttZeroBroker
 
                     _fanoutDiagnostics.RecordEncodedPublishes(
                         batch.Count);
-                    for (int index = 0; index < batch.Count; index++)
+                    bool flushPending = false;
+                    if (connection.AllowPacketFragmentation)
                     {
-                        MqttZeroQueuedMessage message = batch[index];
-                        if (message.QualityOfServiceLevel ==
-                            MqttQualityOfServiceLevel.AtMostOnce)
-                        {
-                            message.Release();
-                        }
+                        flushPending = !egress.BeginFlush(
+                            connection.FlushOutputAsync(
+                                cancellationToken));
                     }
 
-                    if (connection.AllowPacketFragmentation &&
-                        !egress.BeginFlush(
-                            connection.FlushOutputAsync(
-                                cancellationToken)))
+                    ReleaseQosZeroMessages(batch);
+                    qosZeroMessagesReleased = true;
+                    if (flushPending)
                     {
                         _fanoutDiagnostics.RecordFlushWait();
                         batch.Clear();
@@ -1267,14 +1265,9 @@ public sealed partial class MqttZeroBroker
                 }
                 catch
                 {
-                    for (int index = 0; index < batch.Count; index++)
+                    if (!qosZeroMessagesReleased)
                     {
-                        MqttZeroQueuedMessage message = batch[index];
-                        if (message.QualityOfServiceLevel ==
-                            MqttQualityOfServiceLevel.AtMostOnce)
-                        {
-                            message.Release();
-                        }
+                        ReleaseQosZeroMessages(batch);
                     }
 
                     batch.Clear();
@@ -1283,6 +1276,20 @@ public sealed partial class MqttZeroBroker
 
                 batch.Clear();
                 return session.PendingMessages.Count > 0;
+            }
+        }
+    }
+
+    private static void ReleaseQosZeroMessages(
+        List<MqttZeroQueuedMessage> batch)
+    {
+        for (int index = 0; index < batch.Count; index++)
+        {
+            MqttZeroQueuedMessage message = batch[index];
+            if (message.QualityOfServiceLevel ==
+                MqttQualityOfServiceLevel.AtMostOnce)
+            {
+                message.Release();
             }
         }
     }

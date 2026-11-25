@@ -1,12 +1,16 @@
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using MqttZero.Memory;
 using MqttZero.Protocol;
 using MqttZero.Server;
 using MqttZero.Server.Broker;
 using MqttZero.Server.Clients;
 using MqttZero.Server.Egress;
+using MqttZero.Server.Interceptors;
 using MqttZero.Server.Routing;
 using MqttZero.Server.Scheduling;
 using MqttZero.Server.Sessions;
+using MqttZero.Server.Storage;
 using System.Buffers;
 using System.Collections.Concurrent;
 using System.IO.Pipelines;
@@ -375,6 +379,118 @@ namespace MqttZero.Tests.Broker
             }
             finally
             {
+                await pump.StopAsync();
+                await publisherConnection.DisposeAsync();
+                await subscriberConnection.DisposeAsync();
+            }
+        }
+
+        [Fact(Timeout = 5_000)]
+        public async Task FailedQosZeroFlushReleasesQueuedMessageExactlyOnce()
+        {
+            const int payloadSize = 1024;
+            MqttZeroOptions options = new()
+            {
+                MaxMessageQueueLength = 10
+            };
+            RecordingLogger logger = new();
+            await using MqttZeroBroker broker = new(
+                Options.Create(options),
+                TimeProvider.System,
+                logger,
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                [],
+                new MqttZeroNoopSessionStore(),
+                new MqttZeroNoopMessageStore(),
+                new MqttZeroNoopRetainedMessageStore());
+            await broker.StartAsync(TestContext.Current.CancellationToken);
+            MqttZeroBufferPool bufferPool = GetBufferPool(broker);
+            TrackingPipeWriter subscriberWriter = new()
+            {
+                CompletionWrittenBytes = 1,
+                FlushCompleted = true
+            };
+            MqttZeroClientConnection subscriberConnection = new(
+                subscriberWriter,
+                new IPEndPoint(IPAddress.Loopback, 0),
+                false,
+                false,
+                0,
+                32,
+                1024 * 1024,
+                TimeProvider.System);
+            MqttZeroSessionState receiver = new(
+                "failed-qos-zero-flush",
+                options.MaxMessageQueueLength);
+            receiver.Subscriptions.Add(new MqttZeroSubscription(
+                "large/#"u8.ToArray(),
+                MqttQualityOfServiceLevel.AtMostOnce,
+                false,
+                false,
+                null));
+            receiver.Connection = subscriberConnection;
+            AddSession(broker, receiver);
+            RebuildRoutes(broker);
+            using CancellationTokenSource pumpLifetime = new();
+            MqttZeroEgressActor pump = broker.StartEgress(
+                receiver,
+                subscriberConnection,
+                pumpLifetime.Token);
+            MqttZeroClientConnection publisherConnection = new(
+                new TrackingPipeWriter(),
+                new IPEndPoint(IPAddress.Loopback, 0),
+                false,
+                false,
+                0,
+                32,
+                1024 * 1024,
+                TimeProvider.System);
+            MqttZeroSessionState publisher = new("publisher");
+            MqttZeroMessageLease lease = CreateQosZeroLease(
+                bufferPool,
+                "large/topic",
+                payloadSize);
+            bool leaseReleased = false;
+
+            try
+            {
+                await broker.RoutePublishLeaseAsync(
+                    publisher,
+                    publisherConnection,
+                    lease,
+                    TestContext.Current.CancellationToken);
+                await subscriberWriter.Completion.WaitAsync(
+                    TimeSpan.FromSeconds(2),
+                    TestContext.Current.CancellationToken);
+                await WaitUntilAsync(
+                    () => subscriberConnection.IsClosed,
+                    TestContext.Current.CancellationToken);
+                Assert.IsType<IOException>(logger.LastException);
+
+                Exception? releaseException = Record.Exception(
+                    lease.Release);
+                leaseReleased = true;
+                Assert.Null(releaseException);
+                Assert.Equal(0, bufferPool.RentedBytes);
+            }
+            finally
+            {
+                if (!leaseReleased)
+                {
+                    try
+                    {
+                        lease.Release();
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                    }
+                }
+
                 await pump.StopAsync();
                 await publisherConnection.DisposeAsync();
                 await subscriberConnection.DisposeAsync();
@@ -1008,6 +1124,22 @@ namespace MqttZero.Tests.Broker
             return (MqttZeroBufferPool)bufferPoolField.GetValue(broker)!;
         }
 
+        private static async Task WaitUntilAsync(
+            Func<bool> predicate,
+            CancellationToken cancellationToken)
+        {
+            using CancellationTokenSource timeout =
+                CancellationTokenSource.CreateLinkedTokenSource(
+                    cancellationToken);
+            timeout.CancelAfter(TimeSpan.FromSeconds(2));
+            while (!predicate())
+            {
+                await Task.Delay(
+                    TimeSpan.FromMilliseconds(10),
+                    timeout.Token);
+            }
+        }
+
         private static async Task AssertQosZeroBatchFlushCountAsync(
             MqttZeroOptions options,
             int messageCount,
@@ -1262,6 +1394,35 @@ namespace MqttZero.Tests.Broker
             }
         }
 
+        private sealed class RecordingLogger : ILogger<MqttZeroBroker>
+        {
+            public Exception? LastException { get; private set; }
+
+            public IDisposable? BeginScope<TState>(TState state)
+                where TState : notnull
+            {
+                return null;
+            }
+
+            public bool IsEnabled(LogLevel logLevel)
+            {
+                return true;
+            }
+
+            public void Log<TState>(
+                LogLevel logLevel,
+                EventId eventId,
+                TState state,
+                Exception? exception,
+                Func<TState, Exception?, string> formatter)
+            {
+                if (exception != null)
+                {
+                    LastException = exception;
+                }
+            }
+        }
+
         private sealed class TrackingPipeWriter : PipeWriter
         {
             private readonly TaskCompletionSource _completion = new(
@@ -1280,6 +1441,8 @@ namespace MqttZero.Tests.Broker
             public int CompletionWrittenBytes { get; set; } = int.MaxValue;
 
             public int FlushCount { get; private set; }
+
+            public bool FlushCompleted { get; set; }
 
             public ReadOnlySequence<byte> WrittenSequence
             {
@@ -1317,7 +1480,10 @@ namespace MqttZero.Tests.Broker
                     _completion.TrySetResult();
                 }
 
-                return ValueTask.FromResult(new FlushResult(false, false));
+                return ValueTask.FromResult(
+                    new FlushResult(
+                        isCanceled: false,
+                        isCompleted: FlushCompleted));
             }
 
             public override Memory<byte> GetMemory(int sizeHint = 0)

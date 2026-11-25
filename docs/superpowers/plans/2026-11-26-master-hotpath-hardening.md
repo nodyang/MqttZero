@@ -1,6 +1,6 @@
 # MQTTZero Master Hot-Path Hardening Plan
 
-> **Status:** Proposed.
+> **Status:** Active. Task 1 is complete; Task 2 is next.
 >
 > **Base:** `master` at `1a6b71e`
 >
@@ -35,24 +35,24 @@ remain unchanged. New supporting types are internal.
 
 ### TDD
 
-- [ ] Add a deterministic test where the subscriber PipeWriter is already
+- [x] Add a deterministic test where the subscriber PipeWriter is already
   completed and `BeginFlush` throws after batch encoding.
-- [ ] Confirm the test detects a negative Lease reference count or a second
+- [x] Confirm the test detects a second
   pooled-message release before the fix.
 
 ### Implementation
 
-- [ ] Track whether QoS 0 batch messages were released.
-- [ ] Ensure normal, Flush-throw, FlushPending and cancellation paths release
+- [x] Track whether QoS 0 batch messages were released.
+- [x] Ensure normal, Flush-throw, FlushPending and cancellation paths release
   each QoS 0 queued message exactly once.
-- [ ] Preserve QoS 1/2 Inflight ownership and rollback behavior.
-- [ ] Keep the synchronized success path allocation-free.
+- [x] Preserve QoS 1/2 Inflight ownership and rollback behavior.
+- [x] Keep the synchronized success path allocation-free.
 
 ### Verification
 
-- [ ] Focused OutboundDelivery and Lease tests pass.
-- [ ] BufferPool budget returns to zero after success, failure and stop.
-- [ ] Allocation sentinels remain green.
+- [x] Focused OutboundDelivery and Lease tests pass.
+- [x] BufferPool budget returns to zero after success, failure and stop.
+- [x] Allocation sentinels remain green.
 
 ### Commit
 
