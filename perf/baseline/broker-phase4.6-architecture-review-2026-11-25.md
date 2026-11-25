@@ -4,6 +4,13 @@
 
 分支：`perf/outperform-mqttnet`
 
+> **2026-11-26 更新：** 本文提出的完整 Connection Writer 实验已经实施并
+> 被否决。它在 QoS 1 / 100 订阅者 / 64 KiB 达到目标，但使单订阅 64 KiB
+> 吞吐退化超过门禁，生产实现已删除。后续执行计划改为先修正 Benchmark 口径、
+> 再验证 Shard 公平调度，仅在证据仍然支持时实现同一 Egress 所有者下的
+> Direct/Backlog 双模式：
+> `docs/superpowers/plans/2026-11-26-egress-fairness-adaptive-recovery.md`。
+
 ## 结论
 
 当前性能上不去，主要不是某个算法还不够快，而是三层设计共同放大了每次发布的

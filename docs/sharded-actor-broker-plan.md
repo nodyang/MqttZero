@@ -2,33 +2,45 @@
 
 ## 状态
 
-- 状态：Phase 2 部分完成；完整 Egress 闭环待独立实验
-- 目标分支：`perf/outperform-mqttnet`
+- 状态：Phase 2 部分完成；统一 Connection Writer 实验已否决；
+  Shard 公平调度与自适应 Egress 待实施
+- 目标分支：`perf/egress-actor-closure`
 - 目标框架：`net10.0`
-- 记录日期：2026-11-25
+- 记录日期：2026-11-26
+- 下一步计划：
+  `docs/superpowers/plans/2026-11-26-egress-fairness-adaptive-recovery.md`
+
+> 本文保留总体架构设计和历史任务追踪。当前可执行顺序、前置门禁和停止条件
+> 以上述新计划为准；下方未勾选历史项不应在没有新计划授权时直接恢复执行。
 
 ## 背景与目标
 
-当前实现的编解码、消息 Lease、常规 Topic Trie 和稳态零分配路径已经具备较好基础，但 Broker 端到端架构仍存在以下瓶颈：
+当前实现的编解码、消息 Lease、常规 Topic Trie 和稳态零分配路径已经具备较好基础。以下是本计划立项时识别的主要瓶颈，其中部分已由 Phase 1、3、4 关闭：
 
-- 每个在线 Session 同时维护 Outbound Pump 和 Connection Writer 两级异步调度。
+- Egress 状态分散在 Broker Delivery、Egress Actor 和 ClientConnection：
+  Pending/Inflight 选择、调度、编码写入和 Flush 生命周期尚未由一个所有者闭环管理。
 - 单发布者通常固定在一个 Inbound Dispatcher Worker 中，无法利用全部核心完成扇出。
 - 订阅变更会遍历并重建全部 Session 路由。
 - 共享订阅和 Retained 订阅匹配仍包含线性扫描。
 - 每个 Session 和连接存在与流量无关的固定大数组分配。
 - KeepAlive、Will、Session 和 Retained 清理每 500 ms 全量扫描。
 
-本计划将 Broker 重构为“固定 Shard 所有权 + 单连接 Egress Actor + 不可变路由快照”的架构，并通过与 MQTTnet 的同机严格对比验证性能提升。
+最终架构目标仍是“固定 Shard 所有权 + 单连接 Egress Actor + 不可变路由快照”，并通过同机 MQTTZero 回归基线和按单元格的 MQTTnet 对比验证性能。
 
 单进程 100,000 连接容量验证暂不纳入本轮验收，但新架构不得重新引入明显的固定内存和全量扫描瓶颈。
 
 ## 验收目标
 
-- Windows 和 Linux 均完成正式 Broker 对比矩阵。
-- 正式矩阵中的每个单元格都必须同时满足：
-  - MQTTZero 吞吐中位数严格高于 MQTTnet。
-  - MQTTZero p99 中位数严格低于 MQTTnet。
-  - 失败操作数为 0。
+- 普通发布门禁要求正确性、资源边界、真实传输、分配哨兵和 Dashboard
+  测试全部通过。
+- 同机稳定基线中，任何单元格吞吐回退不得超过 `5%`；失败数、排空超时和
+  Lease 泄漏必须为 0。
+- 性能领先声明按单元格和指标分别成立：三次重复后吞吐中位数高于 MQTTnet，
+  且发布调用/ACK p99 不劣于 MQTTnet。
+- 开发阶段的普通回归使用两次重复；两轮端到端吞吐离散超过 `10%`，或出现
+  失败/未排空时补跑第三轮。p99 在开发阶段只记录，不触发第三轮。
+- “所有 QoS、订阅规模和 Payload 全面严格领先 MQTTnet”不再作为普通发布门禁。
+- 发布调用/ACK 延迟必须与端到端订阅者投递延迟分开报告。
 - 无扩展稳态路径继续保持零托管分配。
 - TLS、WebSocket、QoS 0/1/2、持久 Session、Retained、Will、Expiry、Session Takeover 和 MQTT 5 属性语义不回归。
 - Kestrel 继续作为默认生产传输。
@@ -84,24 +96,36 @@
 ### Phase 2：单连接 Egress Actor
 
 > 当前状态：部分完成。现有 Egress Actor 尚未独占 Session Pending、Inflight、
-> 编码、PipeWriter 写入和 Flush 生命周期的完整发送闭环。性能研究分支保持红色，
-> 不阻塞普通 alpha 发布。完整闭环将在独立分支单次实验，具体见
-> `docs/superpowers/plans/2026-11-25-mainline-convergence-egress-closure.md`。
+> 编码、PipeWriter 写入和 Flush 生命周期的完整发送闭环。统一 Connection
+> Writer 实验提高了目标扇出单元格，但使单订阅 64 KiB 吞吐退化超过门禁，
+> 实现已删除。后续只允许在单一 Egress 所有者内实现 Direct/Backlog 双模式，
+> 不得再次用一个 Writer 策略替换所有发送路径。
 
-- [ ] 合并 Session Outbound Pump、Connection Writer 和连接写锁为 Session 所属 Shard 中的唯一 Egress 状态机。
+- [ ] 先修正 Benchmark Client、发布调用延迟、端到端投递延迟和测量后排空口径。
+- [ ] 为 Shard 高/低优先级队列实现有界公平调度，防止持续 Fanout 饿死 Egress。
+- [ ] 增加高优先级与低优先级队列等待年龄、饥饿和 Flush 等待诊断。
+- [ ] 将 Pending、Inflight、控制包顺序、编码写入和 Flush 收敛为一个逻辑所有者；
+  旧 Pump/Writer 不得作为并行生产路径保留。
+- [ ] 在 Egress Actor 内提供 Direct/Backlog 两种互斥执行策略。
 - [ ] Egress 维护控制帧优先队列和待发送数据状态。
 - [ ] 控制帧只在完整 MQTT 包边界插入。
 - [ ] 数据批次同时受字节数、消息数和持续时间限制。
 - [ ] 存在控制帧时，数据批次在下一包边界结束。
 - [ ] `FlushAsync` 同步完成时继续发送。
 - [ ] `FlushAsync` 未完成时设置 `flushPending`，注册完成回调并 Post 回同一 Shard。
-- [ ] 不创建每连接 Task 或常驻异步循环。
+- [ ] 不使用统一常驻 Writer；Backlog 模式只在存在可测积压时启用。
 - [ ] 删除连接向 Egress 的第二次消息复制和第二次队列交接。
 - [ ] 消息从 Session Pending 直接进入发送批次。
 - [ ] 保留 `MaxInflight`、Receive Maximum、QoS 1/2 Inflight、DUP、重连恢复、过期和队列驱逐语义。
 - [ ] 保留 PUBACK 与订阅者网络 Flush 解耦；发布者确认等待持久化入站接受，不等待全部订阅者发送完成。
 
+执行顺序、停止条件和验收数据见
+`docs/superpowers/plans/2026-11-26-egress-fairness-adaptive-recovery.md`。
+
 ### Phase 3：内存密度与单 Slab Lease
+
+> 当前状态：核心单 Slab、池化队列候选链、惰性 Topic Alias 和固定队列内存移除
+> 已合入；下方复选框保留为最初实施记录，不作为当前待办列表。
 
 - [ ] `MqttZeroMessageLease` 改为从 Buffer Pool 租赁单个 Slab。
 - [ ] Slab 依次保存 Topic、Properties 和 Payload。
@@ -116,6 +140,10 @@
 - [ ] 设计目标保持为空闲连接加 Session 的 Broker-owned 状态低于 `4 KiB`，但不以 100,000 连接压测作为本轮发布门禁。
 
 ### Phase 4：Route Epoch 与共享订阅索引
+
+> 当前状态：Route Epoch、预构建 Filter 组、Session 去重和 Shard 感知计划核心路径
+> 已合入；下方复选框保留为最初实施记录。后续只有在修正后的基准仍证明路由是
+> 主要瓶颈时才继续扩展。
 
 - [ ] 实现不可变 `MqttZeroRouteEpoch`。
 - [ ] Topic Segment Trie、常规订阅叶节点和共享订阅叶节点处于同一索引。
@@ -157,17 +185,16 @@
 
 ### Phase 7：Kestrel 与 Socket A/B
 
-> 当前状态：实验已完成并拒绝。明文 `SocketAsyncEventArgs` 原型吞吐低于
+> 当前状态：已关闭。实验已完成并拒绝。明文 `SocketAsyncEventArgs` 原型吞吐低于
 > Kestrel，相关生产代码已删除；Kestrel 保持唯一生产传输。决策记录见
 > `perf/baseline/broker-transport-ab-2026-11-25.md`。
 
-- [ ] 把 Broker 与传输边界抽象为内部 Transport Connection。
-- [ ] Kestrel 保持生产默认路径。
-- [ ] 在 Benchmark 或实验程序集内增加 Windows/Linux 同权的明文 TCP Socket 传输原型。
-- [ ] Socket 原型使用 `SocketAsyncEventArgs`、Pooled Pipe Buffer 和 Shard Post 处理完成事件。
-- [ ] Socket 原型不支持 TLS、WebSocket 或公开 NuGet API。
-- [ ] A/B 覆盖单订阅、100/1000 扇出和 32 B/8 KiB/64 KiB。
-- [ ] 若 Socket 原型没有稳定收益，保留报告并删除原型。
+- [x] 把 Broker 与传输边界抽象为内部 Transport Connection。
+- [x] Kestrel 保持生产默认路径。
+- [x] 评估明文 TCP Socket 传输原型。
+- [x] Socket 原型不支持 TLS、WebSocket 或公开 NuGet API。
+- [x] A/B 覆盖单订阅、100/1000 扇出和 32 B/8 KiB/64 KiB。
+- [x] 因没有稳定收益删除原型并保留报告。
 
 ### Phase 8：删除旧架构与发布门禁
 
@@ -177,8 +204,8 @@
 - [ ] 删除旧 Route Snapshot Builder。
 - [ ] 删除临时兼容开关。
 - [ ] 更新 README、配置文档、性能基线和架构说明。
-- [ ] 只有全部功能测试和严格性能门禁通过后才提升版本。
-- [ ] 任何单元格失败都不得发布性能声明。
+- [ ] 普通发布前通过功能、回归和供应链门禁。
+- [ ] 只对实际通过三次中位数验证的单元格和指标发布性能声明。
 
 ## 测试计划
 
@@ -242,10 +269,13 @@
 
 - [ ] Windows 本地先执行 12 单元格开发矩阵，夜间执行 18 单元格稳定矩阵，最终门禁恢复 27 单元格矩阵。
 - [ ] Linux 本地先执行 12 单元格开发矩阵，夜间执行 18 单元格稳定矩阵，最终门禁恢复 27 单元格矩阵。
-- [ ] 每个单元格三次重复取中位数。
-- [ ] 每个单元格满足 `ThroughputRatio > 1.00`。
-- [ ] 每个单元格满足 `P99Ratio < 1.00`。
+- [ ] 开发回归每个单元格两次重复；吞吐离散超限或结果无效时补跑第三轮。
+- [ ] 最终性能声明每个单元格三次重复取中位数。
+- [ ] 每个单元格相对同机稳定 MQTTZero 基线的吞吐回退不超过 `5%`。
+- [ ] 只有满足 `ThroughputRatio > 1.00` 且 `PublishCallP99Ratio <= 1.00`
+  的单元格才可声明领先 MQTTnet。
 - [ ] 失败操作数为 0。
+- [ ] 测量结束后的端到端排空时间、实收数和发布数分别记录。
 - [ ] 两个平台使用同一 Benchmark Client、相同 Kestrel 参数、Server GC 和负载窗口。
 - [ ] 原始 MQTT Client 结果用于定位瓶颈，不替代 MQTTnet Client 严格门禁。
 
@@ -266,7 +296,7 @@ dotnet test tests/MqttZero.Dashboard.Tests/MqttZero.Dashboard.Tests.csproj -c Re
 - 本轮不新增集群、桥接、客户端 SDK 或数据库实现。
 - 外部 Store 继续负责持久化，Broker 不改变其线程安全与复制语义。
 - Kestrel 是默认生产传输。
-- Socket 首轮仅验证明文 TCP 数据面。
+- Socket 实验已关闭，不进入生产路径。
 - 单进程 100,000 连接容量验证延后。
 - 重构期间允许多个阶段性内部开关。
 - 最终合并状态只保留一套 Broker 调度实现和一个永久 Kestrel 兼容传输。

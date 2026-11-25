@@ -98,6 +98,29 @@ public sealed class FanoutDiagnosticsTests
     }
 
     [Fact]
+    public void SnapshotCountsSendStageAttribution()
+    {
+        MqttZeroFanoutDiagnostics diagnostics = new(enabled: true);
+
+        diagnostics.RecordSessionLockWait(11);
+        diagnostics.RecordPendingSelection(12);
+        diagnostics.RecordInflightUpdate(13);
+        diagnostics.RecordPublishEncode(14);
+        diagnostics.RecordPublishWrite(15);
+
+        MqttZeroFanoutDiagnosticsSnapshot snapshot =
+            diagnostics.GetSnapshot();
+
+        Assert.Equal(1, snapshot.SessionLockWaitCount);
+        Assert.Equal(11, snapshot.TotalSessionLockWaitTicks);
+        Assert.Equal(11, snapshot.MaxSessionLockWaitTicks);
+        Assert.Equal(12, snapshot.TotalPendingSelectionTicks);
+        Assert.Equal(13, snapshot.TotalInflightUpdateTicks);
+        Assert.Equal(14, snapshot.TotalPublishEncodeTicks);
+        Assert.Equal(15, snapshot.TotalPublishWriteTicks);
+    }
+
+    [Fact]
     public void ResetClearsAllDiagnostics()
     {
         MqttZeroFanoutDiagnostics diagnostics = new(enabled: true);

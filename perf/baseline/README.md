@@ -114,6 +114,38 @@
   the per-message Session/Egress/Flush scheduling chain, with average fanout
   batches near 1.2 messages and almost every QoS 0/1 64-KiB batch waiting on an
   asynchronous Flush. More Encode or batch-constant tuning is not the next step.
+- A complete connection-writer experiment improved QoS 1 / 100 / 64 KiB to
+  `1.055x` MQTTnet throughput with `0.707x` p99, but regressed single-subscriber
+  64-KiB QoS 0 and QoS 1 throughput beyond the five-percent gate. The
+  implementation was rejected and removed.
+- The current benchmark client still copies each MQTTnet payload with
+  `payload.ToArray()`, and its reported latency is the publisher API-call
+  duration. Benchmark correction and final subscriber-drain measurement are
+  prerequisites for the next architecture experiment.
+- The corrected Benchmark contract now reuses the MQTTnet Client payload,
+  separates publish-window and end-to-end throughput, enforces final
+  subscriber drain and reports publisher API-call p99 explicitly.
+- Corrected six-cell 64-KiB development baseline:
+  `egress-corrected-development-2026-11-26.json` and
+  `egress-corrected-development-2026-11-26.md`.
+- Bounded forced-fairness Shard scheduling was evaluated over QoS 0/1,
+  100/500 subscribers and 64-KiB payloads. It did not produce a repeatable
+  ten-percent gain and regressed two critical cells by more than five percent,
+  so the scheduling behavior was reverted. The result is recorded in
+  `egress-fairness-result-2026-11-26.md`.
+- Adaptive Direct/Backlog Egress execution and Flush-completion reuse were
+  rejected after short-run gains disappeared under a 5-second warmup /
+  20-second measurement comparison. The production implementation was
+  removed. The conditional QoS 0 borrowed-input path was not started because
+  Payload copy is too small relative to the remaining tail latency. Evidence:
+  `egress-adaptive-send-result-2026-11-26.md`.
+- The investigation closure, retained tooling/diagnostics and final verification
+  record are summarized in `egress-closure-final-2026-11-26.md`. No production
+  hot-path performance experiment was retained and no performance-claim matrix
+  was published.
+- The next plan targets fair Shard progress and, only if still needed,
+  Direct/Backlog modes under one Egress owner:
+  `docs/superpowers/plans/2026-11-26-egress-fairness-adaptive-recovery.md`.
 - `codec-0.3.0-alpha.1.*`
 - `routing-0.3.0-alpha.1.*`
 - `memory-transport-0.3.0-alpha.1.*`

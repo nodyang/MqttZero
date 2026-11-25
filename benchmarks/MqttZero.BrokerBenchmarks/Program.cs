@@ -65,7 +65,15 @@ else if (mode == "load")
         port,
         options,
         new BenchmarkMqttClientFactory(clientKind, port),
-        CancellationToken.None);
+        CancellationToken.None,
+        update => WriteProgress(
+            1,
+            1,
+            clientKind.ToString(),
+            options.Qos,
+            options.Subscribers,
+            options.PayloadSize,
+            update));
     await BenchmarkOutputWriter.WriteAsync(
         GetNullableValue(arguments, "output"),
         result,
@@ -211,6 +219,13 @@ static async Task CompareAsync(
     List<BrokerComparisonResult> results = [];
     string assemblyPath = Assembly.GetEntryAssembly()!.Location;
     int port = GetInt(arguments, "start-port", 19000);
+    int totalRuns =
+        repetitions *
+        brokers.Length *
+        qosLevels.Length *
+        subscriberCounts.Length *
+        payloadSizes.Length;
+    int currentRun = 0;
 
     for (int repetition = 1; repetition <= repetitions; repetition++)
     {
@@ -223,6 +238,19 @@ static async Task CompareAsync(
                     foreach (int payloadSize in payloadSizes)
                     {
                         port++;
+                        currentRun++;
+                        WriteProgress(
+                            currentRun,
+                            totalRuns,
+                            broker,
+                            qos,
+                            subscribers,
+                            payloadSize,
+                            new BenchmarkRunProgress(
+                                "starting",
+                                0,
+                                0,
+                                0));
                         long brokerStarted = Stopwatch.GetTimestamp();
                         using Process serverProcess = StartServerProcess(
                             assemblyPath,
@@ -253,7 +281,15 @@ static async Task CompareAsync(
                                     new BenchmarkMqttClientFactory(
                                         clientKind,
                                         port),
-                                    CancellationToken.None);
+                                    CancellationToken.None,
+                                    update => WriteProgress(
+                                        currentRun,
+                                        totalRuns,
+                                        broker,
+                                        qos,
+                                        subscribers,
+                                        payloadSize,
+                                        update));
                             }
                             catch (Exception exception)
                             {
@@ -282,6 +318,19 @@ static async Task CompareAsync(
                                 Result = result,
                                 BrokerObservation = brokerObservation
                             });
+                            WriteProgress(
+                                currentRun,
+                                totalRuns,
+                                broker,
+                                qos,
+                                subscribers,
+                                payloadSize,
+                                new BenchmarkRunProgress(
+                                    "complete",
+                                    result.PublishedMessages,
+                                    result.MeasurementReceivedMessages,
+                                    result.FailedOperations),
+                                result);
                         }
                         finally
                         {
@@ -482,7 +531,26 @@ static async Task RunOutboundAsync(Dictionary<string, string> arguments)
         diagnosticsSnapshot.EgressBatchMessageCount,
         diagnosticsSnapshot.EgressBatchByteCount,
         averageEgressBatchMessages,
-        diagnosticsSnapshot.EgressFlushStartCount);
+        diagnosticsSnapshot.EgressFlushStartCount,
+        diagnosticsSnapshot.SessionLockWaitCount,
+        ToAverageMicroseconds(
+            diagnosticsSnapshot.TotalSessionLockWaitTicks,
+            diagnosticsSnapshot.SessionLockWaitCount),
+        ToAverageMicroseconds(
+            diagnosticsSnapshot.MaxSessionLockWaitTicks,
+            1),
+        ToAverageMicroseconds(
+            diagnosticsSnapshot.TotalPendingSelectionTicks,
+            diagnosticsSnapshot.EgressDataBatchCount),
+        ToAverageMicroseconds(
+            diagnosticsSnapshot.TotalInflightUpdateTicks,
+            diagnosticsSnapshot.EncodedPublishCount),
+        ToAverageMicroseconds(
+            diagnosticsSnapshot.TotalPublishEncodeTicks,
+            diagnosticsSnapshot.EncodedPublishCount),
+        ToAverageMicroseconds(
+            diagnosticsSnapshot.TotalPublishWriteTicks,
+            diagnosticsSnapshot.EgressDataBatchCount));
     OutboundBenchmarkResult result = new(
         PublishedMessages: loopResult.PublishedMessages,
         ReceivedMessages: Interlocked.Read(ref receivedMessages),
@@ -670,6 +738,41 @@ static double PercentileMicroseconds(long[] samples, int count, double percentil
 
     int index = Math.Clamp((int)Math.Ceiling(percentile * count) - 1, 0, count - 1);
     return samples[index] * 1_000_000d / Stopwatch.Frequency;
+}
+
+static double ToAverageMicroseconds(long totalTicks, long sampleCount)
+{
+    return sampleCount == 0
+        ? 0
+        : totalTicks * 1_000_000d /
+            Stopwatch.Frequency /
+            sampleCount;
+}
+
+static void WriteProgress(
+    int currentRun,
+    int totalRuns,
+    string broker,
+    int qos,
+    int subscribers,
+    int payloadSize,
+    BenchmarkRunProgress progress,
+    BrokerBenchmarkResult? result = null)
+{
+    string details = result == null
+        ? $"published={progress.PublishedMessages}, " +
+            $"received={progress.ReceivedMessages}, " +
+            $"failed={progress.FailedOperations}"
+        : $"publish-window={result.PublishWindowThroughputPerSecond:F2} msg/s, " +
+            $"end-to-end={result.EndToEndThroughputPerSecond:F2} msg/s, " +
+            $"publish-p99={result.PublishCallLatencyP99Microseconds:F1} us, " +
+            $"received={result.MeasurementReceivedMessages}/" +
+            $"{result.PublishedMessages * subscribers}, " +
+            $"drain={result.MeasurementDrainMilliseconds:F1} ms, " +
+            $"failed={result.FailedOperations}";
+    FormattableString line = $"[{currentRun}/{totalRuns}] {progress.Stage} broker={broker} qos={qos} subscribers={subscribers} payload={payloadSize} {details}";
+    Console.Error.WriteLine(
+        FormattableString.Invariant(line));
 }
 
 static async Task WaitForCancellationAsync(CancellationToken cancellationToken)

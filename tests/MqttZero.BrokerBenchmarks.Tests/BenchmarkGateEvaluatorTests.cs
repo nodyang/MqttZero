@@ -82,17 +82,87 @@ public sealed class BenchmarkGateEvaluatorTests
         Assert.Contains("repetition", Assert.Single(gate.Summaries).FailureReason);
     }
 
+    [Fact]
+    public void GateRejectsIncompleteMeasurementDrain()
+    {
+        BrokerComparisonResult[] results =
+        [
+            Create(
+                "mqttzero",
+                throughput: 101,
+                p99: 99,
+                failures: 0,
+                publishedMessages: 10,
+                subscribers: 10,
+                receivedMessages: 99),
+            Create(
+                "mqttnet",
+                throughput: 100,
+                p99: 100,
+                failures: 0,
+                publishedMessages: 10,
+                subscribers: 10,
+                receivedMessages: 100)
+        ];
+
+        BenchmarkGateResult gate = BenchmarkGateEvaluator.Evaluate(results);
+
+        Assert.False(gate.Passed);
+        Assert.Contains(
+            "received",
+            Assert.Single(gate.Summaries).FailureReason);
+    }
+
+    [Fact]
+    public void GateUsesEndToEndThroughputInsteadOfPublishWindowThroughput()
+    {
+        BrokerComparisonResult[] results =
+        [
+            Create(
+                "mqttzero",
+                throughput: 200,
+                p99: 99,
+                failures: 0,
+                publishedMessages: 50,
+                endToEndThroughput: 50,
+                measurementMilliseconds: 1000,
+                drainMilliseconds: 1000),
+            Create(
+                "mqttnet",
+                throughput: 50,
+                p99: 100,
+                failures: 0,
+                publishedMessages: 50,
+                endToEndThroughput: 50,
+                measurementMilliseconds: 1000,
+                drainMilliseconds: 0)
+        ];
+
+        BenchmarkGateResult gate = BenchmarkGateEvaluator.Evaluate(results);
+
+        Assert.False(gate.Passed);
+        Assert.Contains(
+            "throughput",
+            Assert.Single(gate.Summaries).FailureReason);
+    }
+
     private static BrokerComparisonResult Create(
         string broker,
         double throughput,
         double p99,
-        long failures)
+        long failures,
+        long publishedMessages = 1,
+        int subscribers = 1,
+        long receivedMessages = 1,
+        double? endToEndThroughput = null,
+        double measurementMilliseconds = 1000,
+        double drainMilliseconds = 0)
     {
         return new BrokerComparisonResult
         {
             Broker = broker,
             Qos = 1,
-            Subscribers = 1,
+            Subscribers = subscribers,
             PayloadSize = 32,
             Repetition = 1,
             BrokerObservation = new BenchmarkProcessObservation(
@@ -102,15 +172,18 @@ public sealed class BenchmarkGateEvaluatorTests
                 0),
             Result = new BrokerBenchmarkResult
             {
-                PublishedMessages = 1,
-                ReceivedMessages = 1,
+                PublishedMessages = publishedMessages,
+                ReceivedMessages = receivedMessages,
                 FailedOperations = failures,
                 WarmupPublishedMessages = 1,
                 WarmupReceivedMessages = 1,
-                ThroughputPerSecond = throughput,
-                LatencyP50Microseconds = p99,
-                LatencyP95Microseconds = p99,
-                LatencyP99Microseconds = p99,
+                MeasurementReceivedMessages = receivedMessages,
+                PublishWindowThroughputPerSecond = throughput,
+                EndToEndThroughputPerSecond =
+                    endToEndThroughput ?? throughput,
+                PublishCallLatencyP50Microseconds = p99,
+                PublishCallLatencyP95Microseconds = p99,
+                PublishCallLatencyP99Microseconds = p99,
                 LoadObservation = new BenchmarkLoadObservation(
                     0,
                     0,
@@ -119,7 +192,9 @@ public sealed class BenchmarkGateEvaluatorTests
                     0,
                     0,
                     0,
-                    0)
+                    0),
+                MeasurementMilliseconds = measurementMilliseconds,
+                MeasurementDrainMilliseconds = drainMilliseconds
             }
         };
     }

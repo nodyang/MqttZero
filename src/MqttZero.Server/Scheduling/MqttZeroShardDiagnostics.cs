@@ -8,4 +8,9 @@ internal sealed record MqttZeroShardDiagnostics(
     int QueuedCount,
     bool IsDraining,
     double MaxDrainMilliseconds,
-    double OldestWorkAgeMilliseconds);
+    double OldestWorkAgeMilliseconds,
+    int HighPriorityQueuedCount,
+    int LowPriorityQueuedCount,
+    double HighPriorityOldestWorkAgeMilliseconds,
+    double LowPriorityOldestWorkAgeMilliseconds,
+    long LowPriorityWaitCount);

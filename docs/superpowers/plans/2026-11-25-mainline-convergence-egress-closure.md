@@ -1,810 +1,441 @@
-# MQTTZero 主线收束与 Egress 闭环 Implementation Plan
+# MQTTZero Egress Performance Reset Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Status: CLOSED - HISTORICAL.**
+>
+> Do not execute Tasks 4 through 6. The complete connection writer in Task 4
+> was implemented and measured, but it was rejected because single-subscriber
+> 64-KiB cells regressed by more than five percent. The production
+> implementation was removed.
+>
+> Continue with:
+> `docs/superpowers/plans/2026-11-26-egress-fairness-adaptive-recovery.md`.
 
-**Goal:** 停止在 94 提交性能分支继续堆叠微优化，先把已验证收益收束到 `master` 并发布 `0.11.0-alpha.2`，再在独立分支只做一次完整的连接 Egress Actor 闭环实验。
+> **Historical execution note:** This plan is retained for provenance and must
+> not be resumed. Use the superseding plan for all new work.
 
-**Architecture:** 普通 alpha 发布以正确性、零分配、稳定性和相对基线 5% 非回退为门禁；严格 MQTTnet 矩阵降为性能声明门禁。Egress 实验把 Session Pending、Inflight、编码、PipeWriter 写入和 Flush 生命周期统一到一个连接级状态机；未达到目标场景门限即删除实验。
+**Historical goal:** 清除当时 Egress 实验中的无效中间抽象，建立同口径基线，
+用证据确定瓶颈，并且只执行一次完整的 Connection Writer 纵向替换。
 
-**Tech Stack:** .NET 10, Kestrel PipeWriter, MQTT 5, Event Loop Shards, MQTTnet 5.2.0.1603 comparison client, xUnit v3, BenchmarkDotNet, PowerShell 7.
+**Architecture:** Stage 1 已合入 `master` 并发布 `0.11.0-alpha.2`。本计划不再将“所有权容器、选批器、Writer”拆成互相依赖的半成品；先回到“现有发送路径 + 诊断能力”的干净基座，只有归因证明 Writer 是瓶颈时，才用一个完整状态机替换旧发送路径。
 
-**Spec:** `docs/sharded-actor-broker-plan.md` Phase 2, `perf/baseline/broker-phase4.6-architecture-review-2026-11-25.md`, and the current `master..perf/outperform-mqttnet` history.
+**Tech Stack:** .NET 10, Kestrel PipeWriter, MQTT 5, Event Loop Shards, MQTTnet 5.2.0.1603, xUnit v3, BenchmarkDotNet, PowerShell 7.
+
+**Spec:** `docs/sharded-actor-broker-plan.md`, `perf/baseline/egress-closure-baseline-2026-11-25.md`, and `perf/baseline/egress-batch-selector-experiment-2026-11-25.md`.
 
 ## Global Constraints
 
-- Preserve public APIs, `MqttZeroOptions` defaults, MQTT wire semantics, Kestrel as the production transport, interceptors, observers, stores, Dashboard and management APIs.
-- Ordinary alpha releases require correctness, stability, allocation sentinels and no throughput regression above 5%; they do not require every strict MQTTnet cell to pass.
-- Strict MQTTnet comparison remains in the nightly performance workflow and `perf/baseline` as a performance-claim gate only.
-- The complete Egress experiment is allowed to break internal Session, Pending, Inflight, Connection and Egress contracts.
-- The Egress experiment gets one complete attempt. If the primary target or any critical regression gate fails, delete the production experiment and stop the broad "outperform MQTTnet" release goal.
-- Kestrel remains the only production transport; do not revive the rejected Socket prototype or direct large `WriteAsync` experiment.
-- Steady-state synchronized hot paths must remain `0 B/op` after warmup; asynchronous scheduling and exception paths are reported separately.
-- No per-connection permanent Task, unbounded queue, fire-and-forget unobserved Task or alternate write owner.
-- Keep one active writer per connection, preserve control-packet priority and complete MQTT packet boundaries.
-- C# files use CRLF; one top-level type per file; all public APIs have XML comments; all if/method bodies use braces; `csharp-code-rules` applies.
-- All commands use PowerShell 7 in the current worktree.
+- Work directly on branch `perf/egress-actor-closure`; do not create worktrees.
+- Do not change public APIs, `MqttZeroOptions` defaults, MQTT wire format, Dashboard, management APIs, interceptors, observers or storage contracts.
+- Kestrel remains the production transport.
+- Preserve one active writer per connection, QoS ordering, QoS 1/2 inflight state, control-frame priority and full MQTT packet boundaries.
+- Preserve zero allocation after warmup for deterministic synchronized MQTTZero hot paths.
+- Do not add speculative helper layers without a production caller.
+- Do not reuse the rejected batch selector or multi-batch Actor experiment.
+- Do not compare a three-repetition baseline with a single short diagnostic run.
+- Any performance experiment must be reverted if it fails its gate.
+- C# files use CRLF, one top-level type per file, XML comments on public APIs, mandatory braces and `csharp-code-rules`.
+- Run commands with PowerShell 7 from `D:\github\mqttzero`.
 
 ---
 
-## Stage 1: Mainline Convergence and `0.11.0-alpha.2`
-
-### Task 1: Classify the Performance History
-
-**Files:**
-- Create: `docs/performance-branch-convergence.md`
-- Read: `git log master..perf/outperform-mqttnet`
-- Read: `perf/baseline/*.md`
-- Read: `docs/sharded-actor-broker-plan.md`
-
-**Interfaces:**
-- Produces: a reviewed commit inventory with one of `keep`, `neutral`, or `reject` for every commit or coherent commit group.
-- Produces: a list of tests and baselines that justify every retained high-risk change.
-
-- [ ] **Step 1: Inventory all commits**
-
-  Run:
-
-  ```powershell
-  git log --reverse --format="%h %s" master..perf/outperform-mqttnet
-  git diff --stat master..perf/outperform-mqttnet
-  ```
-
-  Write every commit or coherent commit group into `docs/performance-branch-convergence.md`.
-
-- [ ] **Step 2: Classify each item**
-
-  Use these categories:
-
-  ```text
-  keep: correctness, zero-allocation, ownership, queue, routing, memory density, protocol, benchmark infrastructure
-  neutral: stable internal abstraction required by a kept item
-  reject: rejected Socket transport, direct large WriteAsync, failed scheduling or batch experiments, superseded experimental paths
-  ```
-
-  Reject a commit when its only claimed benefit is a red benchmark cell or an experiment explicitly rejected in a baseline document.
-
-- [ ] **Step 3: Verify the inventory**
-
-  Run:
-
-  ```powershell
-  rg -n "keep|neutral|reject" docs/performance-branch-convergence.md
-  ```
-
-  Expected:
-
-  ```text
-  Every commit from master..perf/outperform-mqttnet is represented once.
-  Every rejected production path has a baseline or test reason.
-  ```
-
-- [ ] **Step 4: Commit**
-
-  ```powershell
-  git add docs/performance-branch-convergence.md
-  git commit -m "docs: classify performance branch history"
-  ```
-
-### Task 2: Create the Release Branch
-
-**Files:**
-- Git branches and tags only
-- Read: `docs/performance-branch-convergence.md`
-
-**Interfaces:**
-- Produces: `research/sharded-egress-phase4.6` preserving the complete experiment history.
-- Produces: `release/0.11-alpha.2` based on `master`.
-
-- [ ] **Step 1: Preserve the research history**
-
-  Run:
-
-  ```powershell
-  git branch research/sharded-egress-phase4.6 perf/outperform-mqttnet
-  git push origin research/sharded-egress-phase4.6
-  ```
-
-- [ ] **Step 2: Create the release branch**
-
-  Run:
-
-  ```powershell
-  git switch master
-  git switch -c release/0.11-alpha.2
-  ```
-
-- [ ] **Step 3: Confirm the base**
-
-  Run:
-
-  ```powershell
-  git merge-base --is-ancestor master HEAD
-  git status --short --branch
-  ```
-
-  Expected: the command exits successfully and the worktree is clean.
-
-### Task 3: Import Only Verified Correctness and Ownership Changes
-
-**Files:**
-- Modify: `src/MqttZero/Memory/MqttZeroMessageLease.cs`
-- Modify: `src/MqttZero/Memory/MqttZeroBufferPool.cs`
-- Modify: `src/MqttZero/Protocol/*.cs`
-- Modify: `src/MqttZero.Server/Sessions/*.cs`
-- Modify: `src/MqttZero.Server/Routing/*.cs`
-- Test: `tests/MqttZero.Tests/Memory/*.cs`
-- Test: `tests/MqttZero.Tests/Protocol/*.cs`
-- Test: `tests/MqttZero.Tests/Routing/*.cs`
-- Test: `tests/MqttZero.Tests/Sessions/*.cs`
-
-**Interfaces:**
-- Consumes: the `keep` and required `neutral` classification from Task 1.
-- Produces: correctness and ownership changes that pass independently before scheduling changes are imported.
-
-- [ ] **Step 1: Write a focused ownership regression test**
-
-  Add a test that creates an owned lease, retains it for an inbound work item, releases the producer reference, executes the work, and asserts the buffer-pool active-byte count returns to zero.
-
-  Run:
-
-  ```powershell
-  dotnet test tests/MqttZero.Tests/MqttZero.Tests.csproj -c Release --no-restore --filter "FullyQualifiedName~Lease"
-  ```
-
-  Expected before importing the fix: the test reproduces a missing independent reference or non-zero pool budget.
-
-- [ ] **Step 2: Import the verified ownership implementation**
-
-  Apply only the owned-lease, inbound-work, queue-version, buffer-pool and protocol-boundary changes classified `keep`.
-
-- [ ] **Step 3: Run focused tests**
-
-  Run:
-
-  ```powershell
-  dotnet test tests/MqttZero.Tests/MqttZero.Tests.csproj -c Release --no-restore `
-    --filter "FullyQualifiedName~Memory|FullyQualifiedName~Protocol|FullyQualifiedName~Sessions|FullyQualifiedName~Routing"
-  ```
-
-  Expected: all selected tests pass, including zero-allocation tests.
-
-- [ ] **Step 4: Commit**
-
-  ```powershell
-  git add src/MqttZero src/MqttZero.Server/Sessions src/MqttZero.Server/Routing tests/MqttZero.Tests
-  git commit -m "fix: converge verified lease and protocol ownership"
-  ```
-
-### Task 4: Import Verified Routing, Memory-Density and Queue Improvements
-
-**Files:**
-- Modify: `src/MqttZero.Server/Routing/*.cs`
-- Modify: `src/MqttZero.Server/Retained/*.cs`
-- Modify: `src/MqttZero.Server/Sessions/MqttZeroMessageQueue.cs`
-- Modify: `src/MqttZero.Server/Clients/MqttZeroTopicAliasTable.cs`
-- Test: `tests/MqttZero.Tests/Routing/*.cs`
-- Test: `tests/MqttZero.Tests/Retained/*.cs`
-- Test: `tests/MqttZero.Tests/Sessions/*.cs`
-- Test: `tests/MqttZero.Tests/Broker/TopicAliasAllocationTests.cs`
-
-**Interfaces:**
-- Consumes: route epochs, persistent HAMT, shared cursors, intrusive queue and lazy alias implementations from the research branch.
-- Produces: the retained routing and memory improvements without importing Egress scheduling experiments.
-
-- [ ] **Step 1: Run the existing routing and queue tests on the release branch**
-
-  Run:
-
-  ```powershell
-  dotnet test tests/MqttZero.Tests/MqttZero.Tests.csproj -c Release --no-restore `
-    --filter "FullyQualifiedName~Routing|FullyQualifiedName~Retained|FullyQualifiedName~MessageQueue"
-  ```
-
-  Expected: capture the baseline pass/fail set before migration.
-
-- [ ] **Step 2: Import the retained implementations and tests**
-
-  Apply the Route Epoch, HAMT, shared cursor, retained trie, intrusive queue, lazy Topic Alias and single-Slab lease changes classified `keep`.
-
-- [ ] **Step 3: Run focused and allocation tests**
-
-  Run:
-
-  ```powershell
-  dotnet test tests/MqttZero.Tests/MqttZero.Tests.csproj -c Release --no-restore `
-    --filter "FullyQualifiedName~Routing|FullyQualifiedName~Retained|FullyQualifiedName~MessageQueue|FullyQualifiedName~Allocation"
-  ```
-
-  Expected: all selected tests pass and allocation assertions report `0 B/op` where specified.
-
-- [ ] **Step 4: Commit**
-
-  ```powershell
-  git add src/MqttZero.Server src/MqttZero tests/MqttZero.Tests
-  git commit -m "perf: converge verified routing and memory density"
-  ```
-
-### Task 5: Import Benchmark Infrastructure and Correctness Gates
-
-**Files:**
-- Modify: `.github/workflows/performance.yml`
-- Modify: `benchmarks/MqttZero.BrokerBenchmarks/**`
-- Modify: `tests/MqttZero.BrokerBenchmarks.Tests/**`
-- Modify: `eng/verify-benchmark-smoke.ps1`
-- Modify: `perf/baseline/**`
-
-**Interfaces:**
-- Produces: reproducible separated-process Broker comparison, raw diagnostic client, environment capture and nightly strict performance reporting.
-- Produces: no exception to the zero-failure, warmup-drain and three-repetition methodology.
-
-- [ ] **Step 1: Import the benchmark tooling**
-
-  Apply the benchmark configuration, topology, environment capture, raw-client and gate changes classified `keep`.
-
-- [ ] **Step 2: Run benchmark unit tests**
-
-  Run:
-
-  ```powershell
-  dotnet test tests/MqttZero.BrokerBenchmarks.Tests/MqttZero.BrokerBenchmarks.Tests.csproj -c Release --no-restore
-  ```
-
-  Expected: all tests pass.
-
-- [ ] **Step 3: Run smoke**
-
-  Run:
-
-  ```powershell
-  ./eng/verify-benchmark-smoke.ps1
-  ```
-
-  Expected: both Brokers start independently, both receive traffic, both report zero failed operations and complete warmup drain.
-
-- [ ] **Step 4: Commit**
-
-  ```powershell
-  git add .github/workflows/performance.yml benchmarks tests/MqttZero.BrokerBenchmarks.Tests eng perf
-  git commit -m "perf: converge broker benchmark infrastructure"
-  ```
-
-### Task 6: Define the Ordinary Release Gate
-
-**Files:**
-- Modify: `README.md`
-- Modify: `CONTRIBUTING.md`
-- Modify: `perf/baseline/broker-comparison-methodology.md`
-- Modify: `perf/baseline/README.md`
-- Modify: `.github/workflows/ci.yml`
-- Modify: `.github/workflows/performance.yml`
-
-**Interfaces:**
-- Produces: a normal alpha gate independent of strict MQTTnet superiority.
-- Produces: a separate nightly performance-claim gate.
-
-- [ ] **Step 1: Document the two gates**
-
-  Write the following exact policy into the documentation:
-
-  ```text
-  Normal alpha gate:
-  - Release build, core tests, Dashboard tests, Vue tests, real transport tests and allocation sentinels pass.
-  - No matrix cell may regress throughput by more than 5% from the same-machine stable baseline.
-  - No failed operations, connection failures, drain timeouts or lease leaks are permitted.
-
-  Performance-claim gate:
-  - Three repetitions and median throughput/p99 are required.
-  - A cell is "ahead of MQTTnet" only when throughput is greater than MQTTnet and p99 is not worse.
-  - Cells outside the claim are reported as known gaps; they do not block an ordinary alpha build.
-  ```
-
-- [ ] **Step 2: Update CI**
-
-  Make pull-request CI run the normal gate. Keep nightly performance running the strict matrix and uploading JSON regardless of gate result.
-
-- [ ] **Step 3: Validate workflow syntax and documentation references**
-
-  Run:
-
-  ```powershell
-  rg -n "Normal alpha gate|Performance-claim gate|5%|strict MQTTnet" README.md CONTRIBUTING.md perf/baseline .github/workflows
-  ```
-
-  Expected: all four policy terms are present in the release documentation and CI comments.
-
-- [ ] **Step 4: Commit**
-
-  ```powershell
-  git add README.md CONTRIBUTING.md perf/baseline .github/workflows
-  git commit -m "docs: separate alpha release and performance claim gates"
-  ```
-
-### Task 7: Update the Architecture Record
-
-**Files:**
-- Modify: `docs/sharded-actor-broker-plan.md`
-- Create: `docs/performance-positioning.md`
-
-**Interfaces:**
-- Produces: an honest status for Phase 2 and a documented product positioning statement.
-
-- [ ] **Step 1: Mark the incomplete architecture**
-
-  In `docs/sharded-actor-broker-plan.md`, record:
-
-  ```text
-  Phase 2 is partially implemented.
-  The current Egress Actor does not own the complete Session-to-PipeWriter send loop.
-  The performance branch remains research evidence and does not block ordinary alpha releases.
-  ```
-
-- [ ] **Step 2: Document the product positioning**
-
-  In `docs/performance-positioning.md`, state the strengths that are supported by evidence:
-
-  ```text
-  Protocol completeness
-  Zero allocation in selected synchronized hot paths
-  Low-allocation routing and payload ownership
-  Controllable broker memory
-  Kestrel and ASP.NET Core integration
-  ```
-
-  Also list known capacity gaps, including large-payload high-fanout cells, without claiming universal MQTTnet superiority.
-
-- [ ] **Step 3: Commit**
-
-  ```powershell
-  git add docs/sharded-actor-broker-plan.md docs/performance-positioning.md
-  git commit -m "docs: record partial egress architecture and performance position"
-  ```
-
-### Task 8: Prepare and Release `0.11.0-alpha.2`
-
-**Files:**
-- Modify: `Directory.Build.props`
-- Modify: `dashboard/MqttZero.Dashboard/package.json`
-- Modify: `dashboard/MqttZero.Dashboard/package-lock.json`
-- Modify: `eng/verify-packages.ps1`
-- Modify: `README.md`
-
-**Interfaces:**
-- Produces: package version `0.11.0-alpha.2` in source, Dashboard metadata, pack verification and consumer project.
-
-- [ ] **Step 1: Update the version**
-
-  Change `0.11.0-alpha.1` to `0.11.0-alpha.2` in all four version locations.
-
-- [ ] **Step 2: Restore, build and test**
-
-  Run:
-
-  ```powershell
-  dotnet restore MqttZero.slnx --locked-mode
-  dotnet build MqttZero.slnx -c Release --no-restore
-  dotnet test tests/MqttZero.Tests/MqttZero.Tests.csproj -c Release --no-build
-  dotnet test tests/MqttZero.Dashboard.Tests/MqttZero.Dashboard.Tests.csproj -c Release --no-build
-  ./perf/verify-allocation.ps1
-  dotnet format MqttZero.slnx --verify-no-changes --no-restore
-  ```
-
-  Expected: all commands exit with code zero and Release build has zero warnings.
-
-- [ ] **Step 3: Verify Vue and package consumers**
-
-  Run:
-
-  ```powershell
-  Set-Location dashboard/MqttZero.Dashboard
-  npm ci
-  npm test
-  npm run build
-  Set-Location ../..
-  ./eng/verify-packages.ps1
-  ```
-
-  Expected: Vue tests and production build pass; all four NuGet packages pack; both fresh consumers restore and build outside the repository.
-
-- [ ] **Step 4: Commit and merge**
-
-  ```powershell
-  git add Directory.Build.props dashboard/MqttZero.Dashboard/package.json dashboard/MqttZero.Dashboard/package-lock.json eng/verify-packages.ps1 README.md
-  git commit -m "release: prepare MQTTZero 0.11.0-alpha.2"
-  git switch master
-  git merge --no-ff release/0.11-alpha.2
-  git push origin master
-  git push origin release/0.11-alpha.2
-  ```
+## Current State
+
+- `master` contains the mainline convergence and `0.11.0-alpha.2`.
+- Current branch: `perf/egress-actor-closure`.
+- Core tests currently pass: `580/580`.
+- Target baseline, three repetitions, QOS 1 / 100 subscribers / 64 KiB:
+  - MQTTZero: `106.92 msg/s`, p99 `15,648.2 us`.
+  - MQTTnet: `110.07 msg/s`, p99 `20,117.5 us`.
+- Throughput gap is about 2.9%; MQTTZero p99 is already better than MQTTnet.
+- Send-stage attribution shows:
+  - Session lock average wait is below 1 us.
+  - Inflight update is below 1 us.
+  - Average egress batch is about 1.2 messages.
+  - Flush waits are approximately equal to data batches.
+  - Encoding is measurable but not the sole cause.
+- Rejected experiments:
+  - Four batches per Actor turn: no improvement; reverted.
+  - Extracted publish-batch selector: target regressed; reverted.
+- Completed in this execution:
+  - Task 1 cleanup verified with `578/578` core tests and `22/22` allocation sentinels.
+  - Task 3 selected the writer/flush hypothesis from the 20-second diagnostic.
+  - A complete connection writer reached `1.055x` target throughput and `0.707x`
+    target p99 against MQTTnet.
+  - The writer was rejected because single-subscriber 64 KiB throughput fell
+    more than five percent. Evidence is in
+    `perf/baseline/egress-writer-result-2026-11-25.md`.
+- Known plan defects to remove:
+  - `MqttZeroConnectionEgress` is currently only a wrapper and does not own the send loop.
+  - `MqttZeroEgressOwnership` has no production caller.
+  - The previous Task 13 referenced a publish-batch type that was deleted.
 
 ---
 
-## Stage 2: Egress Closure Experiment
-
-### Task 9: Create the Experiment Branch and Capture Baseline
+## Task 1: Return to a Clean Diagnostic Baseline
 
 **Files:**
-- Create: `perf/baseline/egress-closure-baseline-2026-11-25.json`
-- Create: `perf/baseline/egress-closure-baseline-2026-11-25.md`
-
-**Interfaces:**
-- Produces: tested baseline for the current `master` before any Egress architecture change.
-
-- [ ] **Step 1: Create the branch**
-
-  Run:
-
-  ```powershell
-  git switch master
-  git switch -c perf/egress-actor-closure
-  ```
-
-- [ ] **Step 2: Run the target matrix**
-
-  Run:
-
-  ```powershell
-  dotnet run -c Release --project benchmarks/MqttZero.BrokerBenchmarks -- `
-    compare --client mqttnet --qos 0,1 `
-    --subscribers 1,100 --payload 32,8192,65536 `
-    --warmup 3 --seconds 10 --repetitions 3 --max-pending 1024 `
-    --output perf/baseline/egress-closure-baseline-2026-11-25.json
-  ```
-
-  Expected: the JSON is complete and records every cell even if the strict gate is red.
-
-- [ ] **Step 3: Record the target-cell baseline**
-
-  Write the generated JSON path, machine, command and median values for `QoS1 / 100 / 64 KiB` into the Markdown baseline. This is the no-regression reference for the experiment.
-
-- [ ] **Step 4: Commit**
-
-  ```powershell
-  git add perf/baseline/egress-closure-baseline-2026-11-25.json perf/baseline/egress-closure-baseline-2026-11-25.md
-  git commit -m "docs: record egress closure baseline"
-  ```
-
-### Task 10: Add Send-Stage Attribution
-
-**Files:**
-- Modify: `src/MqttZero.Server/Broker/MqttZeroFanoutDiagnostics.cs`
-- Modify: `src/MqttZero.Server/Broker/MqttZeroFanoutDiagnosticsSnapshot.cs`
-- Modify: `benchmarks/MqttZero.BrokerBenchmarks/BenchmarkFanoutDiagnostics.cs`
-- Test: `tests/MqttZero.Tests/Broker/FanoutDiagnosticsTests.cs`
-
-**Interfaces:**
-- Produces: counters and elapsed time for session-lock wait, pending selection, packet-id/inflight update, encode, PipeWriter write, flush wait, ACK processing and control-frame wait.
-- Preserves: existing diagnostics names and behavior for backward-compatible benchmark JSON.
-
-- [ ] **Step 1: Write one failing diagnostics test**
-
-  Create a test that records a session-lock wait and an encode duration, reads the snapshot, and asserts both values are present and non-negative.
-
-  Run:
-
-  ```powershell
-  dotnet test tests/MqttZero.Tests/MqttZero.Tests.csproj -c Release --no-restore `
-    --filter "FullyQualifiedName~FanoutDiagnosticsTests"
-  ```
-
-  Expected: fail because the new fields do not exist.
-
-- [ ] **Step 2: Add internal counters**
-
-  Add cumulative and maximum values using the existing `Interlocked` diagnostics style. Disabled diagnostics must take the existing branch and introduce no allocation.
-
-- [ ] **Step 3: Expose data in outbound JSON**
-
-  Extend `BenchmarkFanoutDiagnostics` and its JSON source-generated context so the outbound result contains the new values.
-
-- [ ] **Step 4: Run tests and commit**
-
-  ```powershell
-  dotnet test tests/MqttZero.Tests/MqttZero.Tests.csproj -c Release --no-restore `
-    --filter "FullyQualifiedName~FanoutDiagnosticsTests"
-  git add src/MqttZero.Server/Broker benchmarks/MqttZero.BrokerBenchmarks tests/MqttZero.Tests/Broker/FanoutDiagnosticsTests.cs
-  git commit -m "perf: attribute egress send stages"
-  ```
-
-### Task 11: Define the Connection Egress Ownership Contract
-
-**Files:**
-- Create: `src/MqttZero.Server/Egress/MqttZeroConnectionEgress.cs`
-- Create: `src/MqttZero.Server/Egress/MqttZeroConnectionEgressState.cs`
+- Delete: `src/MqttZero.Server/Egress/IMqttZeroEgressOwner.cs`
+- Delete: `src/MqttZero.Server/Egress/MqttZeroEgressOwnership.cs`
+- Delete: `src/MqttZero.Server/Egress/MqttZeroConnectionEgress.cs`
+- Delete: `tests/MqttZero.Tests/Egress/ConnectionEgressOwnershipTests.cs`
+- Delete: `tests/MqttZero.Tests/Egress/MqttZeroConnectionEgressTests.cs`
 - Modify: `src/MqttZero.Server/Sessions/MqttZeroSessionState.cs`
-- Modify: `src/MqttZero.Server/Clients/MqttZeroClientConnection.cs`
-
-**Interfaces:**
-- Consumes: `MqttZeroMessageQueue`, `MqttZeroQueuedMessage`, `MqttZeroClientConnection` and the Session `SyncRoot`.
-- Produces: one per-connection object that exclusively owns data/control dispatch and the Flush lifecycle.
-- Produces: no public API change.
-
-- [ ] **Step 1: Write ownership tests**
-
-  Create tests asserting:
-
-  ```text
-  Only one egress is attached to one connection.
-  A second attach fails without closing the first.
-  Detach removes only the matching connection/egress pair.
-  Stop on one egress does not stop another connection's egress.
-  ```
-
-  Run:
-
-  ```powershell
-  dotnet test tests/MqttZero.Tests/MqttZero.Tests.csproj -c Release --no-restore `
-    --filter "FullyQualifiedName~ConnectionEgress"
-  ```
-
-  Expected: fail because the ownership type does not exist.
-
-- [ ] **Step 2: Implement the contract**
-
-  Add the internal egress lifetime object and attach/detach methods. Keep the existing connection writer lock until the data path migration is complete.
-
-- [ ] **Step 3: Run ownership tests and commit**
-
-  ```powershell
-  dotnet test tests/MqttZero.Tests/MqttZero.Tests.csproj -c Release --no-restore `
-    --filter "FullyQualifiedName~ConnectionEgress"
-  git add src/MqttZero.Server/Egress src/MqttZero.Server/Sessions/MqttZeroSessionState.cs src/MqttZero.Server/Clients/MqttZeroClientConnection.cs tests/MqttZero.Tests/Egress
-  git commit -m "refactor: establish connection egress ownership"
-  ```
-
-### Task 12: Move Data Selection and Inflight Updates into Egress
-
-**Files:**
-- Create: `src/MqttZero.Server/Egress/MqttZeroEgressPublishBatch.cs`
-- Modify: `src/MqttZero.Server/Egress/MqttZeroConnectionEgress.cs`
-- Modify: `src/MqttZero.Server/Broker/MqttZeroBroker.Delivery.cs`
+- Modify: `src/MqttZero.Server/Broker/MqttZeroBroker*.cs`
 - Test: `tests/MqttZero.Tests/Broker/OutboundDeliveryTests.cs`
-- Test: `tests/MqttZero.Tests/Egress/MqttZeroEgressActorTests.cs`
+- Test: `tests/MqttZero.Tests/Broker/ConnectedClientUnitTests.cs`
 
 **Interfaces:**
-- Consumes: `MqttZeroConnectionEgress` and the existing Pending/Inflight model.
-- Produces: `MqttZeroEgressPublishBatch` containing only ordered `MqttZeroQueuedMessage` references.
+- `MqttZeroSessionState.Egress` returns to `MqttZeroEgressActor?`.
+- `MqttZeroBroker.StartEgress` returns `MqttZeroEgressActor`.
+- Keep Task 10 diagnostics and the full Egress test suite.
 
-- [ ] **Step 1: Add failing batch-selection tests**
+- [ ] **Step 1: Record the pre-cleanup test baseline**
 
-  Cover:
+  Run:
 
-  ```text
-  QoS 0 ordering and release.
-  QoS 1 packet-id assignment exactly once.
-  Receive Maximum stops selection.
-  Expiry removes stale messages before encoding.
-  Lock wait is recorded separately from selection time.
+  ```powershell
+  dotnet test tests/MqttZero.Tests/MqttZero.Tests.csproj -c Release --no-restore
   ```
+
+  Expected: all current tests pass before removing the wrapper.
+
+- [ ] **Step 2: Remove the unused ownership wrapper**
+
+  Replace `MqttZeroConnectionEgress` with `MqttZeroEgressActor` at the Session
+  and Broker lifecycle boundaries. Remove the two scaffold types and their
+  tests. Keep `MqttZeroEgressActorTests`, `MqttZeroEgressFlushTests`,
+  `MqttZeroEgressSchedulerTests` and `MqttZeroEgressBatchBudgetTests`.
+
+- [ ] **Step 3: Verify the cleaned baseline**
 
   Run:
 
   ```powershell
   dotnet test tests/MqttZero.Tests/MqttZero.Tests.csproj -c Release --no-restore `
-    --filter "FullyQualifiedName~EgressPublishBatch"
+    --filter "FullyQualifiedName~Egress|FullyQualifiedName~OutboundDelivery|FullyQualifiedName~BrokerLifecycle"
   ```
 
-  Expected: fail before the batch selector exists.
+  Expected: all selected tests pass and every remaining Egress type has a
+  production caller.
 
-- [ ] **Step 2: Move selection under the Egress object**
-
-  Move the Pending selection, expiry, packet-id assignment and Inflight insertion out of `MqttZeroBroker.Delivery.cs`. Use `session.SyncRoot` only for the shortest state mutation window.
-
-- [ ] **Step 3: Run delivery and allocation tests**
+- [ ] **Step 4: Run the allocation sentinel**
 
   ```powershell
-  dotnet test tests/MqttZero.Tests/MqttZero.Tests.csproj -c Release --no-restore `
-    --filter "FullyQualifiedName~OutboundDelivery|FullyQualifiedName~Egress|FullyQualifiedName~Allocation"
+  ./perf/verify-allocation.ps1
   ```
 
-  Expected: all selected tests pass; warmup allocation checks remain at `0 B/op`.
-
-- [ ] **Step 4: Commit**
-
-  ```powershell
-  git add src/MqttZero.Server/Egress src/MqttZero.Server/Broker/MqttZeroBroker.Delivery.cs tests/MqttZero.Tests
-  git commit -m "refactor: move publish batch ownership into egress"
-  ```
-
-### Task 13: Unify Data, Control and Flush in One Writer
-
-**Files:**
-- Modify: `src/MqttZero.Server/Egress/MqttZeroConnectionEgress.cs`
-- Modify: `src/MqttZero.Server/Egress/MqttZeroEgressActor.cs`
-- Modify: `src/MqttZero.Server/Clients/MqttZeroClientConnection.cs`
-- Test: `tests/MqttZero.Tests/Egress/MqttZeroEgressFlushTests.cs`
-- Test: `tests/MqttZero.Tests/Egress/MqttZeroEgressSchedulerTests.cs`
-
-**Interfaces:**
-- Consumes: `MqttZeroEgressPublishBatch`, control-frame queue and connection writer methods.
-- Produces: a single state machine where one execution may send multiple synchronous batches and at most one Flush is pending.
-- Produces: control packets are emitted only after the current complete PUBLISH.
-
-- [ ] **Step 1: Add deterministic scheduling tests**
-
-  Cover:
-
-  ```text
-  Control frame waiting ends the current data batch.
-  Synchronous Flush continues with the next batch.
-  Asynchronous Flush suspends data until completion.
-  No second Flush starts while one is pending.
-  Queue exhaustion does not reschedule.
-  New Signal during Flush is not lost.
-  Stop and Takeover drain or cancel safely.
-  ```
-
-  Run the focused tests and confirm each newly added test fails for the expected missing ownership behavior.
-
-- [ ] **Step 2: Route all writes through the connection Egress**
-
-  Remove direct control/data write ownership from the connection state used by the send loop. Keep connection primitive writers as private implementation details of Egress.
-
-- [ ] **Step 3: Add a bounded multi-batch execution loop**
-
-  Use existing configured batch limits. Continue only after synchronous Flush completion and before the execution time budget expires. Do not add arbitrary waits or enlarge configured batch constants.
-
-- [ ] **Step 4: Run regression and allocation tests**
-
-  ```powershell
-  dotnet test tests/MqttZero.Tests/MqttZero.Tests.csproj -c Release --no-restore `
-    --filter "FullyQualifiedName~Egress|FullyQualifiedName~OutboundDelivery|FullyQualifiedName~Qos|FullyQualifiedName~Allocation"
-  ```
-
-  Expected: all tests pass and the steady-state allocation sentinel remains green.
+  Expected: zero failures and zero allocation in all sentinel tests.
 
 - [ ] **Step 5: Commit**
 
   ```powershell
-  git add src/MqttZero.Server/Egress src/MqttZero.Server/Clients/MqttZeroClientConnection.cs tests/MqttZero.Tests
-  git commit -m "refactor: unify connection egress data control and flush"
+  git add src/MqttZero.Server tests/MqttZero.Tests
+  git commit -m "refactor: remove unused egress ownership scaffolding"
   ```
 
-### Task 14: Remove the Old Send Paths and Add Failure Tests
+## Task 2: Re-establish an Apples-to-Apples Baseline
 
 **Files:**
+- Create: `perf/baseline/egress-reset-qos1-100-64k-2026-11-25.json`
+- Modify: `perf/baseline/egress-closure-baseline-2026-11-25.md`
+
+**Interfaces:**
+- Produces: a three-repetition baseline measured after Task 1 cleanup.
+- Produces: the only reference used by later performance decisions.
+
+- [ ] **Step 1: Build the benchmark with an isolated output directory**
+
+  ```powershell
+  dotnet build benchmarks/MqttZero.BrokerBenchmarks/MqttZero.BrokerBenchmarks.csproj `
+    -c Release --no-restore -p:BaseOutputPath=artifacts/egress-reset-bench/
+  ```
+
+  Expected: build succeeds with zero warnings and zero errors.
+
+- [ ] **Step 2: Run the exact target comparison**
+
+  ```powershell
+  dotnet artifacts/egress-reset-bench/Release/net10.0/MqttZero.BrokerBenchmarks.dll compare `
+    --client mqttnet --qos 1 --subscribers 100 --payload 65536 `
+    --warmup 5 --seconds 20 --repetitions 3 --max-pending 1024 `
+    --start-port 59000 `
+    --output perf/baseline/egress-reset-qos1-100-64k-2026-11-25.json
+  ```
+
+  Expected: JSON contains six independent Broker runs and three median
+  summaries.
+
+- [ ] **Step 3: Run the diagnostic companion**
+
+  ```powershell
+  dotnet artifacts/egress-reset-bench/Release/net10.0/MqttZero.BrokerBenchmarks.dll outbound `
+    --diagnostics true --qos 1 --subscribers 100 --payload 65536 `
+    --warmup 5 --seconds 20 --max-pending 1024 `
+    --port 59100
+  ```
+
+  This result is supplementary and must not be compared directly with the
+  three-repetition Broker median.
+
+- [ ] **Step 4: Apply the stopping decision**
+
+  Stop the production-code work and record the baseline as complete when both
+  conditions are true:
+
+  ```text
+  MQTTZero throughput >= MQTTnet throughput * 0.99
+  MQTTZero p99 <= MQTTnet p99
+  ```
+
+  The remaining difference is measurement noise or a non-priority optimization.
+  Continue to Task 3 only when the throughput gap is reproducible and greater
+  than one percent.
+
+- [ ] **Step 5: Commit the measured baseline**
+
+  ```powershell
+  git add perf/baseline
+  git commit -m "docs: refresh egress performance baseline"
+  ```
+
+## Task 3: Attribute the Remaining Throughput Gap
+
+**Files:**
+- Modify: `perf/baseline/egress-closure-baseline-2026-11-25.md`
+- Read: `src/MqttZero.Server/Broker/MqttZeroBroker.Delivery.cs`
+- Read: `src/MqttZero.Server/Egress/MqttZeroEgressActor.cs`
+- Read: `src/MqttZero.Server/Clients/MqttZeroClientConnection.cs`
+
+**Interfaces:**
+- Consumes: Task 2 JSON and outbound diagnostics.
+- Produces: one selected hypothesis with measured evidence.
+
+- [ ] **Step 1: Record the stage ratios**
+
+  Record these values for the target run:
+
+  ```text
+  Total publish time
+  Session lock wait
+  Pending selection
+  Inflight update
+  Encode time
+  Flush wait count
+  Data batch count
+  Average messages per batch
+  Egress scheduler passes
+  Egress drain count
+  ```
+
+- [ ] **Step 2: Select exactly one primary hypothesis**
+
+  Use this decision table:
+
+  ```text
+  Encode average > 20% of publish p50
+    -> encoder/writer-copy hypothesis
+
+  Flush waits > 80% of data batches and average batch < 2
+    -> per-message writer/flush hypothesis
+
+  Scheduler passes > drains / 2
+    -> scheduler/wake hypothesis
+
+  Session lock average > 5 us or Inflight average > 5 us
+    -> session-state hypothesis
+
+  None of the above and throughput gap <= 1%
+    -> stop performance work
+  ```
+
+- [ ] **Step 3: Reject unsupported work**
+
+  If the selected hypothesis is not writer/flush, do not proceed to Task 4.
+  The next plan must target the measured encoder, scheduler or session-state
+  hotspot instead.
+
+- [ ] **Step 4: Commit the attribution**
+
+  ```powershell
+  git add perf/baseline/egress-closure-baseline-2026-11-25.md
+  git commit -m "docs: attribute remaining egress gap"
+  ```
+
+## Task 4: CLOSED - Complete Connection Writer Slice
+
+> Closed on 2026-11-26. The implementation and gate result are recorded in
+> `perf/baseline/egress-writer-result-2026-11-25.md`. Do not execute this task
+> again as a universal replacement.
+
+The following precondition and file list record the historical implementation
+that was actually executed. They are not current instructions.
+
+**Files:**
+- Create: `src/MqttZero.Server/Egress/MqttZeroConnectionWriter.cs`
+- Create: `src/MqttZero.Server/Egress/MqttZeroConnectionWriterState.cs`
+- Modify: `src/MqttZero.Server/Egress/MqttZeroEgressActor.cs`
+- Modify: `src/MqttZero.Server/Clients/MqttZeroClientConnection.cs`
 - Modify: `src/MqttZero.Server/Broker/MqttZeroBroker.Delivery.cs`
 - Modify: `src/MqttZero.Server/Broker/MqttZeroBroker.Connections.cs`
 - Modify: `src/MqttZero.Server/Broker/MqttZeroBroker.Sessions.cs`
 - Modify: `src/MqttZero.Server/Broker/MqttZeroBroker.Lifecycle.cs`
-- Test: `tests/MqttZero.Tests/Broker/BrokerLifecycleTests.cs`
+- Test: `tests/MqttZero.Tests/Egress/*.cs`
 - Test: `tests/MqttZero.Tests/Broker/OutboundDeliveryTests.cs`
+- Test: `tests/MqttZero.Tests/Broker/BrokerLifecycleTests.cs`
 
 **Interfaces:**
-- Consumes: the completed connection Egress.
-- Produces: one production write path; old Drain/Wake ownership is deleted rather than retained as a fallback.
+- Produces: `MqttZeroConnectionWriter(MqttZeroSessionState, MqttZeroClientConnection, MqttZeroEgressScheduler, MqttZeroFanoutDiagnostics?)`.
+- Produces: one public-to-assembly method `DrainAsync(CancellationToken)` returning `ValueTask<bool>`.
+- Consumes: existing Session Pending/Inflight state and existing connection encode/write methods.
+- Does not produce a second compatibility path.
 
-- [ ] **Step 1: Add takeover, detach and stop tests**
+- [ ] **Step 1: Add deterministic lifecycle tests**
 
-  Cover:
+  Add tests for:
 
   ```text
-  Takeover starts the replacement only after the old egress has stopped.
-  Detach returns pending and inflight references exactly once.
-  Broker stop waits for active Flush or safely cancels it.
-  Flush failure is observed by readiness or connection health.
+  Control frame waiting ends the current data batch.
+  Synchronous Flush continues the same writer turn.
+  Asynchronous Flush suspends data until completion.
+  No second Flush starts while one is pending.
+  Queue exhaustion does not reschedule.
+  Signal during Flush is preserved.
+  Stop and Takeover stop the writer before replacement.
   ```
 
-- [ ] **Step 2: Delete old send ownership**
+- [ ] **Step 2: Implement the complete writer**
 
-  Remove `DrainQueuedMessagesOnceAsync` from the Broker, old per-batch connection writer ownership and duplicate scheduler wake paths that are no longer used. Retain only the Fanout Scheduler's route handoff role.
+  The writer owns data selection, expiry, Packet Identifier allocation,
+  Inflight insertion, encoding, PipeWriter writing and Flush lifecycle.
+  `MqttZeroEgressActor` becomes only the Shard scheduling adapter for this
+  writer. Control frames are written only at full MQTT packet boundaries.
 
-- [ ] **Step 3: Run the 1000-cycle lifecycle stress**
+- [ ] **Step 3: Replace the old path atomically**
+
+  `StartEgress` constructs `MqttZeroConnectionWriter`. Delete
+  `DrainQueuedMessagesOnceAsync` from the Broker so there is one production
+  send path. Do not retain the wrapper or a feature flag.
+
+- [ ] **Step 4: Run focused correctness tests**
 
   ```powershell
   dotnet test tests/MqttZero.Tests/MqttZero.Tests.csproj -c Release --no-restore `
-    --filter "FullyQualifiedName~Reconnect|FullyQualifiedName~Lease|FullyQualifiedName~Takeover|FullyQualifiedName~Lifecycle"
+    --filter "FullyQualifiedName~Egress|FullyQualifiedName~OutboundDelivery|FullyQualifiedName~BrokerLifecycle|FullyQualifiedName~Qos"
   ```
 
-  Expected: zero leaked active bytes, zero duplicate releases and zero unobserved Task failures.
+  Expected: all tests pass.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Run allocation and lifecycle stress**
+
+  ```powershell
+  ./perf/verify-allocation.ps1
+  dotnet test tests/MqttZero.Tests/MqttZero.Tests.csproj -c Release --no-restore `
+    --filter "FullyQualifiedName~Reconnect|FullyQualifiedName~Lease|FullyQualifiedName~Takeover"
+  ```
+
+  Expected: allocation sentinels pass and no Lease remains after lifecycle
+  stress.
+
+- [ ] **Step 6: Commit**
 
   ```powershell
   git add src/MqttZero.Server tests/MqttZero.Tests
-  git commit -m "refactor: remove superseded broker send paths"
+  git commit -m "perf: replace broker drain with connection writer"
   ```
 
----
+## Task 5: CLOSED - Unified Writer Gate
 
-## Stage 3: Measure, Decide and Release
-
-### Task 15: Run the Egress Closure Gate
+> The gate ran and rejected the implementation. Keep the recorded result; do
+> not treat the unchecked historical steps below as pending work.
 
 **Files:**
-- Create: `perf/baseline/egress-closure-result-2026-11-25.json`
-- Create: `perf/baseline/egress-closure-result-2026-11-25.md`
+- Create: `perf/baseline/egress-writer-result-2026-11-25.json`
+- Create: `perf/baseline/egress-writer-result-2026-11-25.md`
 
 **Interfaces:**
-- Consumes: the same machine, Release configuration and matrix as Task 9.
-- Produces: a decision based on medians, not a single run.
+- Consumes: the same three-repetition configuration used in Task 2.
+- Produces: keep/revert decision.
 
-- [ ] **Step 1: Run the primary target**
+- [ ] **Step 1: Run the target comparison**
 
   ```powershell
-  dotnet run -c Release --project benchmarks/MqttZero.BrokerBenchmarks -- `
-    compare --client mqttnet --qos 1 --subscribers 100 --payload 65536 `
+  dotnet artifacts/egress-reset-bench/Release/net10.0/MqttZero.BrokerBenchmarks.dll compare `
+    --client mqttnet --qos 1 --subscribers 100 --payload 65536 `
     --warmup 5 --seconds 20 --repetitions 3 --max-pending 1024 `
-    --output perf/baseline/egress-closure-qos1-100-64k-2026-11-25.json
+    --start-port 59200 `
+    --output perf/baseline/egress-writer-result-2026-11-25.json
   ```
 
-  Expected gate:
-
-  ```text
-  MQTTZero throughput >= baseline throughput.
-  MQTTZero p99 <= baseline p99 * 0.95.
-  Failed operations == 0.
-  ```
-
-- [ ] **Step 2: Run critical non-regression cells**
+- [ ] **Step 2: Run the critical regression matrix**
 
   ```powershell
-  dotnet run -c Release --project benchmarks/MqttZero.BrokerBenchmarks -- `
-    compare --client mqttnet --qos 0,1 --subscribers 1,100 `
+  dotnet artifacts/egress-reset-bench/Release/net10.0/MqttZero.BrokerBenchmarks.dll compare `
+    --client mqttnet --qos 0,1 --subscribers 1,100 `
     --payload 32,8192,65536 --warmup 3 --seconds 10 `
-    --repetitions 3 --max-pending 1024 `
-    --output perf/baseline/egress-closure-result-2026-11-25.json
+    --repetitions 3 --max-pending 1024 --start-port 59300 `
+    --output perf/baseline/egress-writer-regression-2026-11-25.json
   ```
 
-  Acceptance:
+- [ ] **Step 3: Apply the merge gate**
+
+  Keep the writer only if all conditions are true:
 
   ```text
-  Every cell throughput >= 0.95 * pre-experiment baseline.
-  Every cell p99 <= 1.05 * pre-experiment baseline.
-  The primary QoS1/100/64KiB cell meets its stricter target.
+  Target throughput >= MQTTnet throughput
+  Target p99 <= MQTTnet p99
+  Target throughput improves by at least 3% over Task 2 MQTTZero baseline
+  Every other single-subscriber and 100-subscriber cell regresses by at most 5%
+  Failed operations, drain timeouts and lease leaks are zero
   ```
 
-- [ ] **Step 3: Stop if the gate fails**
+- [ ] **Step 4: Revert on failure**
 
-  If either criterion fails, do not tune repeatedly. Delete Tasks 11-14 production code and their experimental tests. Keep the diagnostic additions only if they are useful and zero-allocation safe. Record the failed result and stop broad MQTTnet-superiority work.
-
-- [ ] **Step 4: Record and commit a passing result**
-
-  If the gate passes, write machine, command, raw JSON, medians and the actual winner/loser table into `perf/baseline/egress-closure-result-2026-11-25.md`.
+  If any gate fails:
 
   ```powershell
-  git add perf/baseline/egress-closure-result-2026-11-25.json perf/baseline/egress-closure-result-2026-11-25.md
-  git commit -m "perf: validate connection egress closure"
+  git revert --no-edit <connection-writer-commit>
   ```
 
-### Task 16: Final Release or Experiment Removal
+  Record the failed result and stop performance work on this branch. Do not
+  start another speculative rewrite.
+
+- [ ] **Step 5: Commit a passing result**
+
+  ```powershell
+  git add perf/baseline
+  git commit -m "perf: validate connection writer"
+  ```
+
+## Task 6: CLOSED - Historical Branch Completion
+
+> Superseded by the fairness and adaptive-send recovery plan. This section is
+> retained only for project history.
 
 **Files:**
-- Modify: `Directory.Build.props`
-- Modify: `dashboard/MqttZero.Dashboard/package.json`
-- Modify: `dashboard/MqttZero.Dashboard/package-lock.json`
-- Modify: `eng/verify-packages.ps1`
 - Modify: `README.md`
+- Modify: `docs/performance-positioning.md`
+- Modify: `perf/baseline/README.md`
 
 **Interfaces:**
-- Produces: either `0.12.0-alpha.1` with the proven Egress model or a clean `0.11.0-alpha.2` mainline with the experiment removed.
+- Produces: final branch decision without changing production APIs.
 
-- [ ] **Step 1: Execute the selected outcome**
+- [ ] **Step 1: Complete a passing branch**
 
-  If Task 15 passes:
+  Run locked restore, Release build, all core tests, Dashboard tests, Vue
+  tests, allocation sentinels, format, package verification and an outside-
+  repository consumer build. Merge to `master` only after every gate passes.
 
-  ```text
-  Version -> 0.12.0-alpha.1.
-  Run full Release, core, Dashboard, Vue, allocation, format, audit, NuGet and consumer verification.
-  Merge perf/egress-actor-closure to master.
-  Push master.
-  ```
+- [ ] **Step 2: Complete a failed branch**
 
-  If Task 15 fails:
+  Keep this branch unmerged, remove the failed writer implementation, preserve
+  the failed benchmark report and update documentation to state the measured
+  limit.
 
-  ```text
-  Delete experiment production changes.
-  Retain the failed baseline report and research branch.
-  Keep master at 0.11.0-alpha.2.
-  Do not claim universal MQTTnet superiority.
-  ```
-
-- [ ] **Step 2: Verify final repository state**
-
-  Run:
+- [ ] **Step 3: Final verification**
 
   ```powershell
   git status --short --branch
   git log --oneline -8
   ```
 
-  Expected: clean worktree, intentional branch state and no uncommitted experimental code.
+  Expected: clean worktree and an intentional branch decision.

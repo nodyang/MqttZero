@@ -990,8 +990,21 @@ public sealed partial class MqttZeroBroker
             bool nextTooLarge = false;
             List<MqttZeroQueuedMessage> expired = session.ExpiredMessages;
             List<MqttZeroQueuedMessage> batch = session.OutboundBatch;
+            bool diagnosticsEnabled = _fanoutDiagnostics.Enabled;
+            long lockWaitStarted = diagnosticsEnabled
+                ? Stopwatch.GetTimestamp()
+                : 0;
             lock (session.SyncRoot)
             {
+                if (diagnosticsEnabled)
+                {
+                    _fanoutDiagnostics.RecordSessionLockWait(
+                        Stopwatch.GetTimestamp() - lockWaitStarted);
+                }
+
+                long pendingSelectionStarted = diagnosticsEnabled
+                    ? Stopwatch.GetTimestamp()
+                    : 0;
                 expired.Clear();
                 batch.Clear();
                 if (session.PendingMessages.HasExpiringMessages)
@@ -1019,8 +1032,16 @@ public sealed partial class MqttZeroBroker
                         if (next.QualityOfServiceLevel !=
                             MqttQualityOfServiceLevel.AtMostOnce)
                         {
+                            long inflightStarted = diagnosticsEnabled
+                                ? Stopwatch.GetTimestamp()
+                                : 0;
                             next.PacketIdentifier = session.GetNextPacketIdentifier();
                             session.InflightMessages[next.PacketIdentifier] = next;
+                            if (diagnosticsEnabled)
+                            {
+                                _fanoutDiagnostics.RecordInflightUpdate(
+                                    Stopwatch.GetTimestamp() - inflightStarted);
+                            }
                         }
 
                         while (!connection.HasPendingControlWrites &&
@@ -1054,12 +1075,25 @@ public sealed partial class MqttZeroBroker
                             if (candidate.QualityOfServiceLevel !=
                                 MqttQualityOfServiceLevel.AtMostOnce)
                             {
+                                long inflightStarted = diagnosticsEnabled
+                                    ? Stopwatch.GetTimestamp()
+                                    : 0;
                                 candidate.PacketIdentifier =
                                     session.GetNextPacketIdentifier();
                                 session.InflightMessages[candidate.PacketIdentifier] =
                                     candidate;
+                                if (diagnosticsEnabled)
+                                {
+                                    _fanoutDiagnostics.RecordInflightUpdate(
+                                        Stopwatch.GetTimestamp() - inflightStarted);
+                                }
                             }
 
+                        }
+                        if (diagnosticsEnabled)
+                        {
+                            _fanoutDiagnostics.RecordPendingSelection(
+                                Stopwatch.GetTimestamp() - pendingSelectionStarted);
                         }
                     }
                 }
@@ -1182,13 +1216,31 @@ public sealed partial class MqttZeroBroker
                         batch.Count,
                         budget.EncodedBytes);
                     _fanoutDiagnostics.RecordEgressFlushStart();
-                    if (!connection.TryEncodePublishBatch(
+                    long encodeStarted = diagnosticsEnabled
+                        ? Stopwatch.GetTimestamp()
+                        : 0;
+                    bool encoded = connection.TryEncodePublishBatch(
                             batch,
-                            out _))
+                            out _);
+                    if (diagnosticsEnabled)
                     {
+                        _fanoutDiagnostics.RecordPublishEncode(
+                            Stopwatch.GetTimestamp() - encodeStarted);
+                    }
+
+                    if (!encoded)
+                    {
+                        long writeStarted = diagnosticsEnabled
+                            ? Stopwatch.GetTimestamp()
+                            : 0;
                         await connection.SendPublishBatchAsync(
                             batch,
                             cancellationToken).ConfigureAwait(false);
+                        if (diagnosticsEnabled)
+                        {
+                            _fanoutDiagnostics.RecordPublishWrite(
+                                Stopwatch.GetTimestamp() - writeStarted);
+                        }
                     }
 
                     _fanoutDiagnostics.RecordEncodedPublishes(
