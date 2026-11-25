@@ -5,14 +5,25 @@ namespace MqttZero.Server.Egress;
 
 internal sealed class MqttZeroEgressControlFramePool : IDisposable
 {
+    private const int MaximumRetainedFrameCount = 64;
+
     private readonly MqttZeroBufferPool _bufferPool;
     private readonly ConcurrentQueue<MqttZeroEgressControlFrame> _frames = new();
     private int _disposed;
+    private int _retainedCount;
 
     public MqttZeroEgressControlFramePool(MqttZeroBufferPool bufferPool)
     {
         _bufferPool = bufferPool ??
             throw new ArgumentNullException(nameof(bufferPool));
+    }
+
+    public int RetainedCount
+    {
+        get
+        {
+            return Volatile.Read(ref _retainedCount);
+        }
     }
 
     public MqttZeroEgressControlFrame Rent(int minimumLength)
@@ -22,6 +33,7 @@ internal sealed class MqttZeroEgressControlFramePool : IDisposable
             this);
         while (_frames.TryDequeue(out MqttZeroEgressControlFrame? frame))
         {
+            Interlocked.Decrement(ref _retainedCount);
             if (frame.TryReset(minimumLength))
             {
                 return frame;
@@ -45,6 +57,14 @@ internal sealed class MqttZeroEgressControlFramePool : IDisposable
             return;
         }
 
+        if (Interlocked.Increment(ref _retainedCount) >
+            MaximumRetainedFrameCount)
+        {
+            Interlocked.Decrement(ref _retainedCount);
+            frame.Dispose();
+            return;
+        }
+
         _frames.Enqueue(frame);
     }
 
@@ -57,6 +77,7 @@ internal sealed class MqttZeroEgressControlFramePool : IDisposable
 
         while (_frames.TryDequeue(out MqttZeroEgressControlFrame? frame))
         {
+            Interlocked.Decrement(ref _retainedCount);
             frame.Dispose();
         }
     }

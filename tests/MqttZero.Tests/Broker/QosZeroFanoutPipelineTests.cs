@@ -124,6 +124,65 @@ public sealed class QosZeroFanoutPipelineTests
         Assert.Same(first, pool.Rent());
     }
 
+    [Fact]
+    public void RouteBufferSnapshotSeparatesAvailableAndInUseBuffers()
+    {
+        using MqttZeroRoutePlanBufferPool pool = new(4);
+        MqttZeroRoutePlanBuffer first = pool.Rent();
+        MqttZeroRoutePlanBuffer second = pool.Rent();
+
+        MqttZeroRoutePlanBufferPoolSnapshot inUse = pool.GetSnapshot();
+        Assert.Equal(2, inUse.InUseCount);
+        Assert.Equal(0, inUse.AvailableCount);
+        Assert.True(inUse.RetainedBytes > 0);
+
+        pool.Return(first);
+        pool.Return(second);
+        MqttZeroRoutePlanBufferPoolSnapshot available = pool.GetSnapshot();
+        Assert.Equal(0, available.InUseCount);
+        Assert.Equal(2, available.AvailableCount);
+        Assert.True(available.RetainedBytes >= inUse.RetainedBytes);
+    }
+
+    [Fact]
+    public void RouteBufferPoolDropsBuffersAboveAvailableCountLimit()
+    {
+        using MqttZeroRoutePlanBufferPool pool = new(1);
+        MqttZeroRoutePlanBuffer[] buffers =
+            Enumerable.Range(0, 9)
+                .Select(_ => pool.Rent())
+                .ToArray();
+
+        for (int index = 0; index < buffers.Length; index++)
+        {
+            pool.Return(buffers[index]);
+        }
+
+        MqttZeroRoutePlanBufferPoolSnapshot snapshot = pool.GetSnapshot();
+        Assert.Equal(8, snapshot.AvailableCount);
+        Assert.Equal(0, snapshot.InUseCount);
+    }
+
+    [Theory]
+    [InlineData(7, 1024, 1024, true)]
+    [InlineData(8, 1024, 1024, false)]
+    [InlineData(1, 1024, 2048, false)]
+    public void RouteBufferPoolRetentionHonorsBothLimits(
+        int availableCount,
+        long retainedBytes,
+        long incomingBytes,
+        bool expected)
+    {
+        bool retain = MqttZeroRoutePlanBufferPool.ShouldRetainBuffer(
+            availableCount,
+            retainedBytes,
+            incomingBytes,
+            maximumBufferCount: 8,
+            maximumRetainedBytes: 2048);
+
+        Assert.Equal(expected, retain);
+    }
+
     private static MqttZeroMessageLease CreateLease(byte payload)
     {
         return MqttZeroMessageLease.CopyFrom(

@@ -1,18 +1,28 @@
+using MqttZero.Memory;
 using MqttZero.Server.Scheduling;
-using System.Collections.Concurrent;
 
 namespace MqttZero.Server.Broker;
 
 internal sealed class MqttZeroInboundShardWork : MqttZeroShardWork
 {
-    private static readonly ConcurrentQueue<MqttZeroInboundShardWork> Pool =
-        new();
+    private static readonly MqttZeroBoundedObjectPool<MqttZeroInboundShardWork>
+        Pool = new(
+            MqttZeroBoundedObjectPool<MqttZeroInboundShardWork>.
+                DefaultCapacity);
     private Action<Exception>? _faulted;
     private Func<MqttZeroInboundWork, CancellationToken, ValueTask>? _route;
     private MqttZeroInboundWork? _work;
 
     private MqttZeroInboundShardWork()
     {
+    }
+
+    internal static int PoolCountForTest
+    {
+        get
+        {
+            return Pool.Count;
+        }
     }
 
     public static MqttZeroInboundShardWork Rent(
@@ -23,7 +33,8 @@ internal sealed class MqttZeroInboundShardWork : MqttZeroShardWork
         ArgumentNullException.ThrowIfNull(work);
         ArgumentNullException.ThrowIfNull(route);
         ArgumentNullException.ThrowIfNull(faulted);
-        if (!Pool.TryDequeue(out MqttZeroInboundShardWork? shardWork))
+        if (!Pool.TryRent(out MqttZeroInboundShardWork? shardWork) ||
+            shardWork is null)
         {
             shardWork = new MqttZeroInboundShardWork();
         }
@@ -62,6 +73,6 @@ internal sealed class MqttZeroInboundShardWork : MqttZeroShardWork
         _work = null;
         _route = null;
         _faulted = null;
-        Pool.Enqueue(this);
+        _ = Pool.Return(this);
     }
 }

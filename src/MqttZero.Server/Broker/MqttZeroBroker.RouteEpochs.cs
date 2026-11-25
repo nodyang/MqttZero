@@ -44,6 +44,7 @@ public sealed partial class MqttZeroBroker
             }
 
             _routeEpochs.Publish(current, replacement);
+            PruneSharedGroupCursors(replacement);
         }
         finally
         {
@@ -79,6 +80,7 @@ public sealed partial class MqttZeroBroker
             }
 
             _routeEpochs.Publish(current, replacement);
+            PruneSharedGroupCursors(replacement);
         }
         finally
         {
@@ -114,6 +116,7 @@ public sealed partial class MqttZeroBroker
             }
 
             _routeEpochs.Publish(current, replacement);
+            PruneSharedGroupCursors(replacement);
         }
         finally
         {
@@ -127,5 +130,13 @@ public sealed partial class MqttZeroBroker
             MqttZeroRouteEpochManager.BuildFromSessions(
                 _sessions.Values);
         _routeEpochs.Reset(epoch);
+        PruneSharedGroupCursors(epoch);
+    }
+
+    private void PruneSharedGroupCursors(MqttZeroRouteEpoch epoch)
+    {
+        HashSet<MqttZeroSharedGroupKey> keys = [];
+        epoch.CollectSharedGroupKeys(keys);
+        _sharedGroupCursors.PruneTo(keys);
     }
 }

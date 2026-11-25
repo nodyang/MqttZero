@@ -1,15 +1,16 @@
 using MqttZero.Memory;
 using MqttZero.Server.Clients;
 using MqttZero.Server.Routing;
-using System.Collections.Concurrent;
 using System.Threading.Tasks.Sources;
 
 namespace MqttZero.Server.Broker;
 
 internal sealed class MqttZeroFanoutOperation : IValueTaskSource<bool>
 {
-    private static readonly ConcurrentQueue<MqttZeroFanoutOperation> Pool =
-        new();
+    private static readonly MqttZeroBoundedObjectPool<MqttZeroFanoutOperation>
+        Pool = new(
+            MqttZeroBoundedObjectPool<MqttZeroFanoutOperation>.
+                DefaultCapacity);
 
     private ManualResetValueTaskSourceCore<bool> _completion = new()
     {
@@ -37,6 +38,14 @@ internal sealed class MqttZeroFanoutOperation : IValueTaskSource<bool>
 
     private MqttZeroFanoutOperation()
     {
+    }
+
+    internal static int PoolCountForTest
+    {
+        get
+        {
+            return Pool.Count;
+        }
     }
 
     internal ValueTask<bool> Completion
@@ -68,7 +77,8 @@ internal sealed class MqttZeroFanoutOperation : IValueTaskSource<bool>
         ArgumentNullException.ThrowIfNull(deliver);
         ArgumentNullException.ThrowIfNull(faulted);
         ArgumentOutOfRangeException.ThrowIfNegative(expectedBatchCount);
-        if (!Pool.TryDequeue(out MqttZeroFanoutOperation? operation))
+        if (!Pool.TryRent(out MqttZeroFanoutOperation? operation) ||
+            operation is null)
         {
             operation = new MqttZeroFanoutOperation();
         }
@@ -269,6 +279,6 @@ internal sealed class MqttZeroFanoutOperation : IValueTaskSource<bool>
             returnBuffer?.Invoke(buffer);
         }
 
-        Pool.Enqueue(this);
+        _ = Pool.Return(this);
     }
 }

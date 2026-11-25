@@ -1,7 +1,7 @@
+using MqttZero.Memory;
 using MqttZero.Protocol;
 using MqttZero.Server.Clients;
 using System.Buffers;
-using System.Collections.Concurrent;
 
 namespace MqttZero.Server.Interceptors;
 
@@ -10,7 +10,10 @@ namespace MqttZero.Server.Interceptors;
 /// </summary>
 public sealed class MqttZeroPublishContext
 {
-    private static readonly ConcurrentQueue<MqttZeroPublishContext> ContextPool = new();
+    private static readonly MqttZeroBoundedObjectPool<MqttZeroPublishContext>
+        ContextPool = new(
+            MqttZeroBoundedObjectPool<MqttZeroPublishContext>.
+                DefaultCapacity);
 
     /// <summary>
     /// Gets or sets the UTF-8 topic name.
@@ -46,9 +49,18 @@ public sealed class MqttZeroPublishContext
     /// <summary>Gets or sets an optional result reason string.</summary>
     public string? ReasonString { get; set; }
 
+    internal static int PoolCountForTest
+    {
+        get
+        {
+            return ContextPool.Count;
+        }
+    }
+
     internal static MqttZeroPublishContext Rent()
     {
-        if (ContextPool.TryDequeue(out MqttZeroPublishContext? context))
+        if (ContextPool.TryRent(out MqttZeroPublishContext? context) &&
+            context is not null)
         {
             return context;
         }
@@ -66,6 +78,6 @@ public sealed class MqttZeroPublishContext
         Sender = null;
         ResultReasonCode = MqttReasonCode.Success;
         ReasonString = null;
-        ContextPool.Enqueue(this);
+        _ = ContextPool.Return(this);
     }
 }

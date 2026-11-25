@@ -91,6 +91,10 @@ else if (mode == "outbound")
 {
     await RunOutboundAsync(arguments);
 }
+else if (mode == "memory")
+{
+    await RunMemoryAsync(arguments);
+}
 else
 {
     throw new ArgumentException($"Unknown mode '{mode}'.");
@@ -672,6 +676,202 @@ static async Task RunOutboundAsync(Dictionary<string, string> arguments)
     }
 
     await app.StopAsync();
+}
+
+static async Task RunMemoryAsync(Dictionary<string, string> arguments)
+{
+    int port = GetInt(arguments, "port", 19400);
+    int qos = GetInt(arguments, "qos", 0);
+    int subscriberCount = GetInt(arguments, "subscribers", 1);
+    int payloadSize = GetInt(arguments, "payload", 8192);
+    int messagesPerWave = GetInt(arguments, "messages", 100);
+    int waveCount = GetInt(arguments, "waves", 3);
+    int maxPendingMessages = GetInt(
+        arguments,
+        "max-pending",
+        1024);
+    BenchmarkTopologyOptions topologyOptions =
+        BenchmarkTopologyOptions.Parse(arguments);
+    BenchmarkEgressOptions egressOptions =
+        BenchmarkEgressOptions.Parse(arguments);
+    MqttZero.Protocol.MqttQualityOfServiceLevel qualityOfServiceLevel =
+        qos switch
+        {
+            0 => MqttZero.Protocol.MqttQualityOfServiceLevel.AtMostOnce,
+            1 => MqttZero.Protocol.MqttQualityOfServiceLevel.AtLeastOnce,
+            2 => MqttZero.Protocol.MqttQualityOfServiceLevel.ExactlyOnce,
+            _ => throw new InvalidOperationException(
+                $"Unsupported QoS value: {qos}.")
+        };
+    MQTTnet.Protocol.MqttQualityOfServiceLevel mqttnetQos = qos switch
+    {
+        0 => MQTTnet.Protocol.MqttQualityOfServiceLevel.AtMostOnce,
+        1 => MQTTnet.Protocol.MqttQualityOfServiceLevel.AtLeastOnce,
+        2 => MQTTnet.Protocol.MqttQualityOfServiceLevel.ExactlyOnce,
+        _ => throw new InvalidOperationException(
+            $"Unsupported QoS value: {qos}.")
+    };
+    WebApplicationBuilder builder = WebApplication.CreateBuilder();
+    builder.Logging.ClearProviders();
+    builder.WebHost.ConfigureKestrel(kestrel =>
+    {
+        kestrel.Listen(
+            IPAddress.Loopback,
+            port,
+            listen => listen.UseMqttZero());
+    });
+    builder.Services.AddMqttZero(options =>
+    {
+        options.MaxMessageQueueLength = 100_000;
+        options.EventLoopShardCount =
+            topologyOptions.EventLoopShardCount;
+        egressOptions.ApplyTo(options);
+    });
+    if (topologyOptions.IoQueueCount > 0)
+    {
+        builder.Services.Configure<SocketTransportOptions>(
+            socketOptions => socketOptions.IOQueueCount =
+                topologyOptions.IoQueueCount);
+    }
+
+    await using WebApplication app = builder.Build();
+    await app.StartAsync();
+    MqttZeroBroker broker = app.Services.GetRequiredService<MqttZeroBroker>();
+    MqttClientFactory factory = new();
+    List<IMqttClient> subscribers = [];
+    long receivedMessages = 0;
+    for (int index = 0; index < subscriberCount; index++)
+    {
+        IMqttClient subscriber = factory.CreateMqttClient();
+        subscriber.ApplicationMessageReceivedAsync += _ =>
+        {
+            Interlocked.Increment(ref receivedMessages);
+            return Task.CompletedTask;
+        };
+        subscribers.Add(subscriber);
+        await subscriber.ConnectAsync(
+            CreateClientOptions(port, $"memory-subscriber-{index}"),
+            CancellationToken.None);
+        await subscriber.SubscribeAsync(
+            new MqttClientSubscribeOptionsBuilder()
+                .WithTopicFilter("bench/memory", mqttnetQos)
+                .Build(),
+            CancellationToken.None);
+    }
+
+    MqttZeroPublishMessage message = new()
+    {
+        Topic = "bench/memory",
+        Payload = new ReadOnlySequence<byte>(new byte[payloadSize]),
+        QualityOfServiceLevel = qualityOfServiceLevel
+    };
+    using (CancellationTokenSource warmup = new(
+        TimeSpan.FromSeconds(30)))
+    {
+        long warmupMessages = Math.Max(1, messagesPerWave / 10);
+        await RunFixedPublishLoopAsync(
+                broker,
+                message,
+                maxPendingMessages,
+                subscriberCount,
+                () => Interlocked.Read(ref receivedMessages),
+                warmupMessages,
+                warmup.Token);
+        await WaitForSubscriberDrainAsync(
+            warmupMessages * subscriberCount,
+            () => Interlocked.Read(ref receivedMessages),
+            CancellationToken.None);
+    }
+
+    ForceGarbageCollection();
+    List<MemoryWaveResult> waves = [];
+    for (int wave = 1; wave <= waveCount; wave++)
+    {
+        Interlocked.Exchange(ref receivedMessages, 0);
+        await RunFixedPublishLoopAsync(
+                broker,
+                message,
+                maxPendingMessages,
+                subscriberCount,
+                () => Interlocked.Read(ref receivedMessages),
+                messagesPerWave,
+                CancellationToken.None);
+        long expected =
+            messagesPerWave * subscriberCount;
+        long drainStarted = Stopwatch.GetTimestamp();
+        await WaitForSubscriberDrainAsync(
+            expected,
+            () => Interlocked.Read(ref receivedMessages),
+            CancellationToken.None);
+        TimeSpan drain = Stopwatch.GetElapsedTime(drainStarted);
+        ForceGarbageCollection();
+        MqttZeroBrokerMemorySnapshot brokerMemory =
+            broker.GetMemorySnapshotForTest();
+        MemoryWaveResult result = new(
+            wave,
+            messagesPerWave,
+            Interlocked.Read(ref receivedMessages),
+            0,
+            drain.TotalMilliseconds,
+            BenchmarkMemorySnapshot.Capture(brokerMemory));
+        waves.Add(result);
+        Console.Error.WriteLine(
+            FormattableString.Invariant(
+                $"memory-wave={wave} published={result.PublishedMessages} received={result.ReceivedMessages}/{expected} buffer-committed={result.Snapshot.BufferCommittedBytes} route-retained={result.Snapshot.RoutePlanRetainedBytes} shared-cursors={result.Snapshot.SharedCursorCount}"));
+    }
+
+    MemoryBenchmarkResult benchmark = new(waves.ToArray());
+    await BenchmarkOutputWriter.WriteAsync(
+        GetNullableValue(arguments, "output"),
+        benchmark,
+        BrokerBenchmarkJsonContext.Default.MemoryBenchmarkResult,
+        CancellationToken.None);
+    foreach (IMqttClient subscriber in subscribers)
+    {
+        await subscriber.DisconnectAsync();
+        subscriber.Dispose();
+    }
+
+    await app.StopAsync();
+}
+
+static async ValueTask RunFixedPublishLoopAsync(
+    MqttZeroBroker broker,
+    MqttZeroPublishMessage message,
+    int maxPendingMessages,
+    int deliveryMultiplier,
+    Func<long> getReceivedMessages,
+    long messageCount,
+    CancellationToken cancellationToken)
+{
+    for (long published = 0; published < messageCount; published++)
+    {
+        while (published * deliveryMultiplier -
+            getReceivedMessages() >
+            maxPendingMessages)
+        {
+            await Task.Delay(
+                TimeSpan.FromMilliseconds(1),
+                cancellationToken);
+        }
+
+        await broker.PublishAsync(message, cancellationToken);
+    }
+}
+
+static void ForceGarbageCollection()
+{
+    GC.Collect(
+        GC.MaxGeneration,
+        GCCollectionMode.Forced,
+        blocking: true,
+        compacting: true);
+    GC.WaitForPendingFinalizers();
+    GC.Collect(
+        GC.MaxGeneration,
+        GCCollectionMode.Forced,
+        blocking: true,
+        compacting: true);
 }
 
 static async Task<OutboundLoopResult> RunOutboundPublishLoopAsync(

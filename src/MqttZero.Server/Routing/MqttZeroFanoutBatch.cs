@@ -66,6 +66,14 @@ internal struct MqttZeroFanoutBatch
         return ref _deliveries[index];
     }
 
+    internal long GetRetainedByteEstimate()
+    {
+        return
+            (long)_deliveries.Length *
+            System.Runtime.CompilerServices.Unsafe.SizeOf<
+                MqttZeroPlannedDelivery>();
+    }
+
     internal void Reset()
     {
         Count = 0;

@@ -1,15 +1,18 @@
 using MqttZero.Memory;
 using MqttZero.Protocol;
 using System.Buffers;
-using System.Collections.Concurrent;
 
 namespace MqttZero.Server.Sessions;
 
 internal sealed class MqttZeroQueuedMessage
 {
-    private static readonly ConcurrentQueue<MqttZeroQueuedMessage> MessagePool = new();
+    private static readonly MqttZeroBoundedObjectPool<MqttZeroQueuedMessage>
+        MessagePool = new(
+            MqttZeroBoundedObjectPool<MqttZeroQueuedMessage>.
+                DefaultCapacity);
 
     private MqttZeroMessageLease _lease = null!;
+    private bool _isHeld;
     private uint[] _subscriptionIdentifierBuffer = [];
 
     internal MqttZeroQueuedMessage? QueueNext { get; set; }
@@ -28,6 +31,14 @@ internal sealed class MqttZeroQueuedMessage
 
     private MqttZeroQueuedMessage()
     {
+    }
+
+    internal static int PoolCountForTest
+    {
+        get
+        {
+            return MessagePool.Count;
+        }
     }
 
     internal MqttZeroMessageLease Lease
@@ -104,11 +115,19 @@ internal sealed class MqttZeroQueuedMessage
         ReadOnlyMemory<uint> subscriptionIdentifiers,
         DateTimeOffset? expiresAt)
     {
-        if (!MessagePool.TryDequeue(out MqttZeroQueuedMessage? message))
+        if (!MessagePool.TryRent(out MqttZeroQueuedMessage? message) ||
+            message is null)
         {
             message = new MqttZeroQueuedMessage();
         }
 
+        if (message._isHeld)
+        {
+            throw new InvalidOperationException(
+                "The queued message was rented while already held.");
+        }
+
+        message._isHeld = true;
         lease.EnsureOwned();
         lease.Retain();
         message._lease = lease;
@@ -256,7 +275,8 @@ internal sealed class MqttZeroQueuedMessage
 
     public void Release()
     {
-        ObjectDisposedException.ThrowIf(_lease is null, this);
+        ObjectDisposedException.ThrowIf(!_isHeld || _lease is null, this);
+        _isHeld = false;
         if (_subscriptionIdentifierBuffer.Length > 0)
         {
             ArrayPool<uint>.Shared.Return(
@@ -280,6 +300,6 @@ internal sealed class MqttZeroQueuedMessage
         IsQos0Queued = false;
         QueueVersion++;
         State = MqttZeroOutboundState.AwaitPubAck;
-        MessagePool.Enqueue(this);
+        _ = MessagePool.Return(this);
     }
 }

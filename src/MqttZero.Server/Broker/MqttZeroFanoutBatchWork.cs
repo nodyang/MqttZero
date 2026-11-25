@@ -1,12 +1,14 @@
+using MqttZero.Memory;
 using MqttZero.Server.Scheduling;
-using System.Collections.Concurrent;
 
 namespace MqttZero.Server.Broker;
 
 internal sealed class MqttZeroFanoutBatchWork : MqttZeroShardWork
 {
-    private static readonly ConcurrentQueue<MqttZeroFanoutBatchWork> Pool =
-        new();
+    private static readonly MqttZeroBoundedObjectPool<MqttZeroFanoutBatchWork>
+        Pool = new(
+            MqttZeroBoundedObjectPool<MqttZeroFanoutBatchWork>.
+                DefaultCapacity);
 
     private MqttZeroFanoutOperation? _operation;
     private int _shardId;
@@ -15,13 +17,22 @@ internal sealed class MqttZeroFanoutBatchWork : MqttZeroShardWork
     {
     }
 
+    internal static int PoolCountForTest
+    {
+        get
+        {
+            return Pool.Count;
+        }
+    }
+
     internal static MqttZeroFanoutBatchWork Rent(
         MqttZeroFanoutOperation operation,
         int shardId)
     {
         ArgumentNullException.ThrowIfNull(operation);
         ArgumentOutOfRangeException.ThrowIfNegative(shardId);
-        if (!Pool.TryDequeue(out MqttZeroFanoutBatchWork? work))
+        if (!Pool.TryRent(out MqttZeroFanoutBatchWork? work) ||
+            work is null)
         {
             work = new MqttZeroFanoutBatchWork();
         }
@@ -59,6 +70,6 @@ internal sealed class MqttZeroFanoutBatchWork : MqttZeroShardWork
     {
         _operation = null;
         _shardId = 0;
-        Pool.Enqueue(this);
+        _ = Pool.Return(this);
     }
 }

@@ -35,6 +35,23 @@ internal sealed class MqttZeroRouteEndpoint
         }
     }
 
+    public void CollectSharedGroupKeys(
+        HashSet<MqttZeroSharedGroupKey> keys)
+    {
+        ArgumentNullException.ThrowIfNull(keys);
+        if (SharedEntries == null)
+        {
+            return;
+        }
+
+        foreach (MqttZeroPersistentHashMapEntry<
+            MqttZeroSharedGroupKey,
+            MqttZeroSharedRouteEntries> entry in SharedEntries)
+        {
+            keys.Add(entry.Key);
+        }
+    }
+
     public MqttZeroRouteEndpoint SetRegular(
         MqttZeroSessionState session,
         MqttZeroSubscription subscription)
