@@ -12,13 +12,17 @@ internal sealed class BrokerBenchmarkResult
 
     public long WarmupReceivedMessages { get; init; }
 
-    public double ThroughputPerSecond { get; init; }
+    public long MeasurementReceivedMessages { get; init; }
 
-    public double LatencyP50Microseconds { get; init; }
+    public double PublishWindowThroughputPerSecond { get; init; }
 
-    public double LatencyP95Microseconds { get; init; }
+    public double EndToEndThroughputPerSecond { get; init; }
 
-    public double LatencyP99Microseconds { get; init; }
+    public double PublishCallLatencyP50Microseconds { get; init; }
+
+    public double PublishCallLatencyP95Microseconds { get; init; }
+
+    public double PublishCallLatencyP99Microseconds { get; init; }
 
     public required BenchmarkLoadObservation LoadObservation { get; init; }
 
@@ -28,7 +32,9 @@ internal sealed class BrokerBenchmarkResult
 
     public double MeasurementMilliseconds { get; init; }
 
-    public double DrainMilliseconds { get; init; }
+    public double WarmupDrainMilliseconds { get; init; }
+
+    public double MeasurementDrainMilliseconds { get; init; }
 
     public string? FirstError { get; init; }
 }

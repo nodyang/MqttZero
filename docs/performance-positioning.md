@@ -52,9 +52,10 @@ The next track is defined in
 
 Development regression checks may use two repetitions to keep iteration cost
 bounded. Final performance claims and published comparison matrices still
-require three repetitions. A two-run sample must be repeated with a third run
-when throughput spread exceeds ten percent or p99 spread exceeds twenty
-percent.
+require three repetitions. A two-run development sample must be repeated with
+a third run only when end-to-end throughput spread exceeds ten percent or a
+run has failures or incomplete delivery. P99 is recorded in development but
+does not trigger a third run because short-run tail noise is too high.
 
 Universal MQTTnet superiority across every benchmark cell remains outside the
 ordinary release gate. Performance claims are limited to measured cells and

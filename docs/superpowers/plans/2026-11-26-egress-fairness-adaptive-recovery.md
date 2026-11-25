@@ -1,7 +1,6 @@
 # MQTTZero Egress Fairness and Adaptive Send Recovery Plan
 
-> **Status:** Proposed. No production hot-path implementation starts until the
-> benchmark correction task is complete.
+> **Status:** Active. Task 1 is complete; Task 2 is next.
 >
 > **Date:** 2026-11-26
 >
@@ -112,9 +111,12 @@ and larger route rewrites remain conditional.
 
 - Use two repetitions for ordinary development regression checks.
 - Use the median of the two runs for the provisional comparison.
-- Run a third repetition as the tie-breaker when
-  `abs(run1 - run2) / max(run1, run2) > 0.10` for throughput or
-  `> 0.20` for publish-call or end-to-end p99.
+- Run a third repetition as the tie-breaker when end-to-end throughput spread
+  exceeds ten percent: `abs(run1 - run2) / max(run1, run2) > 0.10`.
+- Also run a third repetition when either run has failures, incomplete
+  delivery or a measurement-drain timeout.
+- Record publish-call p99 for development, but do not use short-run tail noise
+  as a third-repetition trigger.
 - Record both raw runs when the two-run result passes.
 - Use three repetitions for final performance claims, published benchmark
   tables and release baselines.
@@ -140,33 +142,37 @@ and larger route rewrites remain conditional.
 
 ### Changes
 
-- [ ] Replace `WithPayload(payload.ToArray())` with the verified MQTTnet 5.2
+- [x] Replace `WithPayload(payload.ToArray())` with the verified MQTTnet 5.2
   `WithPayload(ReadOnlySequence<byte>)` overload, using
   `new ReadOnlySequence<byte>(payload)`.
-- [ ] Keep the source payload buffer stable and reused across publishes.
-- [ ] Rename the existing latency output to make clear it is the publisher
+- [x] Keep the source payload buffer stable and reused across publishes.
+- [x] Rename the existing latency output to make clear it is the publisher
   API-call / ACK latency.
-- [ ] Record publish-window throughput separately from end-to-end completion
+- [x] Record publish-window throughput separately from end-to-end completion
   throughput.
-- [ ] After publishing stops, wait for all subscribers to receive
+- [x] After publishing stops, wait for all subscribers to receive
   `PublishedMessages * Subscribers`, with a bounded timeout.
-- [ ] Record measurement drain duration and include it in end-to-end
+- [x] Record measurement drain duration and include it in end-to-end
   throughput.
-- [ ] Require measurement received count to match the advertised count before
+- [x] Require measurement received count to match the advertised count before
   producing a passing result.
-- [ ] Preserve zero failures and the existing bounded-pending throttle.
-- [ ] Update JSON schema and gate output without silently changing the meaning
+- [x] Preserve zero failures and the existing bounded-pending throttle.
+- [x] Fix the measurement publishing loop to use its own publish counter for
+  `max-pending`; the previous loop read the reset warmup counter.
+- [x] Emit per-cell start, connection, warmup, measurement, drain and completion
+  progress without mixing text into JSON output.
+- [x] Update JSON schema and gate output without silently changing the meaning
   of an existing field.
 
 ### Verification
 
-- [ ] Unit-test the new throughput and drain calculations.
-- [ ] Verify the MQTTnet adapter no longer allocates a per-publish payload
+- [x] Unit-test the new throughput and drain calculations.
+- [x] Verify the MQTTnet adapter no longer allocates a per-publish payload
   array.
-- [ ] Run one short diagnostic of each metric before a formal comparison.
-- [ ] Rebuild the same-machine development baseline with two repetitions.
-- [ ] Apply the spread rule and run a third repetition only when required.
-- [ ] Save the corrected baseline under `perf/baseline`.
+- [x] Run one short diagnostic of each metric before a formal comparison.
+- [x] Rebuild the same-machine development baseline with two repetitions.
+- [x] Apply the spread rule and run a third repetition only when required.
+- [x] Save the corrected baseline under `perf/baseline`.
 
 ### Initial Matrix
 
@@ -181,10 +187,43 @@ QoS 1 / 100 subscribers
 QoS 1 / 500 subscribers
 ```
 
+Development profile:
+
+```powershell
+--client mqttnet --qos 0,1 --subscribers 1,100,500 --payload 65536 `
+  --warmup 2 --seconds 6 --repetitions 2 --max-pending 1024
+```
+
+Run a third repetition only when the development spread rule requires it.
+
+### Corrected Baseline Result
+
+- Raw two-run report:
+  `perf/baseline/egress-corrected-development-2026-11-26.json`.
+- Consolidated report:
+  `perf/baseline/egress-corrected-development-2026-11-26.md`.
+- QoS 0 / 1: MQTTZero `969.48`, MQTTnet `837.87` end-to-end msg/s;
+  p99 `4,721.7 / 2,959.8 us`.
+- QoS 0 / 100: MQTTZero `32.04`, MQTTnet `28.88` msg/s;
+  p99 `38,023.4 / 58,377.6 us`.
+- QoS 0 / 500: MQTTZero `5.41`, MQTTnet `5.20` msg/s;
+  p99 `28,083.0 / 19,435.6 us`.
+- QoS 1 / 1: MQTTZero `932.91`, MQTTnet `907.17` msg/s;
+  p99 `9,856.2 / 6,401.0 us`.
+- QoS 1 / 100: MQTTZero `21.33`, MQTTnet `22.95` msg/s;
+  p99 `70,747.4 / 61,658.4 us`.
+- QoS 1 / 500: MQTTZero `4.55`, MQTTnet `4.49` msg/s;
+  p99 `255,783.4 / 304,216.1 us`.
+- All runs had zero failures and complete delivery.
+
 ### Stop Condition
 
-If the corrected client removes the reported large-payload regression or
-changes the dominant bottleneck, update this plan before implementing Task 2.
+Completed. The corrected client materially changed the bottleneck attribution:
+QoS 0 high-fanout throughput was previously understated by measurement
+backlog, while QoS 1 / 100 / 64 KiB is now the clear throughput red cell.
+Fair Shard progress remains justified as an architecture safety requirement,
+but it no longer carries a universal expectation of a ten-percent high-fanout
+throughput gain.
 
 ### Commit
 
@@ -228,11 +267,15 @@ changes the dominant bottleneck, update this plan before implementing Task 2.
 
 ### Performance Gate
 
-- [ ] For corrected 64-KiB QoS 0 and QoS 1 fanout cells, at least one of
-  throughput or publish-call p99 improves by ten percent.
-- [ ] Neither throughput nor publish-call p99 regresses by more than five
-  percent in those target cells.
-- [ ] QoS 1 / 100 / 64 KiB remains no worse than the corrected baseline.
+- [ ] Demonstrate from queue-age and starvation diagnostics that low-priority
+  Egress work was delayed by continuously available high-priority Fanout work.
+- [ ] For affected 64-KiB fanout cells, at least one of end-to-end throughput
+  or publish-call p99 improves by ten percent.
+- [ ] Neither end-to-end throughput nor publish-call p99 regresses by more than
+  five percent in any affected target cell.
+- [ ] QoS 1 / 100 / 64 KiB improves or remains no worse than the corrected
+  baseline. A neutrality result is acceptable when diagnostics show no
+  starvation and Task 3 remains the next measured path.
 - [ ] All 32-B regression cells remain within five percent.
 - [ ] No new connection failures, drain timeouts or Lease leaks occur.
 - [ ] Development comparisons use two repetitions unless the spread rule

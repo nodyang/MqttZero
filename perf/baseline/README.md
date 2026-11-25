@@ -122,6 +122,12 @@
   `payload.ToArray()`, and its reported latency is the publisher API-call
   duration. Benchmark correction and final subscriber-drain measurement are
   prerequisites for the next architecture experiment.
+- The corrected Benchmark contract now reuses the MQTTnet Client payload,
+  separates publish-window and end-to-end throughput, enforces final
+  subscriber drain and reports publisher API-call p99 explicitly.
+- Corrected six-cell 64-KiB development baseline:
+  `egress-corrected-development-2026-11-26.json` and
+  `egress-corrected-development-2026-11-26.md`.
 - The next plan targets fair Shard progress and, only if still needed,
   Direct/Backlog modes under one Egress owner:
   `docs/superpowers/plans/2026-11-26-egress-fairness-adaptive-recovery.md`.

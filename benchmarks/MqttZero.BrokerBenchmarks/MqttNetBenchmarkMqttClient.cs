@@ -1,5 +1,6 @@
 using MQTTnet;
 using MqttZero.Protocol;
+using System.Buffers;
 using MqttQos = MQTTnet.Protocol.MqttQualityOfServiceLevel;
 
 namespace MqttZero.BrokerBenchmarks;
@@ -74,7 +75,7 @@ internal sealed class MqttNetBenchmarkMqttClient : IBenchmarkMqttClient
     {
         MqttApplicationMessage message = new MqttApplicationMessageBuilder()
             .WithTopic(topic)
-            .WithPayload(payload.ToArray())
+            .WithPayload(new ReadOnlySequence<byte>(payload))
             .WithQualityOfServiceLevel(ToMqttNetQos(qualityOfServiceLevel))
             .Build();
         await _client.PublishAsync(message, cancellationToken).ConfigureAwait(false);

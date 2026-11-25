@@ -52,18 +52,33 @@ internal static class BenchmarkGateEvaluator
                     $"Broker failure counts must be zero: mqttzero={mqttZeroFailures}, mqttnet={mqttNetFailures}.");
             }
 
+            ValidateMeasurementCompletion(
+                "mqttzero",
+                mqttZeroResults,
+                group.Key.Subscribers,
+                failureReasons);
+            ValidateMeasurementCompletion(
+                "mqttnet",
+                mqttNetResults,
+                group.Key.Subscribers,
+                failureReasons);
+
             double mqttZeroThroughput = Median(
                 mqttZeroResults.Select(
-                    static result => result.Result.ThroughputPerSecond));
+                    static result =>
+                        result.Result.EndToEndThroughputPerSecond));
             double mqttNetThroughput = Median(
                 mqttNetResults.Select(
-                    static result => result.Result.ThroughputPerSecond));
+                    static result =>
+                        result.Result.EndToEndThroughputPerSecond));
             double mqttZeroP99 = Median(
                 mqttZeroResults.Select(
-                    static result => result.Result.LatencyP99Microseconds));
+                    static result =>
+                        result.Result.PublishCallLatencyP99Microseconds));
             double mqttNetP99 = Median(
                 mqttNetResults.Select(
-                    static result => result.Result.LatencyP99Microseconds));
+                    static result =>
+                        result.Result.PublishCallLatencyP99Microseconds));
 
             double throughputRatio = 0;
             if (mqttNetThroughput > 0)
@@ -132,6 +147,27 @@ internal static class BenchmarkGateEvaluator
             summaries.Count > 0 &&
                 summaries.All(static summary => summary.Passed),
             errors);
+    }
+
+    private static void ValidateMeasurementCompletion(
+        string broker,
+        IReadOnlyList<BrokerComparisonResult> results,
+        int subscribers,
+        List<string> failureReasons)
+    {
+        foreach (BrokerComparisonResult result in results)
+        {
+            long expected = result.Result.PublishedMessages *
+                subscribers;
+            if (result.Result.MeasurementReceivedMessages != expected)
+            {
+                failureReasons.Add(
+                    $"{broker} received messages must equal " +
+                    $"published messages times subscribers: " +
+                    $"expected={expected}, " +
+                    $"actual={result.Result.MeasurementReceivedMessages}.");
+            }
+        }
     }
 
     private static double Median(IEnumerable<double> values)
