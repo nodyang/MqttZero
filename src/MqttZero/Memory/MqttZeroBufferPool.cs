@@ -116,6 +116,7 @@ internal sealed class MqttZeroBufferPool : IDisposable
 
         Interlocked.Add(ref _rentedBytes, -buffer.Length);
         _capacityReleased.Release();
+
         int bucketIndex = GetBucketIndex(buffer.Length);
         if (Volatile.Read(ref _disposed) == 0 &&
             Interlocked.Increment(ref _cachedCounts[bucketIndex]) <=

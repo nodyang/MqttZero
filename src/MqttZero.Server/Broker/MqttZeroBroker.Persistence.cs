@@ -17,6 +17,13 @@ public sealed partial class MqttZeroBroker
             new(StringComparer.Ordinal);
         Dictionary<string, MqttZeroRetainedMessage> stagedRetainedMessages =
             new(StringComparer.Ordinal);
+        MqttZeroRetainedTopicTrie stagedRetainedTrie =
+            MqttZeroRetainedTopicTrie.Empty;
+        List<(
+            MqttZeroSessionState Session,
+            MqttZeroMessageLease Lease,
+            long MessageId)> inboundDispatches = [];
+        bool inboundDispatchesReleased = true;
         long stagedRetainedBytes = 0;
         bool committed = false;
         try
@@ -63,17 +70,14 @@ public sealed partial class MqttZeroBroker
                     continue;
                 }
 
-                MqttZeroSessionState session = new(
-                    persisted.ClientId,
-                    _options.MaxMessageQueueLength)
-                {
-                    CleanStart = persisted.CleanStart,
-                    ExpiryInterval = persisted.ExpiryInterval,
-                    DisconnectedAt = persisted.DisconnectedAt,
-                    WillMessage = persisted.Will == null
-                        ? null
-                        : new MqttZeroWillMessage(persisted.Will)
-                };
+                MqttZeroSessionState session = CreateSessionState(
+                    persisted.ClientId);
+                session.CleanStart = persisted.CleanStart;
+                session.ExpiryInterval = persisted.ExpiryInterval;
+                session.DisconnectedAt = persisted.DisconnectedAt;
+                session.WillMessage = persisted.Will == null
+                    ? null
+                    : new MqttZeroWillMessage(persisted.Will);
                 if (session.DisconnectedAt.HasValue &&
                     session.WillMessage != null)
                 {
@@ -177,6 +181,31 @@ public sealed partial class MqttZeroBroker
                         throw;
                     }
 
+                    continue;
+                }
+
+                if (persisted.Kind ==
+                    MqttZeroPersistedMessageKind.InboundDispatch)
+                {
+                    MqttZeroMessageLease dispatchLease =
+                        MqttZeroMessageLease.CopyFrom(
+                            new ReadOnlySequence<byte>(persisted.Topic),
+                            NormalizePersistedMessageProperties(
+                                persisted.Properties),
+                            new ReadOnlySequence<byte>(persisted.Payload),
+                            persisted.QualityOfServiceLevel,
+                            persisted.Retain,
+                            null,
+                            null,
+                            _bufferPool);
+                    dispatchLease.SetExpiresAt(persisted.ExpiresAt);
+                    dispatchLease.PacketIdentifier =
+                        persisted.PacketIdentifier;
+                    inboundDispatches.Add((
+                        session,
+                        dispatchLease,
+                        persisted.MessageId));
+                    inboundDispatchesReleased = false;
                     continue;
                 }
 
@@ -301,6 +330,9 @@ public sealed partial class MqttZeroBroker
                         persisted.QualityOfServiceLevel,
                         persisted.ExpiresAt);
                     stagedRetainedMessages.Add(topic, retainedMessage);
+                    stagedRetainedTrie = stagedRetainedTrie.Set(
+                        retainedMessage.Topic.Span,
+                        retainedMessage);
                     stagedRetainedBytes += retainedMessage.ByteLength;
                     retainedMessage = null;
                 }
@@ -326,10 +358,54 @@ public sealed partial class MqttZeroBroker
                     _retainedMessages[pair.Key] = pair.Value;
                 }
 
+                Volatile.Write(
+                    ref _retainedTopicTrie,
+                    stagedRetainedTrie);
                 _retainedBytes = stagedRetainedBytes;
             }
 
-            RebuildSubscriptionRouteSnapshot();
+            ResetRouteEpochFromSessions();
+            while (inboundDispatches.Count > 0)
+            {
+                int dispatchIndex = 0;
+                for (int index = 1;
+                    index < inboundDispatches.Count;
+                    index++)
+                {
+                    if (CompareInboundDispatchOrder(
+                        inboundDispatches[index],
+                        inboundDispatches[dispatchIndex]) < 0)
+                    {
+                        dispatchIndex = index;
+                    }
+                }
+
+                (
+                    MqttZeroSessionState Session,
+                    MqttZeroMessageLease Lease,
+                    long MessageId) dispatch =
+                    inboundDispatches[dispatchIndex];
+                inboundDispatches.RemoveAt(dispatchIndex);
+                try
+                {
+                    await RoutePreparedLeaseAsync(
+                        dispatch.Session,
+                        null,
+                        dispatch.Lease,
+                        cancellationToken).ConfigureAwait(false);
+                    await DeleteInboundDispatchAsync(
+                        dispatch.Session.ClientId,
+                        dispatch.MessageId,
+                        cancellationToken).ConfigureAwait(false);
+                }
+                finally
+                {
+                    dispatch.Lease.Release();
+                }
+            }
+
+            inboundDispatchesReleased = true;
+
             committed = true;
         }
         catch (Exception exception)
@@ -338,8 +414,11 @@ public sealed partial class MqttZeroBroker
             {
                 _sessions.Clear();
                 _retainedMessages.Clear();
+                Volatile.Write(
+                    ref _retainedTopicTrie,
+                    MqttZeroRetainedTopicTrie.Empty);
                 _retainedBytes = 0;
-                _subscriptionRouteSnapshot = MqttZeroSubscriptionRouteSnapshot.Empty;
+                _routeEpochs.Reset(MqttZeroRouteEpoch.Empty);
             }
 
             MqttZeroBrokerLogging.LogPersistenceFailure(
@@ -353,6 +432,17 @@ public sealed partial class MqttZeroBroker
         {
             if (!committed)
             {
+                if (!inboundDispatchesReleased)
+                {
+                    foreach ((
+                        _,
+                        MqttZeroMessageLease lease,
+                        _) in inboundDispatches)
+                    {
+                        lease.Release();
+                    }
+                }
+
                 foreach (MqttZeroSessionState session in stagedSessions.Values)
                 {
                     ReleaseSessionMessages(session);
@@ -438,6 +528,15 @@ public sealed partial class MqttZeroBroker
                 message.PacketIdentifier != 0;
         }
 
+        if (message.Kind == MqttZeroPersistedMessageKind.InboundDispatch)
+        {
+            return message.MessageId > 0 &&
+                message.QualityOfServiceLevel ==
+                    MqttQualityOfServiceLevel.AtLeastOnce &&
+                message.State == MqttZeroPersistedDeliveryState.Queued &&
+                message.PacketIdentifier != 0;
+        }
+
         if (message.MessageId <= 0)
         {
             return false;
@@ -489,6 +588,29 @@ public sealed partial class MqttZeroBroker
         MqttZeroSessionState session,
         CancellationToken cancellationToken)
     {
+        await SaveSessionAsync(
+            session,
+            null,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask SaveSessionSubscriptionsAsync(
+        MqttZeroSessionState session,
+        IReadOnlyList<MqttZeroSubscription> subscriptions,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(subscriptions);
+        await SaveSessionAsync(
+            session,
+            subscriptions,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private async ValueTask SaveSessionAsync(
+        MqttZeroSessionState session,
+        IReadOnlyList<MqttZeroSubscription>? candidateSubscriptions,
+        CancellationToken cancellationToken)
+    {
         if (!_sessionStore.IsEnabled)
         {
             return;
@@ -505,8 +627,11 @@ public sealed partial class MqttZeroBroker
             expiryInterval = session.ExpiryInterval;
             disconnectedAt = session.DisconnectedAt;
             will = CreatePersistedWill(session.WillMessage);
-            foreach (MqttZeroSubscription subscription in session.Subscriptions)
+            IReadOnlyList<MqttZeroSubscription> source =
+                candidateSubscriptions ?? session.Subscriptions;
+            for (int index = 0; index < source.Count; index++)
             {
+                MqttZeroSubscription subscription = source[index];
                 subscriptions.Add(new MqttZeroPersistedSubscription
                 {
                     TopicFilter = subscription.TopicFilter,
@@ -659,6 +784,65 @@ public sealed partial class MqttZeroBroker
             MqttZeroBrokerLogging.LogPersistenceFailure(
                 _logger,
                 nameof(IMqttZeroMessageStore.SaveInboundQos2Async),
+                clientId,
+                exception);
+            throw;
+        }
+    }
+
+    private async ValueTask SaveInboundDispatchAsync(
+        MqttZeroMessageLease lease,
+        MqttZeroSessionState sender,
+        long messageId,
+        CancellationToken cancellationToken)
+    {
+        if (!_messageStore.IsEnabled)
+        {
+            return;
+        }
+
+        try
+        {
+            await _messageStore.SaveInboundDispatchAsync(
+                CreateInboundDispatchPersistedMessage(
+                    lease,
+                    sender.ClientId,
+                    messageId),
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            MqttZeroBrokerLogging.LogPersistenceFailure(
+                _logger,
+                nameof(IMqttZeroMessageStore.SaveInboundDispatchAsync),
+                sender.ClientId,
+                exception);
+            throw;
+        }
+    }
+
+    private async ValueTask DeleteInboundDispatchAsync(
+        string clientId,
+        long messageId,
+        CancellationToken cancellationToken)
+    {
+        if (!_messageStore.IsEnabled || messageId == 0)
+        {
+            return;
+        }
+
+        try
+        {
+            await _messageStore.DeleteInboundDispatchAsync(
+                clientId,
+                messageId,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            MqttZeroBrokerLogging.LogPersistenceFailure(
+                _logger,
+                nameof(IMqttZeroMessageStore.DeleteInboundDispatchAsync),
                 clientId,
                 exception);
             throw;
@@ -909,6 +1093,45 @@ public sealed partial class MqttZeroBroker
             Retain = lease.RetainFlag,
             ExpiresAt = lease.ExpiresAt
         };
+    }
+
+    private static MqttZeroPersistedMessage CreateInboundDispatchPersistedMessage(
+        MqttZeroMessageLease lease,
+        string clientId,
+        long messageId)
+    {
+        return new MqttZeroPersistedMessage
+        {
+            ClientId = clientId,
+            MessageId = messageId,
+            PacketIdentifier = lease.PacketIdentifier,
+            Kind = MqttZeroPersistedMessageKind.InboundDispatch,
+            State = MqttZeroPersistedDeliveryState.Queued,
+            Topic = lease.Topic,
+            Properties = lease.Properties,
+            Payload = lease.Payload,
+            QualityOfServiceLevel = lease.QualityOfServiceLevel,
+            Retain = lease.RetainFlag,
+            ExpiresAt = lease.ExpiresAt
+        };
+    }
+
+    private static int CompareInboundDispatchOrder(
+        (
+            MqttZeroSessionState Session,
+            MqttZeroMessageLease Lease,
+            long MessageId) left,
+        (
+            MqttZeroSessionState Session,
+            MqttZeroMessageLease Lease,
+            long MessageId) right)
+    {
+        int clientComparison = string.CompareOrdinal(
+            left.Session.ClientId,
+            right.Session.ClientId);
+        return clientComparison != 0
+            ? clientComparison
+            : left.MessageId.CompareTo(right.MessageId);
     }
 
     private static ReadOnlySequence<byte> NormalizePersistedMessageProperties(

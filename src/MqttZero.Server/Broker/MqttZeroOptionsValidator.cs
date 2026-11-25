@@ -11,10 +11,34 @@ internal static class MqttZeroOptionsValidator
             options.MaxActiveConnections,
             nameof(options.MaxActiveConnections));
         ValidatePositive(options.MaxSessions, nameof(options.MaxSessions));
+        if (options.EventLoopShardCount < 0 ||
+            options.EventLoopShardCount > 256)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(options),
+                "MqttZeroOptions.EventLoopShardCount must be between 0 and 256.");
+        }
+
         ValidatePositive(
             options.MaxSubscriptionsPerSession,
             nameof(options.MaxSubscriptionsPerSession));
         ValidatePositive(options.MaxInflight, nameof(options.MaxInflight));
+        ValidatePositive(
+            options.OutboundBatchBytes,
+            nameof(options.OutboundBatchBytes));
+        ValidatePositive(
+            options.OutboundBatchMessages,
+            nameof(options.OutboundBatchMessages));
+        ValidatePositive(
+            options.OutboundBatchDuration,
+            nameof(options.OutboundBatchDuration));
+        if (options.OutboundBatchBytes > options.MaxBufferedBytes)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(options),
+                "MqttZeroOptions.OutboundBatchBytes cannot exceed MaxBufferedBytes.");
+        }
+
         ValidatePositive(options.MaxAwaitingRel, nameof(options.MaxAwaitingRel));
         ValidatePositive(
             options.MaxMessageQueueLength,

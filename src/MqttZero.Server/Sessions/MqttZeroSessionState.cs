@@ -1,6 +1,7 @@
 using MqttZero.Memory;
 using MqttZero.Protocol;
 using MqttZero.Server.Clients;
+using MqttZero.Server.Egress;
 using System.Collections.Concurrent;
 using System.Text;
 
@@ -11,17 +12,29 @@ internal sealed class MqttZeroSessionState
     private int _nextPacketIdentifier;
 
     public MqttZeroSessionState(string clientId)
-        : this(clientId, 1000)
+        : this(clientId, 1000, 0)
     {
     }
 
     public MqttZeroSessionState(string clientId, int maxQueueLength)
+        : this(clientId, maxQueueLength, 0)
     {
+    }
+
+    public MqttZeroSessionState(
+        string clientId,
+        int maxQueueLength,
+        int shardId)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(shardId);
         ClientId = clientId;
+        ShardId = shardId;
         PendingMessages = new MqttZeroMessageQueue(maxQueueLength);
     }
 
     public string ClientId { get; }
+
+    public int ShardId { get; }
 
     public object SyncRoot { get; } = new();
 
@@ -33,6 +46,8 @@ internal sealed class MqttZeroSessionState
 
     public List<MqttZeroQueuedMessage> ExpiredMessages { get; } = [];
 
+    public List<MqttZeroQueuedMessage> OutboundBatch { get; } = [];
+
     public Dictionary<ushort, MqttZeroQueuedMessage> InflightMessages { get; } = [];
 
     public Dictionary<ushort, MqttZeroMessageLease> InboundQos2Messages { get; } = [];
@@ -41,7 +56,7 @@ internal sealed class MqttZeroSessionState
 
     public MqttZeroClientConnection? Connection { get; set; }
 
-    public MqttZeroSessionOutboundPump? OutboundPump { get; set; }
+    public MqttZeroEgressActor? Egress { get; set; }
 
     public bool CleanStart { get; set; }
 

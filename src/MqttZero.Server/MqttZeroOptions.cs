@@ -16,6 +16,12 @@ public sealed class MqttZeroOptions
     public int MaxSessions { get; set; } = 20_000;
 
     /// <summary>
+    /// Gets or sets the number of event loop shards. Zero resolves to the
+    /// logical processor count.
+    /// </summary>
+    public int EventLoopShardCount { get; set; }
+
+    /// <summary>
     /// Gets or sets the maximum subscriptions allowed for one session.
     /// </summary>
     public int MaxSubscriptionsPerSession { get; set; } = 1_000;
@@ -24,6 +30,23 @@ public sealed class MqttZeroOptions
     /// Gets or sets the maximum number of unacknowledged outbound QoS 1/2 messages.
     /// </summary>
     public int MaxInflight { get; set; } = 32;
+
+    /// <summary>
+    /// Gets or sets the maximum encoded bytes selected for one outbound data batch.
+    /// </summary>
+    public int OutboundBatchBytes { get; set; } = 512 * 1024;
+
+    /// <summary>
+    /// Gets or sets the maximum number of messages selected for one outbound data batch.
+    /// </summary>
+    public int OutboundBatchMessages { get; set; } = 128;
+
+    /// <summary>
+    /// Gets or sets the maximum data selection and encoding duration for one batch.
+    /// Network flush time is not included.
+    /// </summary>
+    public TimeSpan OutboundBatchDuration { get; set; } =
+        TimeSpan.FromMicroseconds(500);
 
     /// <summary>
     /// Gets or sets the maximum number of inbound QoS 2 messages awaiting PUBREL.
