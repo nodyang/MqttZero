@@ -48,6 +48,19 @@ internal sealed class MqttZeroRouteTrieNode
         }
     }
 
+    public void CollectSharedGroupKeys(
+        HashSet<MqttZeroSharedGroupKey> keys)
+    {
+        ArgumentNullException.ThrowIfNull(keys);
+        Endpoint?.CollectSharedGroupKeys(keys);
+        SingleLevel?.CollectSharedGroupKeys(keys);
+        MultiLevel?.CollectSharedGroupKeys(keys);
+        for (int index = 0; index < _exactChildren.Length; index++)
+        {
+            _exactChildren[index].Node.CollectSharedGroupKeys(keys);
+        }
+    }
+
     public MqttZeroRouteTrieNode WithEndpoint(
         MqttZeroRouteEndpoint? endpoint)
     {

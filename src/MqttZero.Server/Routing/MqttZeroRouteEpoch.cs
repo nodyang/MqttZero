@@ -67,6 +67,13 @@ internal sealed class MqttZeroRouteEpoch
         MatchNode(Root, topic, true, sender, cursors, ref match);
     }
 
+    public void CollectSharedGroupKeys(
+        HashSet<MqttZeroSharedGroupKey> keys)
+    {
+        ArgumentNullException.ThrowIfNull(keys);
+        Root.CollectSharedGroupKeys(keys);
+    }
+
     internal MqttZeroRouteTrieNode? GetNodeForTest(
         ReadOnlySpan<byte> filter)
     {

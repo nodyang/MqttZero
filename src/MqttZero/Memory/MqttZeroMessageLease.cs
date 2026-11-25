@@ -1,13 +1,14 @@
 using MqttZero.Protocol;
 using System.Buffers;
-using System.Collections.Concurrent;
 
 namespace MqttZero.Memory;
 
 internal sealed class MqttZeroMessageLease : IDisposable
 {
-    private static readonly ConcurrentQueue<MqttZeroMessageLease> LeasePool =
-        new();
+    private static readonly MqttZeroBoundedObjectPool<MqttZeroMessageLease>
+        LeasePool = new(
+            MqttZeroBoundedObjectPool<MqttZeroMessageLease>.
+                DefaultCapacity);
 
     private MqttZeroBufferPool _bufferPool = MqttZeroBufferPool.Shared;
     private bool _isBorrowed;
@@ -56,6 +57,14 @@ internal sealed class MqttZeroMessageLease : IDisposable
     public DateTimeOffset? ExpiresAt { get; private set; }
 
     public ushort PacketIdentifier { get; set; }
+
+    internal static int PoolCountForTest
+    {
+        get
+        {
+            return LeasePool.Count;
+        }
+    }
 
     public static MqttZeroMessageLease CopyFrom(
         ReadOnlySequence<byte> topic,
@@ -193,7 +202,7 @@ internal sealed class MqttZeroMessageLease : IDisposable
         byte[] slab = _slabBuffer;
         Reset();
         ReturnSlab(slab);
-        LeasePool.Enqueue(this);
+        _ = LeasePool.Return(this);
     }
 
     public void Dispose()
@@ -213,8 +222,8 @@ internal sealed class MqttZeroMessageLease : IDisposable
 
     private static MqttZeroMessageLease RentLease()
     {
-        return LeasePool.TryDequeue(out MqttZeroMessageLease? lease)
-            ? lease
+        return LeasePool.TryRent(out MqttZeroMessageLease? lease)
+            ? lease!
             : new MqttZeroMessageLease();
     }
 

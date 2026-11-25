@@ -43,6 +43,21 @@ internal sealed class MqttZeroRoutePlanBuffer : IDisposable
 
     public int ShardCount { get; }
 
+    internal long GetRetainedByteEstimate()
+    {
+        long bytes = GetArrayByteCount(_batches) +
+            GetArrayByteCount(_identifierAssignments) +
+            GetArrayByteCount(_identifiers) +
+            GetArrayByteCount(_sharedGroups);
+        for (int shardId = 0; shardId < ShardCount; shardId++)
+        {
+            bytes += _batches[shardId].GetRetainedByteEstimate();
+            bytes += _sessionTables[shardId].GetRetainedByteEstimate();
+        }
+
+        return bytes;
+    }
+
     public void Dispose()
     {
         if (_disposed)
@@ -354,6 +369,11 @@ internal sealed class MqttZeroRoutePlanBuffer : IDisposable
         ObjectDisposedException.ThrowIf(_disposed, this);
     }
 
+    private static long GetArrayByteCount<T>(T[] array)
+    {
+        return (long)array.Length * Unsafe.SizeOf<T>();
+    }
+
     private int AddDelivery(
         int shardId,
         MqttZeroSessionState session,
@@ -471,6 +491,15 @@ internal sealed class MqttZeroRoutePlanBuffer : IDisposable
             _sessions = [];
             _deliveryIndexes = [];
             _generations = [];
+        }
+
+        internal long GetRetainedByteEstimate()
+        {
+            return
+                (long)_sessions.Length *
+                    Unsafe.SizeOf<MqttZeroSessionState?>() +
+                (long)_deliveryIndexes.Length * sizeof(int) +
+                (long)_generations.Length * sizeof(int);
         }
 
         public void Reset()

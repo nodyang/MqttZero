@@ -106,6 +106,91 @@ public sealed class SharedGroupCursorTests
     }
 
     [Fact]
+    public void CursorSnapshotReportsActiveKeyCount()
+    {
+        MqttZeroSharedGroupCursors cursors = new();
+        Assert.Equal(0, cursors.Count);
+
+        Assert.Equal(
+            0,
+            cursors.GetNext(new MqttZeroSharedGroupKey(
+                "workers"u8,
+                "jobs/#"u8), 2));
+        Assert.Equal(
+            0,
+            cursors.GetNext(new MqttZeroSharedGroupKey(
+                "audit"u8,
+                "jobs/#"u8), 2));
+
+        Assert.Equal(2, cursors.Count);
+    }
+
+    [Fact]
+    public void PruneRemovesInactiveKeysAndPreservesActiveCursor()
+    {
+        MqttZeroSharedGroupCursors cursors = new();
+        MqttZeroSharedGroupKey active =
+            new("workers"u8, "jobs/#"u8);
+        MqttZeroSharedGroupKey removed =
+            new("audit"u8, "jobs/#"u8);
+
+        Assert.Equal(0, cursors.GetNext(active, 2));
+        Assert.Equal(1, cursors.GetNext(active, 2));
+        Assert.Equal(0, cursors.GetNext(removed, 2));
+
+        cursors.PruneTo([active]);
+
+        Assert.Equal(1, cursors.Count);
+        Assert.Equal(2, cursors.GetCursor(active));
+    }
+
+    [Fact]
+    public void RouteEpochCollectsOnlyActiveSharedGroupKeys()
+    {
+        MqttZeroRouteEpoch epoch = MqttZeroRouteEpoch.Empty
+            .Add(
+                new MqttZeroSessionState("a"),
+                CreateShared("workers", "jobs/#"))
+            .Add(
+                new MqttZeroSessionState("b"),
+                new MqttZeroSubscription(
+                    "regular/#"u8.ToArray(),
+                    MqttQualityOfServiceLevel.AtMostOnce,
+                    false,
+                    false,
+                    null));
+        HashSet<MqttZeroSharedGroupKey> keys = [];
+
+        epoch.CollectSharedGroupKeys(keys);
+
+        Assert.Equal(
+            new MqttZeroSharedGroupKey(
+                "workers"u8,
+                "jobs/#"u8),
+            Assert.Single(keys));
+    }
+
+    [Fact]
+    public void PruneKeepsOnlyCurrentKeyAfterManySharedGroupChurns()
+    {
+        MqttZeroSharedGroupCursors cursors = new();
+        MqttZeroSharedGroupKey active = default;
+        for (int index = 0; index < 1_000; index++)
+        {
+            MqttZeroSharedGroupKey key = new(
+                Encoding.UTF8.GetBytes($"group-{index}"),
+                "jobs/#"u8);
+            active = key;
+            _ = cursors.GetNext(key, 2);
+        }
+
+        Assert.Equal(1_000, cursors.Count);
+        cursors.PruneTo([active]);
+        Assert.Equal(1, cursors.Count);
+        Assert.Equal(1, cursors.GetCursor(active));
+    }
+
+    [Fact]
     public void SharedRoutingDoesNotAllocateAfterWarmup()
     {
         MqttZeroSessionState first = new("first");

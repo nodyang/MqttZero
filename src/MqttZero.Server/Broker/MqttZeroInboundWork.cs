@@ -1,16 +1,26 @@
 using MqttZero.Memory;
 using MqttZero.Server.Clients;
 using MqttZero.Server.Sessions;
-using System.Collections.Concurrent;
 
 namespace MqttZero.Server.Broker;
 
 internal sealed class MqttZeroInboundWork
 {
-    private static readonly ConcurrentQueue<MqttZeroInboundWork> Pool = new();
+    private static readonly MqttZeroBoundedObjectPool<MqttZeroInboundWork>
+        Pool = new(
+            MqttZeroBoundedObjectPool<MqttZeroInboundWork>.
+                DefaultCapacity);
 
     private MqttZeroInboundWork()
     {
+    }
+
+    internal static int PoolCountForTest
+    {
+        get
+        {
+            return Pool.Count;
+        }
     }
 
     public MqttZeroMessageLease Lease { get; private set; } = null!;
@@ -29,7 +39,8 @@ internal sealed class MqttZeroInboundWork
         MqttZeroClientConnection? senderConnection,
         long messageId = 0)
     {
-        if (!Pool.TryDequeue(out MqttZeroInboundWork? work))
+        if (!Pool.TryRent(out MqttZeroInboundWork? work) ||
+            work is null)
         {
             work = new MqttZeroInboundWork();
         }
@@ -50,6 +61,6 @@ internal sealed class MqttZeroInboundWork
         Sender = null!;
         SenderConnection = null!;
         MessageId = 0;
-        Pool.Enqueue(this);
+        _ = Pool.Return(this);
     }
 }
