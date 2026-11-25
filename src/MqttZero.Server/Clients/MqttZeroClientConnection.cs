@@ -308,6 +308,29 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
             return;
         }
 
+        int encodedBytes = WritePublishBatch(messages);
+        _ = await _writer.FlushAsync(cancellationToken).ConfigureAwait(false);
+        MarkPublishBatchSent(messages.Count, encodedBytes);
+    }
+
+    internal bool TryEncodePublishBatch(
+        IReadOnlyList<MqttZeroQueuedMessage> messages,
+        out int encodedBytes)
+    {
+        encodedBytes = 0;
+        if (!AllowPacketFragmentation || messages.Count == 0)
+        {
+            return false;
+        }
+
+        encodedBytes = WritePublishBatch(messages);
+        MarkPublishBatchSent(messages.Count, encodedBytes);
+        return true;
+    }
+
+    private int WritePublishBatch(
+        IReadOnlyList<MqttZeroQueuedMessage> messages)
+    {
         int encodedBytes = 0;
         for (int index = 0; index < messages.Count; index++)
         {
@@ -346,70 +369,20 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
             {
                 MqttPublishPacketCodec.Encode(view, _writer);
             }
+
             encodedBytes += encodedLength;
         }
 
-        _ = await _writer.FlushAsync(cancellationToken).ConfigureAwait(false);
-        Interlocked.Add(ref _packetsSent, messages.Count);
-        Interlocked.Add(ref _bytesSent, encodedBytes);
-        Interlocked.Add(ref _messagesSent, messages.Count);
+        return encodedBytes;
     }
 
-    internal bool TryEncodePublishBatch(
-        IReadOnlyList<MqttZeroQueuedMessage> messages,
-        out int encodedBytes)
+    private void MarkPublishBatchSent(
+        int messageCount,
+        int encodedBytes)
     {
-        encodedBytes = 0;
-        if (!AllowPacketFragmentation || messages.Count == 0)
-        {
-            return false;
-        }
-
-        for (int index = 0; index < messages.Count; index++)
-        {
-            MqttZeroQueuedMessage message = messages[index];
-            MqttZeroPublishView view = new(
-                message.Lease.TopicSequence,
-                message.Lease.PropertiesSequence,
-                message.Lease.PayloadSequence,
-                message.QualityOfServiceLevel,
-                message.PacketIdentifier,
-                false,
-                message.Retain,
-                GetRemainingMessageExpiry(message.ExpiresAt),
-                null,
-                message.SubscriptionIdentifiers,
-                null);
-            int encodedLength = message.EncodedLength > 0 &&
-                message.ExpiresAt == null
-                ? message.EncodedLength
-                : MqttPublishPacketCodec.GetEncodedLength(view);
-            if (encodedLength > MaximumPacketSize)
-            {
-                throw new InvalidOperationException(
-                    "The outbound MQTT packet exceeds the client maximum packet size.");
-            }
-
-            if (message.Lease.Payload.Length < 64 * 1024 &&
-                message.Lease.Properties.IsEmpty)
-            {
-                _ = MqttPublishPacketCodec.EncodeToWriter(
-                    view,
-                    _bufferWriter,
-                    _writer);
-            }
-            else
-            {
-                MqttPublishPacketCodec.Encode(view, _writer);
-            }
-
-            encodedBytes += encodedLength;
-        }
-
-        Interlocked.Add(ref _packetsSent, messages.Count);
+        Interlocked.Add(ref _packetsSent, messageCount);
         Interlocked.Add(ref _bytesSent, encodedBytes);
-        Interlocked.Add(ref _messagesSent, messages.Count);
-        return true;
+        Interlocked.Add(ref _messagesSent, messageCount);
     }
 
     internal ValueTask<FlushResult> FlushOutputAsync(
