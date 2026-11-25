@@ -29,6 +29,91 @@
 
 ## 文件
 
+- `broker-phase0-2026-11-25.json`
+- `broker-phase0-2026-11-25.md`
+- `broker-phase1-2026-11-25.json`
+- `broker-phase1-2026-11-25.md`
+- `broker-phase2-2026-11-25.json`
+- `broker-phase2-2026-11-25.md`
+- `broker-phase2-nonblocking-2026-11-25.json`
+- `broker-phase2-nonblocking-2026-11-25.md`
+- `broker-phase2-official-2026-11-25.json`
+- `broker-phase4-2026-11-25.json`
+- `broker-phase4-2026-11-25.md`
+- `broker-phase4.5-2026-11-25.json`
+- `broker-phase4.5-2026-11-25.md`
+- `broker-transport-ab-2026-11-25.json`
+- `broker-transport-ab-2026-11-25.md`
+- `broker-phase4.6-diagnostic-2026-11-25.json`
+- `broker-phase4.6-in-progress-2026-11-25.md`
+- `broker-phase0-same-machine-2026-11-25.json`
+- `broker-phase4.6-2026-11-25.json`
+- `broker-phase4.6-2026-11-25.md`
+- `broker-phase4.6-scheduled-ack-q1-single-2026-11-25.json`
+- `broker-phase4.6-scheduled-ack-q1-100-2026-11-25.json`
+- `broker-phase4.6-architecture-review-2026-11-25.md`
+- `memory-phase3-2026-11-25.md`
+- Phase 0 local development profile: QoS 0/1, 1/100 subscribers, 32 B/8 KiB/64 KiB, 2 s warmup, 6 s measurement and one repetition.
+- Phase 0 nightly stable profile: QoS 0/1/2, 1/100 subscribers, 32 B/8 KiB/64 KiB, 5 s warmup, 20 s measurement and three repetitions.
+- The 1,000-subscriber cells are deferred until the final performance gate.
+- A red Phase 0 performance gate means the toolchain completed and recorded the
+  actual result; it does not mean the benchmark infrastructure failed.
+- Phase 1 adds event loop shards, removes the Channel Inbound Dispatcher and
+  aligns Kestrel IOQueueCount with the logical Shard count.
+- Phase 1's 5% regression gate is red in 5 of 12 development cells. The report
+  lists each regression; no performance improvement claim is made.
+- Phase 2 moves data delivery to a Shard-owned Egress Actor and removes the
+  Pump/Writer classes. Its regression gate remains red in 5 of 12 cells.
+- The nonblocking Flush revision reduces Phase 2 failures to 4 of 12 cells.
+- The write-lock-free revision pools encoded control frames and removes direct
+  control writers from attached connections. It also lets Kestrel choose
+  PipeWriter segment sizes instead of passing payload-sized hints. Correctness
+  and zero-allocation control tests pass; the QoS 0/100/8-KiB development cell
+  remains red.
+- The Phase 2 official 5x20x3 stability run passes QoS 1/100/8-KiB against the
+  Phase 0 tolerance. QoS 0/100/8-KiB retains 97.6% throughput but an 8.72x p99
+  regression. Matched counters show lower allocation and GC than MQTTnet, so
+  the remaining work moves to Phase 4 aggregated fanout rather than further
+  Egress micro-tuning.
+- Phase 4 replaces snapshot rebuilds and per-subscriber fanout with immutable
+  Route Epochs, persistent HAMTs, stable shared cursors, Shard-aware planning
+  and target-Shard fanout batches.
+- The Phase 4 development gate passes 9 of 12 cells against Phase 0. The
+  strict MQTTnet gate passes 2 of 12 cells. The report keeps those cells red;
+  it does not claim the final performance target.
+- Phase 4.5 adds QoS 0 Fanout pipelining, low-priority Egress scheduling,
+  allocation-free queue insertion fast paths and topology A/B controls. It
+  raises QoS 0/100/32-B throughput but still misses the 12-cell development
+  gate; Phase 5 remains blocked.
+- Phase 3 removes the per-Session QoS 0 candidate array, packs each owned
+  message into one Slab and lazily creates Topic Alias storage. Broker private
+  memory in the 100-subscriber 8-KiB workload falls from about 308 MB to
+  143.6 MB while the Phase 4.5 Egress bottleneck remains.
+- Phase 7-Lite adds an internal transport boundary and evaluates an experimental
+  SocketAsyncEventArgs TCP transport. The prototype is rejected and removed:
+  interleaved repetitions on QoS 0/100/8-KiB show about 11.1% lower throughput
+  for Socket despite about 7.8% lower p99. Kestrel remains the only production
+  transport; no Socket performance claim is made.
+- Phase 4.6 adds a per-Shard Egress Scheduler, Actor-ready deduplication and
+  configuration-driven batch limits. The warmup drain stall was traced to a
+  lost data signal while `FlushPending`, and the stalled cell now completes.
+  The phase remains red: the strict MQTTnet gate passes only 2 of 12 cells,
+  and the same-machine Phase 0 development gate passes about 5 of 12.
+- QoS 1 now acknowledges after all non-empty Fanout Batches enter their target
+  Shard queues while Message Store mode keeps the completion barrier. The
+  64-KiB single-subscriber cell improves about 22% in throughput and 23% in
+  p99, but remains below the strict MQTTnet gate.
+- Persistent per-Shard Fanout Schedulers reuse one high-priority Shard work,
+  deduplicate bursts and cap each pass at 250 microseconds. A 1,000-cycle
+  release test and the 500-subscriber development matrix pass without
+  connection failures or drain timeouts.
+- The direct Kestrel `PipeWriter.WriteAsync` experiment for 64-KiB payloads
+  was rejected after reducing QoS 1 single-subscriber throughput to about
+  0.23x MQTTnet; the production path was restored.
+- The Phase 4.6 architecture review identifies the dominant remaining cost as
+  the per-message Session/Egress/Flush scheduling chain, with average fanout
+  batches near 1.2 messages and almost every QoS 0/1 64-KiB batch waiting on an
+  asynchronous Flush. More Encode or batch-constant tuning is not the next step.
 - `codec-0.3.0-alpha.1.*`
 - `routing-0.3.0-alpha.1.*`
 - `memory-transport-0.3.0-alpha.1.*`

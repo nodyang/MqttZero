@@ -6,7 +6,15 @@
 
   <ItemGroup>
     <PackageReference Include="MQTTnet" />
+    <PackageReference Include="MQTTnet.AspNetCore" />
     <PackageReference Include="MQTTnet.Server" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="MqttZero.BrokerBenchmarks.Tests" />
+    <RuntimeHostConfigurationOption Include="System.GC.Server" Value="true" />
+    <RuntimeHostConfigurationOption Include="System.GC.Concurrent" Value="true" />
+    <RuntimeHostConfigurationOption Include="System.Runtime.TieredPGO" Value="true" />
   </ItemGroup>
 
   <ItemGroup>

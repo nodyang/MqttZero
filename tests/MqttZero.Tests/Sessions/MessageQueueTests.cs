@@ -8,6 +8,42 @@ namespace MqttZero.Tests.Sessions
     public sealed class MessageQueueTests
     {
         [Fact]
+        public void LargeCapacityDoesNotPreallocateCandidateStorage()
+        {
+            long before = GC.GetAllocatedBytesForCurrentThread();
+
+            _ = new MqttZeroMessageQueue(1_000_000);
+
+            long allocated =
+                GC.GetAllocatedBytesForCurrentThread() - before;
+            Assert.InRange(allocated, 0, 1024);
+        }
+
+        [Fact]
+        public void DequeueRemovesQosZeroFromEvictionCandidates()
+        {
+            MqttZeroMessageQueue queue = new(4);
+            MqttZeroQueuedMessage firstQos0 = CreateQueuedMessage(
+                MqttQualityOfServiceLevel.AtMostOnce,
+                out MqttZeroMessageLease firstLease);
+            MqttZeroQueuedMessage secondQos0 = CreateQueuedMessage(
+                MqttQualityOfServiceLevel.AtMostOnce,
+                out MqttZeroMessageLease secondLease);
+            queue.Add(firstQos0);
+            queue.Add(secondQos0);
+            _ = queue.Dequeue();
+
+            MqttZeroQueuedMessage? evicted =
+                queue.EvictOldestQos0OrOldest();
+
+            Assert.Same(secondQos0, evicted);
+            firstQos0.Release();
+            evicted!.Release();
+            firstLease.Release();
+            secondLease.Release();
+        }
+
+        [Fact]
         public void RemoveAtDecrementsExpiringCountWhenRemovedMessageExpires()
         {
             MqttZeroMessageQueue queue = new(4);
@@ -222,21 +258,72 @@ namespace MqttZero.Tests.Sessions
             lease.Release();
         }
 
+        [Fact]
+        public void EvictsOldestQos0BeforeOtherMessages()
+        {
+            MqttZeroMessageQueue queue = new(3);
+            MqttZeroQueuedMessage qos1 = CreateQueuedMessage(
+                MqttQualityOfServiceLevel.AtLeastOnce,
+                out MqttZeroMessageLease qos1Lease);
+            MqttZeroQueuedMessage qos0 = CreateQueuedMessage(
+                MqttQualityOfServiceLevel.AtMostOnce,
+                out MqttZeroMessageLease qos0Lease);
+            queue.Add(qos1);
+            queue.Add(qos0);
+
+            MqttZeroQueuedMessage? evicted =
+                queue.EvictOldestQos0OrOldest();
+
+            Assert.Same(qos0, evicted);
+            Assert.Same(qos1, queue.Peek());
+            evicted!.Release();
+            qos1.Release();
+            qos0Lease.Release();
+            qos1Lease.Release();
+        }
+
+        [Fact]
+        public void RejectsAddingTheSameSingleItemTwice()
+        {
+            MqttZeroMessageQueue queue = new(2);
+            MqttZeroQueuedMessage message = CreateQueuedMessage(
+                null,
+                out MqttZeroMessageLease lease);
+            queue.Add(message);
+
+            Assert.Throws<InvalidOperationException>(
+                () => queue.Add(message));
+            Assert.Equal(1, queue.Count);
+            queue.Dequeue().Release();
+            lease.Release();
+        }
+
         private static MqttZeroQueuedMessage CreateQueuedMessage(
             DateTimeOffset? expiresAt,
             out MqttZeroMessageLease lease)
+        {
+            return CreateQueuedMessage(
+                MqttQualityOfServiceLevel.AtLeastOnce,
+                out lease,
+                expiresAt);
+        }
+
+        private static MqttZeroQueuedMessage CreateQueuedMessage(
+            MqttQualityOfServiceLevel qualityOfServiceLevel,
+            out MqttZeroMessageLease lease,
+            DateTimeOffset? expiresAt = null)
         {
             lease = MqttZeroMessageLease.CopyFrom(
                 new ReadOnlySequence<byte>("queue/topic"u8.ToArray()),
                 ReadOnlySequence<byte>.Empty,
                 new ReadOnlySequence<byte>("payload"u8.ToArray()),
-                MqttQualityOfServiceLevel.AtLeastOnce,
+                qualityOfServiceLevel,
                 false,
                 null,
                 null);
             return MqttZeroQueuedMessage.Rent(
                 lease,
-                MqttQualityOfServiceLevel.AtLeastOnce,
+                qualityOfServiceLevel,
                 false,
                 null,
                 expiresAt);

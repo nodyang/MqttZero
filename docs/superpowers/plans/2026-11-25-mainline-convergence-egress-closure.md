@@ -40,7 +40,7 @@
 - Produces: a reviewed commit inventory with one of `keep`, `neutral`, or `reject` for every commit or coherent commit group.
 - Produces: a list of tests and baselines that justify every retained high-risk change.
 
-- [x] **Step 1: Inventory all commits**
+- [ ] **Step 1: Inventory all commits**
 
   Run:
 
@@ -51,7 +51,7 @@
 
   Write every commit or coherent commit group into `docs/performance-branch-convergence.md`.
 
-- [x] **Step 2: Classify each item**
+- [ ] **Step 2: Classify each item**
 
   Use these categories:
 
@@ -63,7 +63,7 @@
 
   Reject a commit when its only claimed benefit is a red benchmark cell or an experiment explicitly rejected in a baseline document.
 
-- [x] **Step 3: Verify the inventory**
+- [ ] **Step 3: Verify the inventory**
 
   Run:
 
@@ -78,7 +78,7 @@
   Every rejected production path has a baseline or test reason.
   ```
 
-- [x] **Step 4: Commit**
+- [ ] **Step 4: Commit**
 
   ```powershell
   git add docs/performance-branch-convergence.md

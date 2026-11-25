@@ -99,6 +99,7 @@ dotnet run --project samples/MqttZero.Sample
 | `MaxActiveConnections` | `20_000` |
 | `MaxSessions` | `20_000` |
 | `MaxSubscriptionsPerSession` | `1_000` |
+| `EventLoopShardCount` | `0`，自动使用 `Environment.ProcessorCount` |
 | `MaxInflight` | `32` |
 | `MaxAwaitingRel` | `100` |
 | `MaxMessageQueueLength` | `1_000` |
@@ -115,6 +116,10 @@ dotnet run --project samples/MqttZero.Sample
 | `ResponseInformation` | `null` |
 
 EMQX 默认不对 Listener 连接数和客户端订阅数设置全局上限。MQTTZero 保留有限默认值，避免在缺少进程、容器或反向代理限制时耗尽内存和文件描述符。`KeepAliveCheckInterval` 也保持 `500ms`，因为它同时驱动 Will、Session 和 Retained 清理。
+
+`EventLoopShardCount=0` 时使用逻辑处理器数。CONNECT 后 Session 按 Client ID
+稳定映射到 Shard；`AddMqttZero` 默认将 Kestrel `IOQueueCount` 对齐到相同值，
+调用方之后显式配置 `SocketTransportOptions` 时可以覆盖。
 
 ## 发布 API
 
@@ -269,7 +274,8 @@ WebSocket 未设置选择器时默认不允许分片，从而保持 MQTT PUBLISH
 
 - `MqttPublishPacketCodec` 直接解析 `ReadOnlySequence<byte>`，不创建完整报文或 Topic 数组。
 - Topic/Properties/Payload 由引用计数 `MqttZeroMessageLease` 共享；在线订阅者、离线队列和 Inflight 消息持有同一份内存。
-- 路由使用每 Broker 的池化 `MqttZeroRouteScope` 和不可变订阅快照，不为每条消息创建 `List`、`Dictionary` 或候选对象。
+- 路由使用不可变 Route Epoch、路径级 Copy-on-Write Topic Trie 和持久 HAMT；
+  发布在发布者 Shard 规划，并按目标 Shard 聚合成单次 Fanout Batch。
 - QoS 1/2 描述符、确认包和出站 PUBLISH 编码复用池化对象，并直接写入连接自己的 `IBufferWriter`。
 - `MqttZeroBufferPool` 以 `ArrayPool<byte>` 为底层来源执行字节预算；耗尽时暂停读取并等待释放，不静默回退到普通数组。
 
@@ -288,7 +294,29 @@ dotnet run -c Release --project benchmarks/MqttZero.Benchmarks -- `
   --filter '*' --job short --exporters csv json
 ```
 
-当前基准结果、机器信息和解释统一记录在 `perf/baseline`。fast PUBLISH 解码、Header 编码、Topic 路由、共享订阅、QoS 1 队列、扇出和内存端到端均经过 `0 B/op` 分配验证。
+当前基准结果、机器信息和解释统一记录在 `perf/baseline`。fast PUBLISH
+解码、Header 编码、Route Epoch、Route Planning、QoS 1 队列、Retained
+Trie 和内存端到端均经过 `0 B/op` 分配验证；网络 Broker 对比结果和尚未
+通过的单元格以 baseline 报告为准。
+
+Phase 4.5 的 QoS 0 Fanout 流水化、Egress 低优先级调度和拓扑 A/B 结果见
+`perf/baseline/broker-phase4.5-2026-11-25.md`。当前网络热路径门禁仍未
+全部通过，Phase 5 暂缓。
+
+Phase 4.6 已修复 Egress 控制包与数据 Flush 的状态竞态，以及
+FlushPending 期间新数据信号丢失的问题。12 格三次矩阵现在可以完整运行，
+但严格 MQTTnet 门禁仍只通过 2/12，单订阅 64 KiB 的跨 Shard 尾延迟仍是
+主要阻塞；阶段保持红色，详见
+`perf/baseline/broker-phase4.6-2026-11-25.md`。
+
+Phase 3 已将 QoS 0 候选队列改为完全惰性侵入链、消息 Lease 合并为单
+Slab，并按需创建 Topic Alias 表。内存结果见
+`perf/baseline/memory-phase3-2026-11-25.md`。
+
+Phase 7-Lite 已用同一 Broker 核心对 Kestrel 与实验
+`SocketAsyncEventArgs` TCP 传输做交替重复 A/B。实验传输吞吐中位数更低，
+未同时改善吞吐和 p99，因此已删除；Kestrel 继续作为唯一生产传输。记录见
+`perf/baseline/broker-transport-ab-2026-11-25.md`。
 
 全局 Packet Writer 池经顺序和 128 并发基准验证后决定不引入，结论见 `perf/baseline/packet-writer-pool-0.5.0-alpha.1.md`。完整 Broker 对 Broker 的 TCP/QoS/多连接比较方法见 `perf/baseline/broker-comparison-methodology.md`。
 
