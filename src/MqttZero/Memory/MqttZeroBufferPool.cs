@@ -20,7 +20,6 @@ internal sealed class MqttZeroBufferPool : IDisposable
     private readonly long _maximumBytes;
     private readonly ArrayPool<byte> _source;
     private int _capacityWaiters;
-    private long _cachedBytes;
     private long _committedBytes;
     private long _rentedBytes;
     private long _returnGeneration;
@@ -84,8 +83,13 @@ internal sealed class MqttZeroBufferPool : IDisposable
                 Volatile.Read(ref _cachedBucketBytes[index]));
         }
 
+        long cachedBytes = 0;
+        for (int index = 0; index < buckets.Length; index++)
+        {
+            cachedBytes += buckets[index].CachedBytes;
+        }
+
         long rentedBytes = Volatile.Read(ref _rentedBytes);
-        long cachedBytes = Volatile.Read(ref _cachedBytes);
         return new MqttZeroBufferPoolSnapshot(
             rentedBytes,
             cachedBytes,
@@ -152,7 +156,6 @@ internal sealed class MqttZeroBufferPool : IDisposable
             Interlocked.Add(
                 ref _cachedBucketBytes[bucketIndex],
                 buffer.Length);
-            Interlocked.Add(ref _cachedBytes, buffer.Length);
             _buckets[bucketIndex].Enqueue(buffer);
             SignalCapacityRelease();
             return;
@@ -182,7 +185,6 @@ internal sealed class MqttZeroBufferPool : IDisposable
 
         Array.Clear(_cachedCounts);
         Array.Clear(_cachedBucketBytes);
-        Volatile.Write(ref _cachedBytes, 0);
         Volatile.Write(ref _committedBytes, 0);
         _capacityReleased.Dispose();
     }
@@ -235,9 +237,9 @@ internal sealed class MqttZeroBufferPool : IDisposable
 
     private void SignalCapacityRelease()
     {
-        Interlocked.Increment(ref _returnGeneration);
         if (Volatile.Read(ref _capacityWaiters) > 0)
         {
+            Interlocked.Increment(ref _returnGeneration);
             _capacityReleased.Release();
         }
     }
@@ -255,14 +257,12 @@ internal sealed class MqttZeroBufferPool : IDisposable
                 Interlocked.Add(
                     ref _cachedBucketBytes[index],
                     -cached.Length);
-                Interlocked.Add(ref _cachedBytes, -cached.Length);
                 if (cached.Length < minimumLength)
                 {
                     Interlocked.Increment(ref _cachedCounts[index]);
                     Interlocked.Add(
                         ref _cachedBucketBytes[index],
                         cached.Length);
-                    Interlocked.Add(ref _cachedBytes, cached.Length);
                     _buckets[index].Enqueue(cached);
                     continue;
                 }

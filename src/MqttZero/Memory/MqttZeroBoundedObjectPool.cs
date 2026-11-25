@@ -11,7 +11,6 @@ internal sealed class MqttZeroBoundedObjectPool<T>
         4_096);
 
     private readonly ConcurrentQueue<T> _items = new();
-    private int _count;
 
     public MqttZeroBoundedObjectPool(int capacity)
     {
@@ -25,7 +24,7 @@ internal sealed class MqttZeroBoundedObjectPool<T>
     {
         get
         {
-            return Volatile.Read(ref _count);
+            return _items.Count;
         }
     }
 
@@ -33,7 +32,6 @@ internal sealed class MqttZeroBoundedObjectPool<T>
     {
         if (_items.TryDequeue(out item))
         {
-            Interlocked.Decrement(ref _count);
             return true;
         }
 
@@ -44,14 +42,12 @@ internal sealed class MqttZeroBoundedObjectPool<T>
     public bool Return(T item)
     {
         ArgumentNullException.ThrowIfNull(item);
-        int count = Interlocked.Increment(ref _count);
-        if (count <= Capacity)
+        if (_items.Count < Capacity)
         {
             _items.Enqueue(item);
             return true;
         }
 
-        Interlocked.Decrement(ref _count);
         return false;
     }
 }
