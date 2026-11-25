@@ -684,8 +684,7 @@ static async Task RunMemoryAsync(Dictionary<string, string> arguments)
     int qos = GetInt(arguments, "qos", 0);
     int subscriberCount = GetInt(arguments, "subscribers", 1);
     int payloadSize = GetInt(arguments, "payload", 8192);
-    int warmupSeconds = GetInt(arguments, "warmup", 2);
-    int measurementSeconds = GetInt(arguments, "seconds", 5);
+    int messagesPerWave = GetInt(arguments, "messages", 100);
     int waveCount = GetInt(arguments, "waves", 3);
     int maxPendingMessages = GetInt(
         arguments,
@@ -767,19 +766,19 @@ static async Task RunMemoryAsync(Dictionary<string, string> arguments)
         QualityOfServiceLevel = qualityOfServiceLevel
     };
     using (CancellationTokenSource warmup = new(
-        TimeSpan.FromSeconds(warmupSeconds)))
+        TimeSpan.FromSeconds(30)))
     {
-        OutboundLoopResult warmupResult =
-            await RunOutboundPublishLoopAsync(
+        long warmupMessages = Math.Max(1, messagesPerWave / 10);
+        await RunFixedPublishLoopAsync(
                 broker,
                 message,
                 maxPendingMessages,
-                warmup.Token,
                 subscriberCount,
                 () => Interlocked.Read(ref receivedMessages),
-                collectTimings: false);
+                warmupMessages,
+                warmup.Token);
         await WaitForSubscriberDrainAsync(
-            warmupResult.PublishedMessages * subscriberCount,
+            warmupMessages * subscriberCount,
             () => Interlocked.Read(ref receivedMessages),
             CancellationToken.None);
     }
@@ -789,19 +788,16 @@ static async Task RunMemoryAsync(Dictionary<string, string> arguments)
     for (int wave = 1; wave <= waveCount; wave++)
     {
         Interlocked.Exchange(ref receivedMessages, 0);
-        using CancellationTokenSource measurement = new(
-            TimeSpan.FromSeconds(measurementSeconds));
-        OutboundLoopResult loopResult =
-            await RunOutboundPublishLoopAsync(
+        await RunFixedPublishLoopAsync(
                 broker,
                 message,
                 maxPendingMessages,
-                measurement.Token,
                 subscriberCount,
                 () => Interlocked.Read(ref receivedMessages),
-                collectTimings: false);
+                messagesPerWave,
+                CancellationToken.None);
         long expected =
-            loopResult.PublishedMessages * subscriberCount;
+            messagesPerWave * subscriberCount;
         long drainStarted = Stopwatch.GetTimestamp();
         await WaitForSubscriberDrainAsync(
             expected,
@@ -813,7 +809,7 @@ static async Task RunMemoryAsync(Dictionary<string, string> arguments)
             broker.GetMemorySnapshotForTest();
         MemoryWaveResult result = new(
             wave,
-            loopResult.PublishedMessages,
+            messagesPerWave,
             Interlocked.Read(ref receivedMessages),
             0,
             drain.TotalMilliseconds,
@@ -837,6 +833,30 @@ static async Task RunMemoryAsync(Dictionary<string, string> arguments)
     }
 
     await app.StopAsync();
+}
+
+static async ValueTask RunFixedPublishLoopAsync(
+    MqttZeroBroker broker,
+    MqttZeroPublishMessage message,
+    int maxPendingMessages,
+    int deliveryMultiplier,
+    Func<long> getReceivedMessages,
+    long messageCount,
+    CancellationToken cancellationToken)
+{
+    for (long published = 0; published < messageCount; published++)
+    {
+        while (published * deliveryMultiplier -
+            getReceivedMessages() >
+            maxPendingMessages)
+        {
+            await Task.Delay(
+                TimeSpan.FromMilliseconds(1),
+                cancellationToken);
+        }
+
+        await broker.PublishAsync(message, cancellationToken);
+    }
 }
 
 static void ForceGarbageCollection()
