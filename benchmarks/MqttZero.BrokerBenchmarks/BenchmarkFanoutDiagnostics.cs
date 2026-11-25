@@ -22,4 +22,11 @@ internal sealed record BenchmarkFanoutDiagnostics(
     long EgressBatchMessageCount,
     long EgressBatchByteCount,
     double AverageEgressBatchMessages,
-    long EgressFlushStartCount);
+    long EgressFlushStartCount,
+    long SessionLockWaitCount,
+    double AverageSessionLockWaitMicroseconds,
+    double MaxSessionLockWaitMicroseconds,
+    double AveragePendingSelectionMicroseconds,
+    double AverageInflightUpdateMicroseconds,
+    double AveragePublishEncodeMicroseconds,
+    double AveragePublishWriteMicroseconds);

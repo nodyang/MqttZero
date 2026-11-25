@@ -25,6 +25,11 @@ internal sealed class MqttZeroFanoutDiagnostics
     private long _egressBatchMessageCount;
     private long _egressBatchByteCount;
     private long _egressFlushStartCount;
+    private long _maxInflightUpdateTicks;
+    private long _maxPendingSelectionTicks;
+    private long _maxPublishEncodeTicks;
+    private long _maxPublishWriteTicks;
+    private long _maxSessionLockWaitTicks;
     private long _fanoutSchedulerBatchCount;
     private long _fanoutSchedulerEnqueueCount;
     private long _fanoutSchedulerFailureCount;
@@ -33,6 +38,12 @@ internal sealed class MqttZeroFanoutDiagnostics
     private long _maxFanoutSchedulerWaitTicks;
     private long _totalFanoutTicks;
     private long _totalEgressSchedulerTicks;
+    private long _totalInflightUpdateTicks;
+    private long _totalPendingSelectionTicks;
+    private long _totalPublishEncodeTicks;
+    private long _totalPublishWriteTicks;
+    private long _sessionLockWaitCount;
+    private long _totalSessionLockWaitTicks;
 
     public MqttZeroFanoutDiagnostics()
         : this(AppContext.TryGetSwitch(
@@ -85,6 +96,17 @@ internal sealed class MqttZeroFanoutDiagnostics
             Interlocked.Read(ref _maxFanoutSchedulerWaitTicks) *
                 1_000_000d /
                 System.Diagnostics.Stopwatch.Frequency,
+            Interlocked.Read(ref _sessionLockWaitCount),
+            Interlocked.Read(ref _totalSessionLockWaitTicks),
+            Interlocked.Read(ref _maxSessionLockWaitTicks),
+            Interlocked.Read(ref _totalPendingSelectionTicks),
+            Interlocked.Read(ref _maxPendingSelectionTicks),
+            Interlocked.Read(ref _totalInflightUpdateTicks),
+            Interlocked.Read(ref _maxInflightUpdateTicks),
+            Interlocked.Read(ref _totalPublishEncodeTicks),
+            Interlocked.Read(ref _maxPublishEncodeTicks),
+            Interlocked.Read(ref _totalPublishWriteTicks),
+            Interlocked.Read(ref _maxPublishWriteTicks),
             Interlocked.Read(ref _fanoutFailureCount));
     }
 
@@ -105,6 +127,62 @@ internal sealed class MqttZeroFanoutDiagnostics
 
         Interlocked.Add(ref _totalEgressDrainTicks, elapsedTicks);
         InterlockedMax(ref _maxEgressDrainTicks, elapsedTicks);
+    }
+
+    public void RecordSessionLockWait(long elapsedTicks)
+    {
+        if (!_enabled)
+        {
+            return;
+        }
+
+        Interlocked.Increment(ref _sessionLockWaitCount);
+        Interlocked.Add(ref _totalSessionLockWaitTicks, elapsedTicks);
+        InterlockedMax(ref _maxSessionLockWaitTicks, elapsedTicks);
+    }
+
+    public void RecordPendingSelection(long elapsedTicks)
+    {
+        if (!_enabled)
+        {
+            return;
+        }
+
+        Interlocked.Add(ref _totalPendingSelectionTicks, elapsedTicks);
+        InterlockedMax(ref _maxPendingSelectionTicks, elapsedTicks);
+    }
+
+    public void RecordInflightUpdate(long elapsedTicks)
+    {
+        if (!_enabled)
+        {
+            return;
+        }
+
+        Interlocked.Add(ref _totalInflightUpdateTicks, elapsedTicks);
+        InterlockedMax(ref _maxInflightUpdateTicks, elapsedTicks);
+    }
+
+    public void RecordPublishEncode(long elapsedTicks)
+    {
+        if (!_enabled)
+        {
+            return;
+        }
+
+        Interlocked.Add(ref _totalPublishEncodeTicks, elapsedTicks);
+        InterlockedMax(ref _maxPublishEncodeTicks, elapsedTicks);
+    }
+
+    public void RecordPublishWrite(long elapsedTicks)
+    {
+        if (!_enabled)
+        {
+            return;
+        }
+
+        Interlocked.Add(ref _totalPublishWriteTicks, elapsedTicks);
+        InterlockedMax(ref _maxPublishWriteTicks, elapsedTicks);
     }
 
     public void RecordEgressScheduledActor()
@@ -269,6 +347,17 @@ internal sealed class MqttZeroFanoutDiagnostics
         Interlocked.Exchange(ref _fanoutSchedulerBatchCount, 0);
         Interlocked.Exchange(ref _fanoutSchedulerFailureCount, 0);
         Interlocked.Exchange(ref _maxFanoutSchedulerWaitTicks, 0);
+        Interlocked.Exchange(ref _sessionLockWaitCount, 0);
+        Interlocked.Exchange(ref _totalSessionLockWaitTicks, 0);
+        Interlocked.Exchange(ref _maxSessionLockWaitTicks, 0);
+        Interlocked.Exchange(ref _totalPendingSelectionTicks, 0);
+        Interlocked.Exchange(ref _maxPendingSelectionTicks, 0);
+        Interlocked.Exchange(ref _totalInflightUpdateTicks, 0);
+        Interlocked.Exchange(ref _maxInflightUpdateTicks, 0);
+        Interlocked.Exchange(ref _totalPublishEncodeTicks, 0);
+        Interlocked.Exchange(ref _maxPublishEncodeTicks, 0);
+        Interlocked.Exchange(ref _totalPublishWriteTicks, 0);
+        Interlocked.Exchange(ref _maxPublishWriteTicks, 0);
         Interlocked.Exchange(ref _fanoutFailureCount, 0);
     }
 

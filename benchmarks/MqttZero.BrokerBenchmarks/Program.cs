@@ -482,7 +482,26 @@ static async Task RunOutboundAsync(Dictionary<string, string> arguments)
         diagnosticsSnapshot.EgressBatchMessageCount,
         diagnosticsSnapshot.EgressBatchByteCount,
         averageEgressBatchMessages,
-        diagnosticsSnapshot.EgressFlushStartCount);
+        diagnosticsSnapshot.EgressFlushStartCount,
+        diagnosticsSnapshot.SessionLockWaitCount,
+        ToAverageMicroseconds(
+            diagnosticsSnapshot.TotalSessionLockWaitTicks,
+            diagnosticsSnapshot.SessionLockWaitCount),
+        ToAverageMicroseconds(
+            diagnosticsSnapshot.MaxSessionLockWaitTicks,
+            1),
+        ToAverageMicroseconds(
+            diagnosticsSnapshot.TotalPendingSelectionTicks,
+            diagnosticsSnapshot.EgressDataBatchCount),
+        ToAverageMicroseconds(
+            diagnosticsSnapshot.TotalInflightUpdateTicks,
+            diagnosticsSnapshot.EncodedPublishCount),
+        ToAverageMicroseconds(
+            diagnosticsSnapshot.TotalPublishEncodeTicks,
+            diagnosticsSnapshot.EncodedPublishCount),
+        ToAverageMicroseconds(
+            diagnosticsSnapshot.TotalPublishWriteTicks,
+            diagnosticsSnapshot.EgressDataBatchCount));
     OutboundBenchmarkResult result = new(
         PublishedMessages: loopResult.PublishedMessages,
         ReceivedMessages: Interlocked.Read(ref receivedMessages),
@@ -670,6 +689,15 @@ static double PercentileMicroseconds(long[] samples, int count, double percentil
 
     int index = Math.Clamp((int)Math.Ceiling(percentile * count) - 1, 0, count - 1);
     return samples[index] * 1_000_000d / Stopwatch.Frequency;
+}
+
+static double ToAverageMicroseconds(long totalTicks, long sampleCount)
+{
+    return sampleCount == 0
+        ? 0
+        : totalTicks * 1_000_000d /
+            Stopwatch.Frequency /
+            sampleCount;
 }
 
 static async Task WaitForCancellationAsync(CancellationToken cancellationToken)
