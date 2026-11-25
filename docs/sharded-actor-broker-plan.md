@@ -2,7 +2,7 @@
 
 ## 状态
 
-- 状态：待执行
+- 状态：Phase 2 部分完成；完整 Egress 闭环待独立实验
 - 目标分支：`perf/outperform-mqttnet`
 - 目标框架：`net10.0`
 - 记录日期：2026-11-25
@@ -83,6 +83,11 @@
 
 ### Phase 2：单连接 Egress Actor
 
+> 当前状态：部分完成。现有 Egress Actor 尚未独占 Session Pending、Inflight、
+> 编码、PipeWriter 写入和 Flush 生命周期的完整发送闭环。性能研究分支保持红色，
+> 不阻塞普通 alpha 发布。完整闭环将在独立分支单次实验，具体见
+> `docs/superpowers/plans/2026-11-25-mainline-convergence-egress-closure.md`。
+
 - [ ] 合并 Session Outbound Pump、Connection Writer 和连接写锁为 Session 所属 Shard 中的唯一 Egress 状态机。
 - [ ] Egress 维护控制帧优先队列和待发送数据状态。
 - [ ] 控制帧只在完整 MQTT 包边界插入。
@@ -151,6 +156,10 @@
 - [ ] TLS、WebSocket、MQTT 5 属性、QoS 2、Session Takeover、Message Expiry 和 Retained 行为全部回归。
 
 ### Phase 7：Kestrel 与 Socket A/B
+
+> 当前状态：实验已完成并拒绝。明文 `SocketAsyncEventArgs` 原型吞吐低于
+> Kestrel，相关生产代码已删除；Kestrel 保持唯一生产传输。决策记录见
+> `perf/baseline/broker-transport-ab-2026-11-25.md`。
 
 - [ ] 把 Broker 与传输边界抽象为内部 Transport Connection。
 - [ ] Kestrel 保持生产默认路径。

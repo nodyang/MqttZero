@@ -1,6 +1,6 @@
 # MQTTZero
 
-MQTTZero 是一个面向 ASP.NET Core Kestrel 的独立 MQTT 5 Broker。生产代码不依赖 MQTTnet，目标框架为 .NET 10。当前版本为 `0.11.0-alpha.1`。
+MQTTZero 是一个面向 ASP.NET Core Kestrel 的独立 MQTT 5 Broker。生产代码不依赖 MQTTnet，目标框架为 .NET 10。当前版本为 `0.11.0-alpha.2`。
 
 ## 当前能力
 
@@ -299,15 +299,16 @@ dotnet run -c Release --project benchmarks/MqttZero.Benchmarks -- `
 Trie 和内存端到端均经过 `0 B/op` 分配验证；网络 Broker 对比结果和尚未
 通过的单元格以 baseline 报告为准。
 
-Phase 4.5 的 QoS 0 Fanout 流水化、Egress 低优先级调度和拓扑 A/B 结果见
-`perf/baseline/broker-phase4.5-2026-11-25.md`。当前网络热路径门禁仍未
-全部通过，Phase 5 暂缓。
+普通 alpha 发布门禁要求正确性、分配哨兵、真实传输测试和 Dashboard 测试
+通过，并确保同机稳定基线的吞吐回退不超过 5%。严格 MQTTnet 对比保留为
+夜间性能声明门禁：只有三次重复中位数同时满足吞吐胜出和 p99 不劣于
+MQTTnet，才可宣称该单元格领先。未胜出的单元格作为已知差距记录，不阻塞
+普通 alpha 发布。性能定位见 `docs/performance-positioning.md`。
 
-Phase 4.6 已修复 Egress 控制包与数据 Flush 的状态竞态，以及
-FlushPending 期间新数据信号丢失的问题。12 格三次矩阵现在可以完整运行，
-但严格 MQTTnet 门禁仍只通过 2/12，单订阅 64 KiB 的跨 Shard 尾延迟仍是
-主要阻塞；阶段保持红色，详见
-`perf/baseline/broker-phase4.6-2026-11-25.md`。
+当前 Egress Actor 只部分实现连接发送闭环；Session Pending、Inflight、
+编码、PipeWriter 和 Flush 生命周期尚未统一到同一个所有权域。完整闭环
+作为单次、带止损门限的独立实验执行，详见
+`docs/superpowers/plans/2026-11-25-mainline-convergence-egress-closure.md`。
 
 Phase 3 已将 QoS 0 候选队列改为完全惰性侵入链、消息 Lease 合并为单
 Slab，并按需创建 Topic Alias 表。内存结果见
