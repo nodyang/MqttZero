@@ -1,6 +1,6 @@
 # MQTTZero Master Hot-Path Hardening Plan
 
-> **Status:** Active. Task 1 is complete; Task 2 is next.
+> **Status:** Active. Tasks 1-2 are complete; Task 3 is next.
 >
 > **Base:** `master` at `1a6b71e`
 >
@@ -71,27 +71,29 @@ remain unchanged. New supporting types are internal.
 
 ### Required Ownership
 
-- [ ] Only the owning Shard may mutate `_controlQueue`, `_controlBatch`,
+- [x] Only the owning Shard may mutate `_controlQueue`, `_controlBatch`,
   executing/ready state and final stop state.
-- [ ] Flush completion performs only its completion-source bookkeeping before
+- [x] Flush completion performs only its completion-source bookkeeping before
   posting a reusable Work item.
-- [ ] Stop marks a stopping intent, then posts a Shard command.
-- [ ] No fire-and-forget exception path or lost wake is introduced.
+- [x] Stop marks a stopping intent, then posts a Shard command.
+- [x] No fire-and-forget exception path or lost wake is introduced.
 
 ### Tests
 
-- [ ] Flush completion races with Control enqueue.
-- [ ] Flush completion races with Stop and detach.
-- [ ] Repeated Stop is idempotent.
-- [ ] Takeover stops the old Actor before the replacement can write.
-- [ ] Queued control frames complete or fail exactly once.
-- [ ] Every queued Lease/frame is released after cancellation or failure.
+- [x] Flush completion races with Control enqueue.
+- [x] Flush completion races with Stop and detach.
+- [x] Repeated Stop is idempotent.
+- [x] Takeover stops the old Actor before the replacement can write.
+- [x] Queued control frames complete or fail exactly once.
+- [x] Every queued Lease/frame is released after cancellation or failure.
 
 ### Gate
 
-- [ ] No thread-unsafe collection access outside the owning Shard.
-- [ ] Flush-control ordering tests remain green.
-- [ ] No more than five-percent regression in the corrected 64-KiB cells.
+- [x] No thread-unsafe collection access outside the owning Shard.
+- [x] Flush-control ordering tests remain green.
+- [x] No more than five-percent regression in the corrected 64-KiB cells.
+- [x] Target `QoS 1 / 100 / 64 KiB` median improved from `21.33` to
+  `22.00 msg/s` in the two-run development check.
 
 ### Commit
 

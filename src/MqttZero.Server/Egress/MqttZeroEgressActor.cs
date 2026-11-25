@@ -17,8 +17,10 @@ internal sealed class MqttZeroEgressActor : IAsyncDisposable
     private readonly MqttZeroEgressScheduler _scheduler;
     private readonly TaskCompletionSource _stopped = new(
         TaskCreationOptions.RunContinuationsAsynchronously);
+    private int _controlSignaled;
     private int _dataSignaled;
     private int _executing;
+    private Exception? _flushFailure;
     private int _flushPending;
     private int _ready;
     private int _stopping;
@@ -151,9 +153,7 @@ internal sealed class MqttZeroEgressActor : IAsyncDisposable
             Volatile.Write(
                 ref _state,
                 (int)MqttZeroEgressActorState.Stopping);
-            FailQueuedControls(
-                new ObjectDisposedException(nameof(MqttZeroEgressActor)));
-            TryCompleteStop();
+            _scheduler.Signal(this);
         }
 
         await _stopped.Task.ConfigureAwait(false);
@@ -166,8 +166,30 @@ internal sealed class MqttZeroEgressActor : IAsyncDisposable
 
     internal async ValueTask ExecuteAsync(CancellationToken cancellationToken)
     {
-        if (Volatile.Read(ref _stopping) != 0 ||
-            Volatile.Read(ref _flushPending) != 0)
+        Exception? flushFailure = Interlocked.Exchange(
+            ref _flushFailure,
+            null);
+        if (flushFailure != null)
+        {
+            Volatile.Write(ref _stopping, 1);
+            Volatile.Write(
+                ref _state,
+                (int)MqttZeroEgressActorState.Stopping);
+            FailQueuedControls(flushFailure);
+            _faulted(flushFailure);
+            TryCompleteStop();
+            return;
+        }
+
+        if (Volatile.Read(ref _stopping) != 0)
+        {
+            FailQueuedControls(
+                new ObjectDisposedException(nameof(MqttZeroEgressActor)));
+            TryCompleteStop();
+            return;
+        }
+
+        if (Volatile.Read(ref _flushPending) != 0)
         {
             return;
         }
@@ -175,7 +197,10 @@ internal sealed class MqttZeroEgressActor : IAsyncDisposable
         Volatile.Write(
             ref _state,
             (int)MqttZeroEgressActorState.Draining);
-        Volatile.Write(ref _dataSignaled, 0);
+        Volatile.Write(ref _controlSignaled, 0);
+        bool dataSignaled = Interlocked.Exchange(
+            ref _dataSignaled,
+            0) != 0;
         try
         {
             while (_controlQueue.Count > 0)
@@ -190,7 +215,9 @@ internal sealed class MqttZeroEgressActor : IAsyncDisposable
                     .ConfigureAwait(false);
             }
 
-            if (Volatile.Read(ref _stopping) == 0)
+            if (Volatile.Read(ref _stopping) == 0 &&
+                (dataSignaled ||
+                    Volatile.Read(ref _dataSignaled) != 0))
             {
                 bool hasMoreData = await _drainData(cancellationToken)
                     .ConfigureAwait(false);
@@ -240,7 +267,8 @@ internal sealed class MqttZeroEgressActor : IAsyncDisposable
         }
 
         if (Volatile.Read(ref _flushPending) == 0 &&
-            (_controlQueue.Count > 0 ||
+            (Volatile.Read(ref _controlSignaled) != 0 ||
+                _controlQueue.Count > 0 ||
                 Volatile.Read(ref _dataSignaled) != 0))
         {
             Schedule();
@@ -252,28 +280,21 @@ internal sealed class MqttZeroEgressActor : IAsyncDisposable
         Volatile.Write(ref _flushPending, 0);
         if (exception != null)
         {
-            FailQueuedControls(exception);
-            _faulted(exception);
-            Volatile.Write(ref _stopping, 1);
-            Volatile.Write(
-                ref _state,
-                (int)MqttZeroEgressActorState.Stopping);
+            Volatile.Write(ref _flushFailure, exception);
         }
 
-        if (Volatile.Read(ref _stopping) != 0)
+        if (Volatile.Read(ref _stopping) != 0 ||
+            Volatile.Read(ref _flushFailure) != null ||
+            Volatile.Read(ref _controlSignaled) != 0 ||
+            Volatile.Read(ref _dataSignaled) != 0)
         {
-            TryCompleteStop();
+            _scheduler.Signal(this);
             return;
         }
 
         Volatile.Write(
             ref _state,
             (int)MqttZeroEgressActorState.Idle);
-        if (_controlQueue.Count > 0 ||
-            Volatile.Read(ref _dataSignaled) != 0)
-        {
-            SignalCore();
-        }
     }
 
     private async ValueTask RunControlBatchAsync(
@@ -338,6 +359,7 @@ internal sealed class MqttZeroEgressActor : IAsyncDisposable
         }
 
         _controlQueue.Enqueue(frame);
+        Volatile.Write(ref _controlSignaled, 1);
         Schedule();
     }
 
