@@ -44,6 +44,14 @@
 - Rejected experiments:
   - Four batches per Actor turn: no improvement; reverted.
   - Extracted publish-batch selector: target regressed; reverted.
+- Completed in this execution:
+  - Task 1 cleanup verified with `578/578` core tests and `22/22` allocation sentinels.
+  - Task 3 selected the writer/flush hypothesis from the 20-second diagnostic.
+  - A complete connection writer reached `1.055x` target throughput and `0.707x`
+    target p99 against MQTTnet.
+  - The writer was rejected because single-subscriber 64 KiB throughput fell
+    more than five percent. Evidence is in
+    `perf/baseline/egress-writer-result-2026-11-25.md`.
 - Known plan defects to remove:
   - `MqttZeroConnectionEgress` is currently only a wrapper and does not own the send loop.
   - `MqttZeroEgressOwnership` has no production caller.

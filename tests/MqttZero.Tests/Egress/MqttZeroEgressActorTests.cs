@@ -1,6 +1,7 @@
 using MqttZero.Memory;
 using MqttZero.Server.Egress;
 using MqttZero.Server.Scheduling;
+using System.IO.Pipelines;
 
 namespace MqttZero.Tests.Egress;
 
@@ -120,6 +121,12 @@ public sealed class MqttZeroEgressActorTests
         using MqttZeroBufferPool bufferPool = new(1024 * 1024);
         using MqttZeroEgressControlFramePool framePool =
             new(bufferPool);
+        TaskCompletionSource<FlushResult> flushCompletion = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource flushStarted = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        int drainCount = 0;
+        MqttZeroEgressActor? actorReference = null;
         await using MqttZeroEgressActor actor = CreateActor(
             scheduler,
             (frames, _) =>
@@ -129,18 +136,38 @@ public sealed class MqttZeroEgressActorTests
             },
             _ =>
             {
-                sequence.Add("data");
+                int current = Interlocked.Increment(ref drainCount);
+                if (current == 1)
+                {
+                    Assert.False(actorReference!.BeginFlush(
+                        new ValueTask<FlushResult>(flushCompletion.Task)));
+                    flushStarted.TrySetResult();
+                }
+                else
+                {
+                    sequence.Add("data");
+                }
+
                 return ValueTask.FromResult(false);
             },
             _ => { });
+        actorReference = actor;
         MqttZeroEgressControlFrame control = CreateFrame(framePool);
 
+        actor.Signal();
+        await flushStarted.Task.WaitAsync(
+            TestContext.Current.CancellationToken);
         Task controlCompletion = actor.PostControlAsync(
             control,
             TestContext.Current.CancellationToken).AsTask();
         actor.Signal();
         try
         {
+            await Task.Delay(
+                TimeSpan.FromMilliseconds(20),
+                TestContext.Current.CancellationToken);
+            Assert.Empty(sequence);
+            flushCompletion.TrySetResult(new FlushResult(false, false));
             await controlCompletion.WaitAsync(
                 TestContext.Current.CancellationToken);
             await WaitUntilAsync(
