@@ -1,8 +1,20 @@
 # MQTTZero Egress Performance Reset Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Status: CLOSED - HISTORICAL.**
+>
+> Do not execute Tasks 4 through 6. The complete connection writer in Task 4
+> was implemented and measured, but it was rejected because single-subscriber
+> 64-KiB cells regressed by more than five percent. The production
+> implementation was removed.
+>
+> Continue with:
+> `docs/superpowers/plans/2026-11-26-egress-fairness-adaptive-recovery.md`.
 
-**Goal:** 清除当前 Egress 实验中无效的中间抽象，建立同口径基线，用证据确定剩余瓶颈，并且只执行一次完整的 Connection Writer 纵向替换。
+> **Historical execution note:** This plan is retained for provenance and must
+> not be resumed. Use the superseding plan for all new work.
+
+**Historical goal:** 清除当时 Egress 实验中的无效中间抽象，建立同口径基线，
+用证据确定瓶颈，并且只执行一次完整的 Connection Writer 纵向替换。
 
 **Architecture:** Stage 1 已合入 `master` 并发布 `0.11.0-alpha.2`。本计划不再将“所有权容器、选批器、Writer”拆成互相依赖的半成品；先回到“现有发送路径 + 诊断能力”的干净基座，只有归因证明 Writer 是瓶颈时，才用一个完整状态机替换旧发送路径。
 
@@ -249,11 +261,14 @@
   git commit -m "docs: attribute remaining egress gap"
   ```
 
-## Task 4: Implement One Complete Connection Writer Slice
+## Task 4: CLOSED - Complete Connection Writer Slice
 
-Execute this task only when Task 3 selects the per-message writer/flush
-hypothesis. This is one architectural change, not four incremental ownership
-tasks.
+> Closed on 2026-11-26. The implementation and gate result are recorded in
+> `perf/baseline/egress-writer-result-2026-11-25.md`. Do not execute this task
+> again as a universal replacement.
+
+The following precondition and file list record the historical implementation
+that was actually executed. They are not current instructions.
 
 **Files:**
 - Create: `src/MqttZero.Server/Egress/MqttZeroConnectionWriter.cs`
@@ -328,7 +343,10 @@ tasks.
   git commit -m "perf: replace broker drain with connection writer"
   ```
 
-## Task 5: Run the Unified Writer Gate
+## Task 5: CLOSED - Unified Writer Gate
+
+> The gate ran and rejected the implementation. Keep the recorded result; do
+> not treat the unchecked historical steps below as pending work.
 
 **Files:**
 - Create: `perf/baseline/egress-writer-result-2026-11-25.json`
@@ -388,7 +406,10 @@ tasks.
   git commit -m "perf: validate connection writer"
   ```
 
-## Task 6: Branch Completion
+## Task 6: CLOSED - Historical Branch Completion
+
+> Superseded by the fairness and adaptive-send recovery plan. This section is
+> retained only for project history.
 
 **Files:**
 - Modify: `README.md`

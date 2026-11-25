@@ -36,9 +36,26 @@ zero-allocation claim.
 
 ## Next Architecture Step
 
-The current Egress Actor does not yet own the complete Session-to-PipeWriter
-send loop. The approved next experiment is a single, time-boxed connection
-Egress closure. It must improve the primary QoS 1 / 100-subscriber / 64 KiB
-cell without regressing critical cells by more than five percent. If it does
-not meet that gate, the experiment is removed and the strict performance matrix
-remains a long-term research target.
+The complete connection-writer experiment was measured and rejected. It
+improved QoS 1 / 100 subscribers / 64 KiB, but regressed single-subscriber
+64-KiB QoS 0 and QoS 1 throughput beyond the five-percent gate. The production
+implementation was removed.
+
+The next track is defined in
+`docs/superpowers/plans/2026-11-26-egress-fairness-adaptive-recovery.md`:
+
+1. Correct the benchmark payload-copy and delivery-drain contract.
+2. Guarantee fair progress between high-priority Fanout work and low-priority
+   Egress work.
+3. Only if measured evidence still requires it, add Direct and Backlog modes
+   under one Egress owner instead of replacing every path with one Writer.
+
+Development regression checks may use two repetitions to keep iteration cost
+bounded. Final performance claims and published comparison matrices still
+require three repetitions. A two-run sample must be repeated with a third run
+when throughput spread exceeds ten percent or p99 spread exceeds twenty
+percent.
+
+Universal MQTTnet superiority across every benchmark cell remains outside the
+ordinary release gate. Performance claims are limited to measured cells and
+named metrics.

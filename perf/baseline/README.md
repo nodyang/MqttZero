@@ -114,6 +114,17 @@
   the per-message Session/Egress/Flush scheduling chain, with average fanout
   batches near 1.2 messages and almost every QoS 0/1 64-KiB batch waiting on an
   asynchronous Flush. More Encode or batch-constant tuning is not the next step.
+- A complete connection-writer experiment improved QoS 1 / 100 / 64 KiB to
+  `1.055x` MQTTnet throughput with `0.707x` p99, but regressed single-subscriber
+  64-KiB QoS 0 and QoS 1 throughput beyond the five-percent gate. The
+  implementation was rejected and removed.
+- The current benchmark client still copies each MQTTnet payload with
+  `payload.ToArray()`, and its reported latency is the publisher API-call
+  duration. Benchmark correction and final subscriber-drain measurement are
+  prerequisites for the next architecture experiment.
+- The next plan targets fair Shard progress and, only if still needed,
+  Direct/Backlog modes under one Egress owner:
+  `docs/superpowers/plans/2026-11-26-egress-fairness-adaptive-recovery.md`.
 - `codec-0.3.0-alpha.1.*`
 - `routing-0.3.0-alpha.1.*`
 - `memory-transport-0.3.0-alpha.1.*`
