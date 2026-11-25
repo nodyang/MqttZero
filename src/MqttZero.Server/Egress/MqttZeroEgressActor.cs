@@ -14,6 +14,7 @@ internal sealed class MqttZeroEgressActor : IAsyncDisposable
         ValueTask> _writeControls;
     private readonly Func<CancellationToken, ValueTask<bool>> _drainData;
     private readonly Action<Exception> _faulted;
+    private readonly MqttZeroEgressFlushOperation _flushOperation;
     private readonly MqttZeroEgressScheduler _scheduler;
     private readonly TaskCompletionSource _stopped = new(
         TaskCreationOptions.RunContinuationsAsynchronously);
@@ -43,6 +44,8 @@ internal sealed class MqttZeroEgressActor : IAsyncDisposable
         _drainData = drainData ??
             throw new ArgumentNullException(nameof(drainData));
         _faulted = faulted ?? throw new ArgumentNullException(nameof(faulted));
+        _flushOperation = new MqttZeroEgressFlushOperation(
+            OnFlushCompleted);
     }
 
     public MqttZeroEgressActorState State
@@ -107,9 +110,7 @@ internal sealed class MqttZeroEgressActor : IAsyncDisposable
         Volatile.Write(
             ref _state,
             (int)MqttZeroEgressActorState.FlushPending);
-        _ = new MqttZeroEgressFlushOperation(
-            flush,
-            OnFlushCompleted).RunAsync();
+        _flushOperation.Start(flush);
         return false;
     }
 
