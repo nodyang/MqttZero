@@ -3,6 +3,7 @@ using MqttZero.Server.Clients;
 using MqttZero.Memory;
 using MqttZero.Protocol;
 using MqttZero.Server.Routing;
+using MqttZero.Server.Scheduling;
 using MqttZero.Server.Sessions;
 using System.Buffers;
 
@@ -14,13 +15,16 @@ public sealed partial class MqttZeroBroker
         MqttZeroSessionState sender,
         MqttZeroClientConnection senderConnection,
         MqttZeroMessageLease lease,
+        bool suppressPublisherAck,
         CancellationToken cancellationToken)
     {
         MqttZeroMessageLease effectiveLease = lease;
         bool ownsEffectiveLease = false;
-        if (lease.ExpiresAt <= _timeProvider.GetUtcNow())
+        if (lease.ExpiresAt.HasValue &&
+            lease.ExpiresAt.Value <= _timeProvider.GetUtcNow())
         {
-            if (lease.QualityOfServiceLevel == MqttQualityOfServiceLevel.AtLeastOnce)
+            if (!suppressPublisherAck &&
+                lease.QualityOfServiceLevel == MqttQualityOfServiceLevel.AtLeastOnce)
             {
                 await senderConnection.SendPubAckAsync(
                     lease.PacketIdentifier,
@@ -70,7 +74,8 @@ public sealed partial class MqttZeroBroker
                                     : context.ResultReasonCode,
                                 cancellationToken).ConfigureAwait(false);
                         }
-                        else if (lease.QualityOfServiceLevel ==
+                        else if (!suppressPublisherAck &&
+                            lease.QualityOfServiceLevel ==
                             MqttQualityOfServiceLevel.AtLeastOnce)
                         {
                             await senderConnection.SendPubAckAsync(
@@ -109,36 +114,103 @@ public sealed partial class MqttZeroBroker
 
         try
         {
+            effectiveLease.EnsureOwned();
             if (effectiveLease.RetainFlag)
             {
                 StoreRetainedMessageInMemory(effectiveLease);
             }
 
-            MqttZeroSubscriptionRouteSnapshot routeSnapshot =
-                Volatile.Read(ref _subscriptionRouteSnapshot);
-            using MqttZeroRouteScope deliveries = MqttZeroRouteSelector.Select(
-                routeSnapshot,
-                effectiveLease.Topic.Span,
-                sender,
-                _sharedSubscriptionCursors,
-                _routeScopes);
-            for (int index = 0; index < deliveries.Count; index++)
+            MqttZeroFanoutDispatcher dispatcher =
+                Volatile.Read(ref _fanoutDispatcher) ??
+                throw new InvalidOperationException(
+                    "The MQTTZero fanout dispatcher is not running.");
+            MqttZeroRoutePlannerLanes lanes =
+                Volatile.Read(ref _routePlannerLanes) ??
+                throw new InvalidOperationException(
+                    "The MQTTZero route planner is not running.");
+            MqttZeroShardSet shards = Volatile.Read(ref _shardSet) ??
+                throw new InvalidOperationException(
+                    "The MQTTZero event loop shards are not running.");
+            int publisherShardId = sender.ShardId;
+            if (effectiveLease.QualityOfServiceLevel ==
+                MqttQualityOfServiceLevel.AtMostOnce)
             {
-                MqttZeroDeliveryCandidate delivery = deliveries[index];
-                MqttQualityOfServiceLevel deliveryQos =
-                    (MqttQualityOfServiceLevel)Math.Min(
-                        (byte)effectiveLease.QualityOfServiceLevel,
-                        (byte)delivery.QualityOfServiceLevel);
-                await DeliverLeaseFastAsync(
-                    delivery.Session,
-                    effectiveLease,
-                    deliveryQos,
-                    delivery.Subscription.RetainAsPublished && effectiveLease.RetainFlag,
-                    delivery.SubscriptionIdentifiers,
-                    cancellationToken).ConfigureAwait(false);
+                MqttZeroRoutePlanBufferPool qosZeroPlanBuffers =
+                    Volatile.Read(ref _qosZeroPlanBuffers) ??
+                    throw new InvalidOperationException(
+                        "The MQTTZero QoS 0 planner buffers are not running.");
+                MqttZeroRoutePlanBuffer buffer =
+                    qosZeroPlanBuffers.Rent();
+                MqttZeroRoutePlan plan;
+                try
+                {
+                    plan = MqttZeroRoutePlanner.Plan(
+                        _routeEpochs.Current,
+                        effectiveLease.Topic.Span,
+                        sender,
+                        _sharedGroupCursors,
+                        shards.Count,
+                        buffer);
+                }
+                catch
+                {
+                    qosZeroPlanBuffers.Return(buffer);
+                    throw;
+                }
+
+                if (plan.TotalDeliveryCount == 0)
+                {
+                    qosZeroPlanBuffers.Return(buffer);
+                }
+                else
+                {
+                    await dispatcher.DispatchQosZeroAsync(
+                        plan,
+                        buffer,
+                        effectiveLease,
+                        senderConnection,
+                        publisherShardId,
+                        qosZeroPlanBuffers.ReturnCallback,
+                        cancellationToken).ConfigureAwait(false);
+                }
+            }
+            else
+            {
+                MqttZeroRoutePlan plan = MqttZeroRoutePlanner.Plan(
+                    _routeEpochs.Current,
+                    effectiveLease.Topic.Span,
+                    sender,
+                    _sharedGroupCursors,
+                    shards.Count,
+                    lanes[publisherShardId]);
+                if (plan.TotalDeliveryCount > 0)
+                {
+                    if (effectiveLease.QualityOfServiceLevel ==
+                        MqttQualityOfServiceLevel.AtLeastOnce)
+                    {
+                        await dispatcher.DispatchScheduledAsync(
+                            plan,
+                            lanes[publisherShardId],
+                            effectiveLease,
+                            senderConnection,
+                            publisherShardId,
+                            cancellationToken).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        await dispatcher.DispatchAsync(
+                            plan,
+                            lanes[publisherShardId],
+                            effectiveLease,
+                            senderConnection,
+                            publisherShardId,
+                            cancellationToken).ConfigureAwait(false);
+                    }
+                }
             }
 
-            if (effectiveLease.QualityOfServiceLevel ==
+            if (!suppressPublisherAck &&
+                effectiveLease.QualityOfServiceLevel ==
                 MqttQualityOfServiceLevel.AtLeastOnce)
             {
                 await senderConnection.SendPubAckAsync(
@@ -156,77 +228,103 @@ public sealed partial class MqttZeroBroker
         }
     }
 
-    private async ValueTask DeliverLeaseFastAsync(
+    private ValueTask DeliverLeaseFastAsync(
         MqttZeroSessionState session,
         MqttZeroMessageLease lease,
         MqttQualityOfServiceLevel qos,
         bool retain,
         ReadOnlyMemory<uint> subscriptionIdentifiers,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool copySubscriptionIdentifiers = false)
     {
         DateTimeOffset? expiresAt = lease.ExpiresAt;
-        if (expiresAt <= _timeProvider.GetUtcNow())
+        if (expiresAt.HasValue &&
+            expiresAt.Value <= _timeProvider.GetUtcNow())
         {
-            return;
+            return ValueTask.CompletedTask;
         }
 
-        MqttZeroQueuedMessage? message = null;
-        MqttZeroClientConnection? connection = null;
-        bool packetTooLarge = false;
-        bool messageHeld = false;
+        MqttZeroClientConnection? connection;
         lock (session.SyncRoot)
         {
             connection = session.Connection;
-            if (connection != null &&
-                connection.IsPublishTooLarge(
-                    lease,
-                    qos,
-                    retain,
-                    subscriptionIdentifiers))
-            {
-                packetTooLarge = true;
-            }
-
-            if (!packetTooLarge)
-            {
-                if (qos == MqttQualityOfServiceLevel.AtMostOnce &&
-                    connection == null &&
-                    !_options.StoreQos0InQueue)
-                {
-                    return;
-                }
-
-                message = MqttZeroQueuedMessage.RentWithIdentifiers(
-                    lease,
-                    qos,
-                    retain,
-                    subscriptionIdentifiers,
-                    expiresAt);
-                message.SetMessageId(GetNextMessageId());
-                MqttZeroQueuedMessage? evicted = EnqueueMessage(session, message);
-                evicted?.Release();
-                messageHeld = true;
-            }
         }
 
-        if (packetTooLarge)
+        if (qos == MqttQualityOfServiceLevel.AtMostOnce &&
+            connection == null &&
+            !_options.StoreQos0InQueue)
         {
-            return;
+            return ValueTask.CompletedTask;
         }
 
+        int encodedLength = 0;
+        if (connection != null)
+        {
+            encodedLength = connection.GetPublishEncodedLength(
+                lease,
+                qos,
+                retain,
+                subscriptionIdentifiers);
+            if (encodedLength > connection.MaximumPacketSize)
+            {
+                return ValueTask.CompletedTask;
+            }
+        }
+
+        MqttZeroQueuedMessage message = copySubscriptionIdentifiers
+            ? MqttZeroQueuedMessage.RentWithCopiedIdentifiers(
+                lease,
+                qos,
+                retain,
+                subscriptionIdentifiers,
+                expiresAt)
+            : MqttZeroQueuedMessage.RentWithIdentifiers(
+                lease,
+                qos,
+                retain,
+                subscriptionIdentifiers,
+                expiresAt);
+        message.SetMessageId(GetNextMessageId());
+        MqttZeroQueuedMessage? evicted = null;
+        bool enqueued = false;
         try
         {
-            if (messageHeld)
+            lock (session.SyncRoot)
             {
-                session.OutboundPump?.Signal();
+                if (qos == MqttQualityOfServiceLevel.AtMostOnce &&
+                    session.Connection == null &&
+                    !_options.StoreQos0InQueue)
+                {
+                    return ValueTask.CompletedTask;
+                }
+
+                MqttZeroClientConnection? currentConnection = session.Connection;
+                if (currentConnection != null &&
+                    ReferenceEquals(currentConnection, connection))
+                {
+                    message.SetEncodedLength(
+                        encodedLength,
+                        currentConnection.MaximumPacketSize);
+                }
+
+                evicted = EnqueueMessage(session, message);
+                enqueued = true;
             }
         }
         finally
         {
-            if (message != null && !messageHeld)
+            if (!enqueued)
             {
                 message.Release();
             }
         }
+
+        evicted?.Release();
+        if (enqueued)
+        {
+            SignalEgress(session);
+        }
+
+        return ValueTask.CompletedTask;
     }
 }

@@ -1,9 +1,12 @@
 using MqttZero.Server.Clients;
+using MqttZero.Server.Egress;
 using MqttZero.Server.Interceptors;
 using MqttZero.Memory;
 using MqttZero.Protocol;
 using MqttZero.Publishing;
 using MqttZero.Server.Retained;
+using MqttZero.Server.Routing;
+using MqttZero.Server.Scheduling;
 using MqttZero.Server.Sessions;
 using System.Buffers;
 using System.Text;
@@ -74,7 +77,26 @@ public sealed partial class MqttZeroBroker
         };
     }
 
-    internal async ValueTask<IReadOnlyList<MqttZeroSubscribeResult>> SubscribeConnectedClientAsync(
+    internal ValueTask<IReadOnlyList<MqttZeroSubscribeResult>> SubscribeConnectedClientAsync(
+        MqttZeroSessionState session,
+        MqttZeroClientConnection connection,
+        IReadOnlyList<MqttSubscriptionRequest> subscriptions,
+        uint? subscriptionIdentifier,
+        CancellationToken cancellationToken)
+    {
+        return InvokeOnSessionShardAsync(
+            session,
+            token => SubscribeConnectedClientCoreAsync(
+                session,
+                connection,
+                subscriptions,
+                subscriptionIdentifier,
+                token),
+            cancellationToken);
+    }
+
+    private async ValueTask<IReadOnlyList<MqttZeroSubscribeResult>>
+        SubscribeConnectedClientCoreAsync(
         MqttZeroSessionState session,
         MqttZeroClientConnection connection,
         IReadOnlyList<MqttSubscriptionRequest> subscriptions,
@@ -85,15 +107,14 @@ public sealed partial class MqttZeroBroker
         ArgumentNullException.ThrowIfNull(subscriptions);
         List<MqttZeroSubscribeResult> results = new(subscriptions.Count);
         bool changed = false;
-        List<MqttZeroSubscription>? subscriptionSnapshot = null;
-        if (_sessionStore.IsEnabled)
+        List<MqttZeroSubscription> original;
+        lock (session.SyncRoot)
         {
-            lock (session.SyncRoot)
-            {
-                subscriptionSnapshot = [.. session.Subscriptions];
-            }
+            original = [.. session.Subscriptions];
         }
 
+        List<MqttZeroSubscription> candidate = new(original);
+        List<MqttSubscriptionRequest> retainedRequests = [];
         for (int index = 0; index < subscriptions.Count; index++)
         {
             MqttSubscriptionRequest request = subscriptions[index];
@@ -148,36 +169,35 @@ public sealed partial class MqttZeroBroker
 
             byte[] filter = request.TopicFilter.ToArray();
             bool existed;
-            lock (session.SyncRoot)
+            int existingIndex = candidate.FindIndex(
+                item => item.TopicFilter
+                    .AsSpan()
+                    .SequenceEqual(filter));
+            existed = existingIndex >= 0;
+            if (!existed &&
+                candidate.Count >= _options.MaxSubscriptionsPerSession)
             {
-                int existingIndex = session.Subscriptions.FindIndex(
-                    item => item.TopicFilter.AsSpan().SequenceEqual(filter));
-                existed = existingIndex >= 0;
-                if (!existed &&
-                    session.Subscriptions.Count >= _options.MaxSubscriptionsPerSession)
+                results.Add(new MqttZeroSubscribeResult
                 {
-                    results.Add(new MqttZeroSubscribeResult
-                    {
-                        TopicFilter = Encoding.UTF8.GetString(filter),
-                        ReasonCode = MqttReasonCode.QuotaExceeded
-                    });
-                    continue;
-                }
+                    TopicFilter = Encoding.UTF8.GetString(filter),
+                    ReasonCode = MqttReasonCode.QuotaExceeded
+                });
+                continue;
+            }
 
-                MqttZeroSubscription subscription = new(
-                    filter,
-                    request.QualityOfServiceLevel,
-                    request.NoLocal,
-                    request.RetainAsPublished,
-                    subscriptionIdentifier);
-                if (existingIndex >= 0)
-                {
-                    session.Subscriptions[existingIndex] = subscription;
-                }
-                else
-                {
-                    session.Subscriptions.Add(subscription);
-                }
+            MqttZeroSubscription subscription = new(
+                filter,
+                request.QualityOfServiceLevel,
+                request.NoLocal,
+                request.RetainAsPublished,
+                subscriptionIdentifier);
+            if (existingIndex >= 0)
+            {
+                candidate[existingIndex] = subscription;
+            }
+            else
+            {
+                candidate.Add(subscription);
             }
 
             changed = true;
@@ -201,17 +221,60 @@ public sealed partial class MqttZeroBroker
                 continue;
             }
 
-            foreach (MqttZeroRetainedMessage retained in _retainedMessages.Values)
-            {
-                if (retained.ExpiresAt.HasValue &&
-                    retained.ExpiresAt.Value <= _timeProvider.GetUtcNow())
-                {
-                    continue;
-                }
+            retainedRequests.Add(request);
+        }
 
-                if (!MqttZero.Server.Routing.MqttZeroTopicMatcher.Matches(
-                        filter,
-                        retained.Topic.Span))
+        if (changed)
+        {
+            await CommitSubscriptionsAsync(
+                session,
+                original,
+                candidate,
+                cancellationToken).ConfigureAwait(false);
+        }
+
+        for (int index = 0; index < retainedRequests.Count; index++)
+        {
+            await DeliverRetainedForSubscriptionAsync(
+                session,
+                retainedRequests[index],
+                subscriptionIdentifier,
+                cancellationToken).ConfigureAwait(false);
+        }
+
+        return results;
+    }
+
+    private async ValueTask DeliverRetainedForSubscriptionAsync(
+        MqttZeroSessionState session,
+        MqttSubscriptionRequest request,
+        uint? subscriptionIdentifier,
+        CancellationToken cancellationToken)
+    {
+        if (request.TopicFilter.IsEmpty)
+        {
+            return;
+        }
+
+        byte[] filter = request.TopicFilter.ToArray();
+        if (filter.AsSpan().StartsWith("$share/"u8))
+        {
+            return;
+        }
+
+        List<MqttZeroRetainedMessage> retainedMessages = [];
+        MatchRetainedMessages(filter, retainedMessages);
+        try
+        {
+            DateTimeOffset now = _timeProvider.GetUtcNow();
+            for (int index = 0;
+                index < retainedMessages.Count;
+                index++)
+            {
+                MqttZeroRetainedMessage retained =
+                    retainedMessages[index];
+                if (retained.ExpiresAt.HasValue &&
+                    retained.ExpiresAt.Value <= now)
                 {
                     continue;
                 }
@@ -231,7 +294,7 @@ public sealed partial class MqttZeroBroker
                 packet.MessageExpiryInterval =
                     GetRemainingMessageExpiry(
                         retained.ExpiresAt,
-                        _timeProvider.GetUtcNow());
+                        now);
                 await DeliverAsync(
                     session,
                     packet,
@@ -241,35 +304,30 @@ public sealed partial class MqttZeroBroker
                     cancellationToken).ConfigureAwait(false);
             }
         }
-
-        if (changed)
+        finally
         {
-            RebuildSubscriptionRouteSnapshot();
-            try
-            {
-                await SaveSessionAsync(session, cancellationToken).ConfigureAwait(false);
-            }
-            catch
-            {
-                if (subscriptionSnapshot != null)
-                {
-                    lock (session.SyncRoot)
-                    {
-                        session.Subscriptions.Clear();
-                        session.Subscriptions.AddRange(subscriptionSnapshot);
-                    }
-
-                    RebuildSubscriptionRouteSnapshot();
-                }
-
-                throw;
-            }
+            ReleaseRetainedMessages(retainedMessages);
         }
-
-        return results;
     }
 
-    internal async ValueTask<IReadOnlyList<MqttZeroUnsubscribeResult>> UnsubscribeConnectedClientAsync(
+    internal ValueTask<IReadOnlyList<MqttZeroUnsubscribeResult>> UnsubscribeConnectedClientAsync(
+        MqttZeroSessionState session,
+        MqttZeroClientConnection connection,
+        IReadOnlyList<string> topicFilters,
+        CancellationToken cancellationToken)
+    {
+        return InvokeOnSessionShardAsync(
+            session,
+            token => UnsubscribeConnectedClientCoreAsync(
+                session,
+                connection,
+                topicFilters,
+                token),
+            cancellationToken);
+    }
+
+    private async ValueTask<IReadOnlyList<MqttZeroUnsubscribeResult>>
+        UnsubscribeConnectedClientCoreAsync(
         MqttZeroSessionState session,
         MqttZeroClientConnection connection,
         IReadOnlyList<string> topicFilters,
@@ -279,15 +337,13 @@ public sealed partial class MqttZeroBroker
         ArgumentNullException.ThrowIfNull(topicFilters);
         List<MqttZeroUnsubscribeResult> results = new(topicFilters.Count);
         bool changed = false;
-        List<MqttZeroSubscription>? subscriptionSnapshot = null;
-        if (_sessionStore.IsEnabled)
+        List<MqttZeroSubscription> original;
+        lock (session.SyncRoot)
         {
-            lock (session.SyncRoot)
-            {
-                subscriptionSnapshot = [.. session.Subscriptions];
-            }
+            original = [.. session.Subscriptions];
         }
 
+        List<MqttZeroSubscription> candidate = new(original);
         foreach (string topicFilter in topicFilters)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(topicFilter);
@@ -337,16 +393,14 @@ public sealed partial class MqttZeroBroker
             }
 
             byte[] filter = encodedFilter.ToArray();
-            bool removed = false;
-            lock (session.SyncRoot)
+            int index = candidate.FindIndex(
+                item => item.TopicFilter
+                    .AsSpan()
+                    .SequenceEqual(filter));
+            bool removed = index >= 0;
+            if (removed)
             {
-                int index = session.Subscriptions.FindIndex(
-                    item => item.TopicFilter.AsSpan().SequenceEqual(filter));
-                if (index >= 0)
-                {
-                    session.Subscriptions.RemoveAt(index);
-                    removed = true;
-                }
+                candidate.RemoveAt(index);
             }
 
             changed |= removed;
@@ -361,32 +415,33 @@ public sealed partial class MqttZeroBroker
 
         if (changed)
         {
-            RebuildSubscriptionRouteSnapshot();
-            try
-            {
-                await SaveSessionAsync(session, cancellationToken).ConfigureAwait(false);
-            }
-            catch
-            {
-                if (subscriptionSnapshot != null)
-                {
-                    lock (session.SyncRoot)
-                    {
-                        session.Subscriptions.Clear();
-                        session.Subscriptions.AddRange(subscriptionSnapshot);
-                    }
-
-                    RebuildSubscriptionRouteSnapshot();
-                }
-
-                throw;
-            }
+            await CommitSubscriptionsAsync(
+                session,
+                original,
+                candidate,
+                cancellationToken).ConfigureAwait(false);
         }
 
         return results;
     }
 
-    internal async ValueTask<bool> SendPublishToClientAsync(
+    internal ValueTask<bool> SendPublishToClientAsync(
+        MqttZeroSessionState session,
+        MqttZeroClientConnection connection,
+        MqttZeroPublishMessage message,
+        CancellationToken cancellationToken)
+    {
+        return InvokeOnSessionShardAsync(
+            session,
+            token => SendPublishToClientCoreAsync(
+                session,
+                connection,
+                message,
+                token),
+            cancellationToken);
+    }
+
+    private async ValueTask<bool> SendPublishToClientCoreAsync(
         MqttZeroSessionState session,
         MqttZeroClientConnection connection,
         MqttZeroPublishMessage message,
@@ -459,13 +514,29 @@ public sealed partial class MqttZeroBroker
         }
     }
 
-    internal static async ValueTask<bool> DisconnectConnectedClientAsync(
+    internal ValueTask<bool> DisconnectConnectedClientAsync(
         MqttZeroSessionState session,
         MqttZeroClientConnection connection,
         MqttReasonCode reasonCode,
         CancellationToken cancellationToken)
     {
-        MqttZeroSessionOutboundPump? pump;
+        return InvokeOnSessionShardAsync(
+            session,
+            token => DisconnectConnectedClientCoreAsync(
+                session,
+                connection,
+                reasonCode,
+                token),
+            cancellationToken);
+    }
+
+    private static async ValueTask<bool> DisconnectConnectedClientCoreAsync(
+        MqttZeroSessionState session,
+        MqttZeroClientConnection connection,
+        MqttReasonCode reasonCode,
+        CancellationToken cancellationToken)
+    {
+        MqttZeroEgressActor? pump;
         lock (session.SyncRoot)
         {
             if (!ReferenceEquals(session.Connection, connection))
@@ -473,13 +544,35 @@ public sealed partial class MqttZeroBroker
                 return false;
             }
 
-            pump = session.OutboundPump;
-            session.OutboundPump = null;
+            pump = session.Egress;
+            session.Egress = null;
         }
 
-        await StopSessionOutboundPumpAsync(pump).ConfigureAwait(false);
+        await StopEgressAsync(pump).ConfigureAwait(false);
         await connection.CloseAsync(reasonCode, cancellationToken).ConfigureAwait(false);
         return true;
+    }
+
+    private ValueTask<T> InvokeOnSessionShardAsync<T>(
+        MqttZeroSessionState session,
+        Func<CancellationToken, ValueTask<T>> operation,
+        CancellationToken cancellationToken)
+    {
+        MqttZeroShardSet? shards = Volatile.Read(ref _shardSet);
+        if (shards == null)
+        {
+            return operation(cancellationToken);
+        }
+
+        if (session.ShardId < 0 || session.ShardId >= shards.Count)
+        {
+            throw new InvalidOperationException(
+                "The MQTT session references an invalid event loop shard.");
+        }
+
+        return shards[session.ShardId].InvokeAsync(
+            operation,
+            cancellationToken);
     }
 
     private static void EnsureAttached(

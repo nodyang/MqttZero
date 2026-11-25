@@ -10,6 +10,21 @@ internal sealed class MqttZeroQueuedMessage
     private static readonly ConcurrentQueue<MqttZeroQueuedMessage> MessagePool = new();
 
     private MqttZeroMessageLease _lease = null!;
+    private uint[] _subscriptionIdentifierBuffer = [];
+
+    internal MqttZeroQueuedMessage? QueueNext { get; set; }
+
+    internal MqttZeroQueuedMessage? QueuePrevious { get; set; }
+
+    internal MqttZeroQueuedMessage? Qos0Next { get; set; }
+
+    internal MqttZeroQueuedMessage? Qos0Previous { get; set; }
+
+    internal long QueueVersion { get; set; }
+
+    internal bool IsQueued { get; set; }
+
+    internal bool IsQos0Queued { get; set; }
 
     private MqttZeroQueuedMessage()
     {
@@ -61,6 +76,10 @@ internal sealed class MqttZeroQueuedMessage
 
     public long MessageId { get; private set; }
 
+    public int EncodedLength { get; private set; }
+
+    private uint _encodedLengthMaximumPacketSize;
+
     public static MqttZeroQueuedMessage Rent(
         MqttZeroMessageLease lease,
         MqttQualityOfServiceLevel qualityOfServiceLevel,
@@ -108,6 +127,41 @@ internal sealed class MqttZeroQueuedMessage
         return message;
     }
 
+    public static MqttZeroQueuedMessage RentWithCopiedIdentifiers(
+        MqttZeroMessageLease lease,
+        MqttQualityOfServiceLevel qualityOfServiceLevel,
+        bool retain,
+        ReadOnlyMemory<uint> subscriptionIdentifiers,
+        DateTimeOffset? expiresAt)
+    {
+        MqttZeroQueuedMessage message = RentWithIdentifiers(
+            lease,
+            qualityOfServiceLevel,
+            retain,
+            ReadOnlyMemory<uint>.Empty,
+            expiresAt);
+        if (subscriptionIdentifiers.IsEmpty)
+        {
+            return message;
+        }
+
+        try
+        {
+            uint[] buffer = ArrayPool<uint>.Shared.Rent(
+                subscriptionIdentifiers.Length);
+            subscriptionIdentifiers.Span.CopyTo(buffer);
+            message._subscriptionIdentifierBuffer = buffer;
+            message.SubscriptionIdentifiers =
+                buffer.AsMemory(0, subscriptionIdentifiers.Length);
+            return message;
+        }
+        catch
+        {
+            message.Release();
+            throw;
+        }
+    }
+
     public void SetAwaitPubComp()
     {
         State = MqttZeroOutboundState.AwaitPubComp;
@@ -121,6 +175,19 @@ internal sealed class MqttZeroQueuedMessage
     public void SetMessageId(long messageId)
     {
         MessageId = messageId;
+    }
+
+    public void SetEncodedLength(int encodedLength, uint maximumPacketSize)
+    {
+        EncodedLength = encodedLength;
+        _encodedLengthMaximumPacketSize = maximumPacketSize;
+    }
+
+    public bool IsEncodedLengthValidFor(uint maximumPacketSize)
+    {
+        return EncodedLength > 0 &&
+            _encodedLengthMaximumPacketSize == maximumPacketSize &&
+            ExpiresAt == null;
     }
 
     public void Restore(ushort packetIdentifier, MqttZeroOutboundState state)
@@ -190,12 +257,28 @@ internal sealed class MqttZeroQueuedMessage
     public void Release()
     {
         ObjectDisposedException.ThrowIf(_lease is null, this);
+        if (_subscriptionIdentifierBuffer.Length > 0)
+        {
+            ArrayPool<uint>.Shared.Return(
+                _subscriptionIdentifierBuffer);
+            _subscriptionIdentifierBuffer = [];
+        }
+
         _lease.Release();
         _lease = null!;
         SubscriptionIdentifiers = ReadOnlyMemory<uint>.Empty;
         ExpiresAt = null;
         PacketIdentifier = 0;
         MessageId = 0;
+        EncodedLength = 0;
+        _encodedLengthMaximumPacketSize = 0;
+        QueueNext = null;
+        QueuePrevious = null;
+        Qos0Next = null;
+        Qos0Previous = null;
+        IsQueued = false;
+        IsQos0Queued = false;
+        QueueVersion++;
         State = MqttZeroOutboundState.AwaitPubAck;
         MessagePool.Enqueue(this);
     }

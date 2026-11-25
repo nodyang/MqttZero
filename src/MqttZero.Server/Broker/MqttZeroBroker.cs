@@ -7,6 +7,8 @@ using MqttZero.Server.Retained;
 using MqttZero.Server.Routing;
 using MqttZero.Server.Sessions;
 using MqttZero.Server.Storage;
+using MqttZero.Server.Scheduling;
+using MqttZero.Server.Egress;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -36,23 +38,29 @@ public sealed partial class MqttZeroBroker : IMqttZeroBroker, IAsyncDisposable
     private readonly IMqttZeroRetainedMessageStore _retainedMessageStore;
     private readonly ConcurrentDictionary<string, MqttZeroRetainedMessage> _retainedMessages =
         new(StringComparer.Ordinal);
+    private MqttZeroRetainedTopicTrie _retainedTopicTrie =
+        MqttZeroRetainedTopicTrie.Empty;
     private readonly ConcurrentDictionary<string, MqttZeroSessionState> _sessions =
         new(StringComparer.Ordinal);
-    private MqttZeroSubscriptionRouteSnapshot _subscriptionRouteSnapshot =
-        MqttZeroSubscriptionRouteSnapshot.Empty;
-    private readonly MqttZeroRouteScopePool _routeScopes = new();
+    private readonly MqttZeroSharedGroupCursors _sharedGroupCursors = new();
     private readonly List<(
         MqttZeroClientConnection Connection,
-        MqttZeroSessionOutboundPump? Pump)> _keepAliveExpired = [];
+        MqttZeroEgressActor? Pump)> _keepAliveExpired = [];
     private readonly List<(MqttZeroSessionState Session, MqttZeroWillMessage Will)> _dueWills = [];
     private readonly List<MqttZeroSessionState> _expiredSessions = [];
     private readonly List<string> _expiredRetainedTopics = [];
-    private readonly ConcurrentDictionary<string, int> _sharedSubscriptionCursors =
-        new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<long, CancellationTokenSource> _acceptedConnections = new();
     private readonly Dictionary<string, SessionMutationLock> _sessionMutationLocks = [];
     private readonly SemaphoreSlim _lifecycleGate = new(1, 1);
     private readonly SemaphoreSlim _retainedMutationGate = new(1, 1);
+    private readonly SemaphoreSlim _routeMutationGate = new(1, 1);
+    private readonly MqttZeroFanoutDiagnostics _fanoutDiagnostics = new();
+    private readonly MqttZeroRouteEpochManager _routeEpochs = new();
+    private MqttZeroFanoutDispatcher? _fanoutDispatcher;
+    private MqttZeroRoutePlanBufferPool? _qosZeroPlanBuffers;
+    private MqttZeroRoutePlannerLanes? _routePlannerLanes;
+    private MqttZeroSessionShardMap? _sessionShardMap;
+    private MqttZeroShardSet? _shardSet;
     private readonly MqttZeroOptions _options;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<MqttZeroBroker> _logger;
@@ -67,12 +75,24 @@ public sealed partial class MqttZeroBroker : IMqttZeroBroker, IAsyncDisposable
     private long _publishedWillCount;
     private long _retainedBytes;
     private int _stopping;
+    private int _fanoutFailed;
     private int _state;
     private long _nextMessageId;
 
     internal long GetNextMessageId()
     {
         return Interlocked.Increment(ref _nextMessageId);
+    }
+
+    internal MqttZeroSessionState CreateSessionState(string clientId)
+    {
+        MqttZeroSessionShardMap shardMap = _sessionShardMap ??
+            throw new InvalidOperationException(
+                "The session shard map is not initialized.");
+        return new MqttZeroSessionState(
+            clientId,
+            _options.MaxMessageQueueLength,
+            shardMap.GetShardId(clientId));
     }
 
     /// <summary>Initializes a broker and its extension pipeline.</summary>
@@ -189,6 +209,49 @@ public sealed partial class MqttZeroBroker : IMqttZeroBroker, IAsyncDisposable
         }
     }
 
+    internal int ShardCount
+    {
+        get
+        {
+            return Volatile.Read(ref _shardSet)?.Count ?? 0;
+        }
+    }
+
+    internal MqttZeroShardSet? Shards
+    {
+        get
+        {
+            return Volatile.Read(ref _shardSet);
+        }
+    }
+
+    internal MqttZeroRouteEpoch RouteEpoch
+    {
+        get
+        {
+            return _routeEpochs.Current;
+        }
+    }
+
+    internal MqttZeroRetainedTopicTrie RetainedTopicTrieForTest
+    {
+        get
+        {
+            return Volatile.Read(ref _retainedTopicTrie);
+        }
+    }
+
+    internal MqttZeroFanoutDiagnosticsSnapshot
+        GetFanoutDiagnosticsForTest()
+    {
+        return _fanoutDiagnostics.GetSnapshot();
+    }
+
+    internal void ResetFanoutDiagnosticsForTest()
+    {
+        _fanoutDiagnostics.Reset();
+    }
+
     /// <summary>
     /// Gets the time provider used by the broker.
     /// </summary>
@@ -214,7 +277,9 @@ public sealed partial class MqttZeroBroker : IMqttZeroBroker, IAsyncDisposable
         try
         {
             await StopAsync().ConfigureAwait(false);
-            _routeScopes.Dispose();
+            _qosZeroPlanBuffers?.Dispose();
+            _routePlannerLanes?.Dispose();
+            _routeMutationGate.Dispose();
             _bufferPool.Dispose();
         }
         catch

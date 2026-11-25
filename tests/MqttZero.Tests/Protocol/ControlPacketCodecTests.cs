@@ -106,6 +106,81 @@ namespace MqttZero.Tests.Protocol
             Assert.Equal(MqttReasonCode.Success, pubAckPacket.ReasonCode);
         }
 
+        [Theory]
+        [InlineData("4003002A00", MqttPacketType.PubAck)]
+        [InlineData("5003002A00", MqttPacketType.PubRec)]
+        [InlineData("6203002A00", MqttPacketType.PubRel)]
+        [InlineData("7003002A00", MqttPacketType.PubComp)]
+        public void DecodesAcknowledgementWithReasonButNoPropertyLength(
+            string hex,
+            MqttPacketType packetType)
+        {
+            byte[] bytes = Convert.FromHexString(hex);
+
+            bool decoded = MqttPacketCodec.TryDecode(
+                new ReadOnlySequence<byte>(bytes),
+                out MqttPacket? packet,
+                out long consumed);
+
+            Assert.True(decoded, hex);
+            Assert.Equal(bytes.Length, consumed);
+            Assert.Equal(packetType, packet!.PacketType);
+            Assert.Equal(MqttReasonCode.Success, GetReasonCode(packet));
+        }
+
+        [Theory]
+        [InlineData("4002002A", MqttPacketType.PubAck, MqttReasonCode.Success)]
+        [InlineData("4003002A00", MqttPacketType.PubAck, MqttReasonCode.Success)]
+        [InlineData("4004002A0000", MqttPacketType.PubAck, MqttReasonCode.Success)]
+        [InlineData("4008002A00041F000178", MqttPacketType.PubAck, MqttReasonCode.Success)]
+        [InlineData("5003002A00", MqttPacketType.PubRec, MqttReasonCode.Success)]
+        [InlineData("6203002A00", MqttPacketType.PubRel, MqttReasonCode.Success)]
+        [InlineData("7003002A00", MqttPacketType.PubComp, MqttReasonCode.Success)]
+        public void DecodesAcknowledgementView(
+            string hex,
+            MqttPacketType packetType,
+            MqttReasonCode reasonCode)
+        {
+            byte[] bytes = Convert.FromHexString(hex);
+            bool decoded = MqttPacketCodec.TryDecodeAcknowledgement(
+                new ReadOnlySequence<byte>(bytes),
+                out MqttZeroAcknowledgementView view,
+                out long consumed);
+
+            Assert.True(decoded, hex);
+            Assert.Equal(bytes.Length, consumed);
+            Assert.Equal(packetType, view.PacketType);
+            Assert.Equal((ushort)42, view.PacketIdentifier);
+            Assert.Equal(reasonCode, view.ReasonCode);
+        }
+
+        [Fact]
+        public void AcknowledgementViewDecodingDoesNotAllocateAfterWarmup()
+        {
+            byte[] bytes = Convert.FromHexString("4008002A00041F000178");
+            ReadOnlySequence<byte> source = new(bytes);
+
+            for (int index = 0; index < 100; index++)
+            {
+                Assert.True(MqttPacketCodec.TryDecodeAcknowledgement(
+                    source,
+                    out _,
+                    out _));
+            }
+
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            for (int index = 0; index < 1000; index++)
+            {
+                Assert.True(MqttPacketCodec.TryDecodeAcknowledgement(
+                    source,
+                    out _,
+                    out _));
+            }
+
+            long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+            Assert.Equal(0, allocated);
+        }
+
         [Fact]
         public void DecodesBadAuthenticationMethodConnAckReason()
         {
@@ -261,6 +336,19 @@ namespace MqttZero.Tests.Protocol
                 new ReadOnlySequence<byte>(bytes),
                 out _,
                 out _));
+        }
+
+        private static MqttReasonCode GetReasonCode(MqttPacket packet)
+        {
+            return packet switch
+            {
+                MqttPubAckPacket pubAck => pubAck.ReasonCode,
+                MqttPubRecPacket pubRec => pubRec.ReasonCode,
+                MqttPubRelPacket pubRel => pubRel.ReasonCode,
+                MqttPubCompPacket pubComp => pubComp.ReasonCode,
+                _ => throw new InvalidOperationException(
+                    $"Unexpected acknowledgement type: {packet.GetType()}.")
+            };
         }
     }
 }

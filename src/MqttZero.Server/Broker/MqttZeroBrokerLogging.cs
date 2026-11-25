@@ -42,8 +42,24 @@ internal static partial class MqttZeroBrokerLogging
         EventId = 1004,
         Level = LogLevel.Error,
         Message = "MQTTZero outbound pump failed for client {ClientId}.")]
-    public static partial void LogOutboundPumpFailure(
+    public static partial void LogEgressFailure(
         ILogger<MqttZeroBroker> logger,
         string clientId,
+        Exception exception);
+
+    [LoggerMessage(
+        EventId = 1005,
+        Level = LogLevel.Error,
+        Message = "MQTTZero inbound dispatcher failed.")]
+    public static partial void LogInboundDispatcherFailure(
+        ILogger<MqttZeroBroker> logger,
+        Exception exception);
+
+    [LoggerMessage(
+        EventId = 1006,
+        Level = LogLevel.Error,
+        Message = "MQTTZero sharded fanout failed.")]
+    public static partial void LogFanoutFailure(
+        ILogger<MqttZeroBroker> logger,
         Exception exception);
 }

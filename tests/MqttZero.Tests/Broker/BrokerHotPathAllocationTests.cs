@@ -6,9 +6,11 @@ using MqttZero.Server.Interceptors;
 using MqttZero.Memory;
 using MqttZero.Protocol;
 using MqttZero.Server.Routing;
+using MqttZero.Server.Scheduling;
 using MqttZero.Server.Sessions;
 using System.Buffers;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.IO.Pipelines;
 using System.Net;
 using System.Reflection;
@@ -47,10 +49,7 @@ namespace MqttZero.Tests.Broker
             ConcurrentDictionary<string, MqttZeroSessionState> sessions =
                 (ConcurrentDictionary<string, MqttZeroSessionState>)sessionsField.GetValue(broker)!;
             Assert.True(sessions.TryAdd(receiver.ClientId, receiver));
-            MethodInfo rebuildMethod = typeof(MqttZeroBroker).GetMethod(
-                "RebuildSubscriptionRouteSnapshot",
-                BindingFlags.Instance | BindingFlags.NonPublic)!;
-            rebuildMethod.Invoke(broker, null);
+            broker.ResetRouteEpochFromSessions();
 
             AllocationPipeWriter senderWriter = new(16 * 1024);
             MqttZeroClientConnection senderConnection = new(
@@ -86,6 +85,7 @@ namespace MqttZero.Tests.Broker
                 borrowed.Release();
             }
 
+            WaitForPendingMessage(receiver);
             Assert.Equal(1, receiver.PendingMessages.Count);
             Assert.True(pool.RentedBytes > 0);
             await broker.DisposeAsync();
@@ -212,6 +212,7 @@ namespace MqttZero.Tests.Broker
             MqttZeroBroker broker = MqttZeroBroker.Create(
                 new MqttZeroOptions(),
                 TimeProvider.System);
+            await broker.StartAsync(TestContext.Current.CancellationToken);
             MqttZeroSessionState receiver = new("qos-receiver");
             receiver.Subscriptions.Add(new MqttZeroSubscription(
                 "hot/#"u8.ToArray(),
@@ -220,6 +221,7 @@ namespace MqttZero.Tests.Broker
                 false,
                 null));
             AllocationPipeWriter receiverWriter = new(16 * 1024);
+            using MqttZeroBufferPool bufferPool = new(16 * 1024 * 1024);
             MqttZeroClientConnection receiverConnection = new(
                 receiverWriter,
                 new IPEndPoint(IPAddress.Loopback, 0),
@@ -228,7 +230,8 @@ namespace MqttZero.Tests.Broker
                 0,
                 32,
                 1024 * 1024,
-                TimeProvider.System);
+                TimeProvider.System,
+                bufferPool);
             receiver.Connection = receiverConnection;
             FieldInfo sessionsField = typeof(MqttZeroBroker).GetField(
                 "_sessions",
@@ -236,10 +239,14 @@ namespace MqttZero.Tests.Broker
             ConcurrentDictionary<string, MqttZeroSessionState> sessions =
                 (ConcurrentDictionary<string, MqttZeroSessionState>)sessionsField.GetValue(broker)!;
             Assert.True(sessions.TryAdd(receiver.ClientId, receiver));
-            MethodInfo rebuildMethod = typeof(MqttZeroBroker).GetMethod(
-                "RebuildSubscriptionRouteSnapshot",
+            broker.ResetRouteEpochFromSessions();
+            FieldInfo shardSetField = typeof(MqttZeroBroker).GetField(
+                "_shardSet",
                 BindingFlags.Instance | BindingFlags.NonPublic)!;
-            rebuildMethod.Invoke(broker, null);
+            MqttZeroShardSet shardSet =
+                (MqttZeroShardSet)shardSetField.GetValue(broker)!;
+            MqttZeroFanoutScheduler fanoutScheduler =
+                shardSet.GetFanoutScheduler(0);
 
             AllocationPipeWriter senderWriter = new(16 * 1024);
             MqttZeroClientConnection senderConnection = new(
@@ -250,7 +257,8 @@ namespace MqttZero.Tests.Broker
                 0,
                 32,
                 1024 * 1024,
-                TimeProvider.System);
+                TimeProvider.System,
+                bufferPool);
             MqttZeroSessionState sender = new("qos-sender");
             MqttPublishPacket packet = new()
             {
@@ -275,9 +283,12 @@ namespace MqttZero.Tests.Broker
                     encodedPublish,
                     senderWriter,
                     receiverWriter,
+                    bufferPool,
+                    fanoutScheduler,
                     cancellationToken);
             }
 
+            WaitForFanoutSchedulerIdle(fanoutScheduler);
             long before = GC.GetAllocatedBytesForCurrentThread();
             for (int index = 0; index < 1000; index++)
             {
@@ -290,6 +301,8 @@ namespace MqttZero.Tests.Broker
                     encodedPublish,
                     senderWriter,
                     receiverWriter,
+                    bufferPool,
+                    fanoutScheduler,
                     cancellationToken);
             }
 
@@ -307,6 +320,8 @@ namespace MqttZero.Tests.Broker
             ReadOnlySequence<byte> encodedPublish,
             AllocationPipeWriter senderWriter,
             AllocationPipeWriter receiverWriter,
+            MqttZeroBufferPool bufferPool,
+            MqttZeroFanoutScheduler fanoutScheduler,
             CancellationToken cancellationToken)
         {
             if (!MqttPublishPacketCodec.TryDecode(
@@ -333,17 +348,72 @@ namespace MqttZero.Tests.Broker
                 lease.Release();
             }
 
+            WaitForPendingMessage(receiver);
             lock (receiver.SyncRoot)
             {
-                if (receiver.PendingMessages.Count == 0)
-                {
-                    throw new InvalidOperationException("The QoS 1 PUBLISH was not queued.");
-                }
-
                 MqttZeroQueuedMessage queued =
                     receiver.PendingMessages.Dequeue();
                 queued.Release();
             }
+
+            WaitForPoolIdle(bufferPool);
+            WaitForFanoutSchedulerIdle(fanoutScheduler);
+        }
+
+        private static void WaitForPoolIdle(
+            MqttZeroBufferPool bufferPool)
+        {
+            long deadline = Stopwatch.GetTimestamp() +
+                (Stopwatch.Frequency * 5);
+            while (bufferPool.RentedBytes != 0)
+            {
+                if (Stopwatch.GetTimestamp() >= deadline)
+                {
+                    throw new TimeoutException(
+                        "The fanout lease did not return to the buffer pool.");
+                }
+
+                Thread.Yield();
+            }
+        }
+
+        private static void WaitForFanoutSchedulerIdle(
+            MqttZeroFanoutScheduler fanoutScheduler)
+        {
+            long deadline = Stopwatch.GetTimestamp() +
+                (Stopwatch.Frequency * 5);
+            while (!fanoutScheduler.IsIdle)
+            {
+                if (Stopwatch.GetTimestamp() >= deadline)
+                {
+                    throw new TimeoutException(
+                        "The fanout scheduler did not become idle.");
+                }
+
+                Thread.Yield();
+            }
+        }
+
+        private static void WaitForPendingMessage(
+            MqttZeroSessionState receiver)
+        {
+            long deadline = Stopwatch.GetTimestamp() +
+                (Stopwatch.Frequency * 5);
+            while (Stopwatch.GetTimestamp() < deadline)
+            {
+                lock (receiver.SyncRoot)
+                {
+                    if (receiver.PendingMessages.Count > 0)
+                    {
+                        return;
+                    }
+                }
+
+                Thread.Yield();
+            }
+
+            throw new TimeoutException(
+                "The routed MQTT message did not enter the receiver queue.");
         }
 
         private static async Task AssertBrokerPublishDoesNotAllocateAfterWarmup(
@@ -356,6 +426,7 @@ namespace MqttZero.Tests.Broker
                 },
                 TimeProvider.System,
                 interceptors);
+            await broker.StartAsync(TestContext.Current.CancellationToken);
             FieldInfo sessionsField = typeof(MqttZeroBroker).GetField(
                 "_sessions",
                 BindingFlags.Instance | BindingFlags.NonPublic)!;
@@ -380,10 +451,7 @@ namespace MqttZero.Tests.Broker
                 TimeProvider.System);
             receiver.Connection = receiverConnection;
             Assert.True(sessions.TryAdd(receiver.ClientId, receiver));
-            MethodInfo rebuildMethod = typeof(MqttZeroBroker).GetMethod(
-                "RebuildSubscriptionRouteSnapshot",
-                BindingFlags.Instance | BindingFlags.NonPublic)!;
-            rebuildMethod.Invoke(broker, null);
+            broker.ResetRouteEpochFromSessions();
 
             MqttZeroSessionState sender = new("sender");
             MqttPublishPacket packet = new()

@@ -1,14 +1,19 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
+using Microsoft.AspNetCore.Server.Kestrel.Transport.Sockets;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using MQTTnet;
+using MQTTnet.AspNetCore;
 using MQTTnet.Protocol;
 using MQTTnet.Server;
 using MqttZero.AspNetCore;
-using System.Collections.Concurrent;
+using MqttZero.BrokerBenchmarks;
+using MqttZero.Publishing;
+using MqttZero.Server.Broker;
+using System.Buffers;
 using System.Diagnostics;
 using System.Globalization;
 using System.Net;
@@ -17,6 +22,27 @@ using System.Text.Json;
 
 Dictionary<string, string> arguments = ParseArguments(args);
 string mode = GetValue(arguments, "mode", args.FirstOrDefault() ?? "compare");
+if (GetBool(arguments, "diagnostics", false))
+{
+    AppContext.SetSwitch(
+        MqttZero.Server.Broker.MqttZeroFanoutDiagnostics
+            .AppContextSwitchName,
+        true);
+}
+BenchmarkRuntimeConfiguration runtimeConfiguration =
+    new(Math.Max(1, Environment.ProcessorCount));
+BenchmarkRuntimeSnapshot runtimeSnapshot =
+    runtimeConfiguration.ApplyToCurrentProcess();
+BenchmarkTopologyOptions topologyOptions =
+    BenchmarkTopologyOptions.Parse(arguments);
+BenchmarkTopologyInfo topology = topologyOptions.CreateInfo();
+BenchmarkEgressOptions egressOptions =
+    BenchmarkEgressOptions.Parse(arguments);
+BenchmarkEnvironmentInfo environment =
+    BenchmarkObservationCapture.CaptureEnvironment(
+        runtimeSnapshot,
+        topology,
+        egressOptions);
 
 if (mode == "serve")
 {
@@ -24,19 +50,38 @@ if (mode == "serve")
 }
 else if (mode == "load")
 {
-    object result = await RunLoadAsync(
-        GetInt(arguments, "port", 1883),
+    int port = GetInt(arguments, "port", 1883);
+    BenchmarkClientKind clientKind = BenchmarkClientSelection.Parse(
+        GetValue(arguments, "client", "mqttnet"));
+    BenchmarkRunOptions options = new(
         GetInt(arguments, "subscribers", 10),
         GetInt(arguments, "publishers", 1),
         GetInt(arguments, "qos", 0),
         GetInt(arguments, "payload", 1024),
         GetInt(arguments, "warmup", 2),
-        GetInt(arguments, "seconds", 10));
-    Console.WriteLine(JsonSerializer.Serialize(result));
+        GetInt(arguments, "seconds", 10),
+        GetInt(arguments, "max-pending", 1024));
+    BrokerBenchmarkResult result = await BenchmarkLoadRunner.RunAsync(
+        port,
+        options,
+        new BenchmarkMqttClientFactory(clientKind, port),
+        CancellationToken.None);
+    await BenchmarkOutputWriter.WriteAsync(
+        GetNullableValue(arguments, "output"),
+        result,
+        BrokerBenchmarkJsonContext.Default.BrokerBenchmarkResult,
+        CancellationToken.None);
 }
 else if (mode == "compare")
 {
-    await CompareAsync(arguments);
+    await CompareAsync(
+        arguments,
+        environment,
+        runtimeConfiguration).ConfigureAwait(false);
+}
+else if (mode == "outbound")
+{
+    await RunOutboundAsync(arguments);
 }
 else
 {
@@ -47,6 +92,14 @@ static async Task ServeAsync(Dictionary<string, string> arguments)
 {
     string broker = GetValue(arguments, "broker", "mqttzero");
     int port = GetInt(arguments, "port", 1883);
+    bool allowPacketFragmentation = GetBool(
+        arguments,
+        "fragmentation",
+        true);
+    BenchmarkTopologyOptions topologyOptions =
+        BenchmarkTopologyOptions.Parse(arguments);
+    BenchmarkEgressOptions egressOptions =
+        BenchmarkEgressOptions.Parse(arguments);
     CancellationTokenSource lifetime = new();
     Console.CancelKeyPress += (_, eventArgs) =>
     {
@@ -63,12 +116,25 @@ static async Task ServeAsync(Dictionary<string, string> arguments)
             kestrel.Listen(
                 IPAddress.Loopback,
                 port,
-                listen => listen.UseMqttZero());
+                listen => listen.UseMqttZero(options =>
+                {
+                    options.AllowPacketFragmentationSelector =
+                        _ => allowPacketFragmentation;
+                }));
         });
         builder.Services.AddMqttZero(options =>
         {
             options.MaxMessageQueueLength = 100_000;
+            options.EventLoopShardCount =
+                topologyOptions.EventLoopShardCount;
+            egressOptions.ApplyTo(options);
         });
+        if (topologyOptions.IoQueueCount > 0)
+        {
+            builder.Services.Configure<SocketTransportOptions>(
+                options => options.IOQueueCount =
+                    topologyOptions.IoQueueCount);
+        }
         await using WebApplication app = builder.Build();
         await app.StartAsync(lifetime.Token);
         Console.WriteLine("READY");
@@ -79,75 +145,150 @@ static async Task ServeAsync(Dictionary<string, string> arguments)
 
     if (broker == "mqttnet")
     {
-        MqttServerFactory factory = new();
-        MqttServerOptions options = new MqttServerOptionsBuilder()
-            .WithDefaultEndpoint()
-            .WithDefaultEndpointBoundIPAddress(IPAddress.Loopback)
-            .WithDefaultEndpointPort(port)
-            .WithMaxPendingMessagesPerClient(100_000)
-            .Build();
-        using MqttServer server = factory.CreateMqttServer(options);
-        await server.StartAsync();
+        WebApplicationBuilder builder = WebApplication.CreateBuilder();
+        builder.Logging.ClearProviders();
+        builder.Services.AddMqttServer(options =>
+        {
+            options
+                .WithDefaultEndpoint()
+                .WithDefaultEndpointBoundIPAddress(IPAddress.Loopback)
+                .WithDefaultEndpointPort(port)
+                .WithMaxPendingMessagesPerClient(100_000);
+        });
+        builder.WebHost.ConfigureKestrel(kestrel =>
+        {
+            kestrel.Listen(
+                IPAddress.Loopback,
+                port,
+                listen => listen.UseMqtt());
+        });
+        await using WebApplication app = builder.Build();
+        await app.StartAsync(lifetime.Token);
         Console.WriteLine("READY");
         await WaitForCancellationAsync(lifetime.Token);
-        await server.StopAsync();
+        await app.StopAsync(CancellationToken.None);
         return;
     }
 
     throw new ArgumentException($"Unknown broker '{broker}'.");
 }
 
-static async Task CompareAsync(Dictionary<string, string> arguments)
+static async Task CompareAsync(
+    Dictionary<string, string> arguments,
+    BenchmarkEnvironmentInfo environment,
+    BenchmarkRuntimeConfiguration runtimeConfiguration)
 {
     string[] brokers = ["mqttzero", "mqttnet"];
     int[] qosLevels = GetIntArray(arguments, "qos", [0, 1, 2]);
-    int[] subscriberCounts = GetIntArray(arguments, "subscribers", [1, 100, 1000]);
+    int[] subscriberCounts = GetIntArray(arguments, "subscribers", [1, 100, 500]);
     int[] payloadSizes = GetIntArray(arguments, "payload", [32, 8 * 1024, 64 * 1024]);
     int warmup = GetInt(arguments, "warmup", 15);
     int seconds = GetInt(arguments, "seconds", 60);
     int publishers = GetInt(arguments, "publishers", 1);
-    List<object> results = [];
+    int repetitions = GetInt(arguments, "repetitions", 1);
+    int maxPendingMessages = GetInt(
+        arguments,
+        "max-pending",
+        1024);
+    BenchmarkTopologyOptions topologyOptions =
+        BenchmarkTopologyOptions.Parse(arguments);
+    BenchmarkEgressOptions egressOptions =
+        BenchmarkEgressOptions.Parse(arguments);
+    bool allowPacketFragmentation = GetBool(
+        arguments,
+        "fragmentation",
+        true);
+    BenchmarkClientKind clientKind = BenchmarkClientSelection.Parse(
+        GetValue(arguments, "client", "mqttnet"));
+    if (clientKind == BenchmarkClientKind.Raw &&
+        qosLevels.Contains(2))
+    {
+        throw new ArgumentException(
+            "The raw benchmark client supports QoS 0 and QoS 1 only.");
+    }
+
+    string? outputPath = GetNullableValue(arguments, "output");
+    List<BrokerComparisonResult> results = [];
     string assemblyPath = Assembly.GetEntryAssembly()!.Location;
     int port = GetInt(arguments, "start-port", 19000);
 
-    foreach (string broker in brokers)
+    for (int repetition = 1; repetition <= repetitions; repetition++)
     {
-        foreach (int qos in qosLevels)
+        foreach (string broker in brokers)
         {
-            foreach (int subscribers in subscriberCounts)
+            foreach (int qos in qosLevels)
             {
-                foreach (int payloadSize in payloadSizes)
+                foreach (int subscribers in subscriberCounts)
                 {
-                    port++;
-                    using Process serverProcess = StartServerProcess(
-                        assemblyPath,
-                        broker,
-                        port);
-                    await WaitForReadyAsync(serverProcess);
-                    try
+                    foreach (int payloadSize in payloadSizes)
                     {
-                        object result = await RunLoadAsync(
+                        port++;
+                        long brokerStarted = Stopwatch.GetTimestamp();
+                        using Process serverProcess = StartServerProcess(
+                            assemblyPath,
+                            broker,
                             port,
-                            subscribers,
-                            publishers,
-                            qos,
-                            payloadSize,
-                            warmup,
-                            seconds);
-                        results.Add(new
+                            allowPacketFragmentation,
+                            runtimeConfiguration,
+                            topologyOptions,
+                            egressOptions);
+                        await WaitForReadyAsync(serverProcess);
+                        BenchmarkProcessObservation brokerObservation;
+                        try
                         {
-                            Broker = broker,
-                            Qos = qos,
-                            Subscribers = subscribers,
-                            PayloadSize = payloadSize,
-                            Result = result
-                        });
-                    }
-                    finally
-                    {
-                        if (!serverProcess.HasExited)
+                            BenchmarkRunOptions options = new(
+                                subscribers,
+                                publishers,
+                                qos,
+                                payloadSize,
+                                warmup,
+                                seconds,
+                                maxPendingMessages);
+                            BrokerBenchmarkResult result;
+                            try
+                            {
+                                result = await BenchmarkLoadRunner.RunAsync(
+                                    port,
+                                    options,
+                                    new BenchmarkMqttClientFactory(
+                                        clientKind,
+                                        port),
+                                    CancellationToken.None);
+                            }
+                            catch (Exception exception)
+                            {
+                                throw new InvalidOperationException(
+                                    $"Broker benchmark failed at " +
+                                    $"repetition={repetition}, " +
+                                    $"broker={broker}, " +
+                                    $"qos={qos}, " +
+                                    $"subscribers={subscribers}, " +
+                                    $"payload={payloadSize}, port={port}.",
+                                    exception);
+                            }
+
+                            brokerObservation =
+                                BenchmarkObservationCapture.CaptureProcess(
+                                    serverProcess,
+                                    Stopwatch.GetElapsedTime(
+                                        brokerStarted));
+                            results.Add(new BrokerComparisonResult
+                            {
+                                Broker = broker,
+                                Qos = qos,
+                                Subscribers = subscribers,
+                                PayloadSize = payloadSize,
+                                Repetition = repetition,
+                                Result = result,
+                                BrokerObservation = brokerObservation
+                            });
+                        }
+                        finally
                         {
-                            serverProcess.Kill(entireProcessTree: true);
+                            if (!serverProcess.HasExited)
+                            {
+                                serverProcess.Kill(entireProcessTree: true);
+                            }
                         }
                     }
                 }
@@ -155,13 +296,285 @@ static async Task CompareAsync(Dictionary<string, string> arguments)
         }
     }
 
-    Console.WriteLine(JsonSerializer.Serialize(results, new JsonSerializerOptions
+    BenchmarkGateResult gate = BenchmarkGateEvaluator.Evaluate(results);
+    BenchmarkReport report = new(environment, results, gate);
+    await BenchmarkOutputWriter.WriteAsync(
+        outputPath,
+        report,
+        BrokerBenchmarkJsonContext.Default.BenchmarkReport,
+        CancellationToken.None).ConfigureAwait(false);
+    if (!gate.Passed)
     {
-        WriteIndented = true
-    }));
+        Environment.ExitCode = 1;
+    }
 }
 
-static Process StartServerProcess(string assemblyPath, string broker, int port)
+static async Task RunOutboundAsync(Dictionary<string, string> arguments)
+{
+    int port = GetInt(arguments, "port", 19300);
+    int qos = GetInt(arguments, "qos", 0);
+    int subscriberCount = GetInt(arguments, "subscribers", 1);
+    int payloadSize = GetInt(arguments, "payload", 8192);
+    int warmupSeconds = GetInt(arguments, "warmup", 3);
+    int measurementSeconds = GetInt(arguments, "seconds", 10);
+    int maxPendingMessages = GetInt(
+        arguments,
+        "max-pending",
+        1024);
+    BenchmarkTopologyOptions topologyOptions =
+        BenchmarkTopologyOptions.Parse(arguments);
+    BenchmarkEgressOptions egressOptions =
+        BenchmarkEgressOptions.Parse(arguments);
+    MqttZero.Protocol.MqttQualityOfServiceLevel qualityOfServiceLevel = qos switch
+    {
+        0 => MqttZero.Protocol.MqttQualityOfServiceLevel.AtMostOnce,
+        1 => MqttZero.Protocol.MqttQualityOfServiceLevel.AtLeastOnce,
+        2 => MqttZero.Protocol.MqttQualityOfServiceLevel.ExactlyOnce,
+        _ => throw new InvalidOperationException(
+            $"Unsupported QoS value: {qos}.")
+    };
+    WebApplicationBuilder builder = WebApplication.CreateBuilder();
+    builder.Logging.ClearProviders();
+    builder.WebHost.ConfigureKestrel(kestrel =>
+    {
+        kestrel.Listen(
+            IPAddress.Loopback,
+            port,
+            listen => listen.UseMqttZero());
+    });
+    builder.Services.AddMqttZero(options =>
+    {
+        options.MaxMessageQueueLength = 100_000;
+        options.EventLoopShardCount =
+            topologyOptions.EventLoopShardCount;
+        egressOptions.ApplyTo(options);
+    });
+    if (topologyOptions.IoQueueCount > 0)
+    {
+        builder.Services.Configure<SocketTransportOptions>(
+            socketOptions => socketOptions.IOQueueCount =
+                topologyOptions.IoQueueCount);
+    }
+    await using WebApplication app = builder.Build();
+    await app.StartAsync();
+    MqttZeroBroker broker = app.Services.GetRequiredService<MqttZeroBroker>();
+    MqttClientFactory factory = new();
+    List<IMqttClient> subscribers = [];
+    long receivedMessages = 0;
+    for (int index = 0; index < subscriberCount; index++)
+    {
+        IMqttClient subscriber = factory.CreateMqttClient();
+        subscriber.ApplicationMessageReceivedAsync += _ =>
+        {
+            Interlocked.Increment(ref receivedMessages);
+            return Task.CompletedTask;
+        };
+        subscribers.Add(subscriber);
+        await subscriber.ConnectAsync(
+            CreateClientOptions(port, $"outbound-subscriber-{index}"),
+            CancellationToken.None);
+        await subscriber.SubscribeAsync(
+            new MqttClientSubscribeOptionsBuilder()
+                .WithTopicFilter(
+                    "bench/topic",
+                    qos switch
+                    {
+                        0 => MqttQualityOfServiceLevel.AtMostOnce,
+                        1 => MqttQualityOfServiceLevel.AtLeastOnce,
+                        2 => MqttQualityOfServiceLevel.ExactlyOnce,
+                        _ => throw new InvalidOperationException(
+                            $"Unsupported QoS value: {qos}.")
+                    })
+                .Build(),
+            CancellationToken.None);
+    }
+    MqttZeroPublishMessage message = new()
+    {
+        Topic = "bench/topic",
+        Payload = new ReadOnlySequence<byte>(new byte[payloadSize]),
+        QualityOfServiceLevel = qualityOfServiceLevel
+    };
+    using CancellationTokenSource warmup = new(
+        TimeSpan.FromSeconds(warmupSeconds));
+    OutboundLoopResult warmupResult = await RunOutboundPublishLoopAsync(
+        broker,
+        message,
+        maxPendingMessages,
+        warmup.Token,
+        subscriberCount,
+        () => Interlocked.Read(ref receivedMessages),
+        collectTimings: false);
+    await WaitForSubscriberDrainAsync(
+        advertisedMessages:
+            warmupResult.PublishedMessages * subscriberCount,
+        () => Interlocked.Read(ref receivedMessages),
+        CancellationToken.None);
+    Interlocked.Exchange(ref receivedMessages, 0);
+    broker.ResetFanoutDiagnosticsForTest();
+    Stopwatch stopwatch = Stopwatch.StartNew();
+    List<long> waitTicks = [];
+    List<long> publishTicks = [];
+    using CancellationTokenSource measurement = new(
+        TimeSpan.FromSeconds(measurementSeconds));
+    OutboundLoopResult loopResult = await RunOutboundPublishLoopAsync(
+        broker,
+        message,
+        maxPendingMessages,
+        measurement.Token,
+        subscriberCount,
+        () => Interlocked.Read(ref receivedMessages),
+        collectTimings: true,
+        waitTicks,
+        publishTicks);
+    stopwatch.Stop();
+    waitTicks.Sort();
+    publishTicks.Sort();
+    MqttZero.Server.Broker.MqttZeroFanoutDiagnosticsSnapshot
+        diagnosticsSnapshot = broker.GetFanoutDiagnosticsForTest();
+    double averageFanoutMicroseconds =
+        diagnosticsSnapshot.PublishCount == 0
+            ? 0
+            : diagnosticsSnapshot.TotalFanoutTicks *
+                1_000_000d /
+                Stopwatch.Frequency /
+                diagnosticsSnapshot.PublishCount;
+    double averageEgressSchedulerMicroseconds =
+        diagnosticsSnapshot.EgressSchedulerPassCount == 0
+            ? 0
+            : diagnosticsSnapshot.TotalEgressSchedulerTicks *
+                1_000_000d /
+                Stopwatch.Frequency /
+                diagnosticsSnapshot.EgressSchedulerPassCount;
+    double averageEgressDrainMicroseconds =
+        diagnosticsSnapshot.EgressDrainCount == 0
+            ? 0
+            : diagnosticsSnapshot.TotalEgressDrainTicks *
+                1_000_000d /
+                Stopwatch.Frequency /
+                diagnosticsSnapshot.EgressDrainCount;
+    double averageEgressBatchMessages =
+        diagnosticsSnapshot.EgressDataBatchCount == 0
+            ? 0
+            : diagnosticsSnapshot.EgressBatchMessageCount /
+                (double)diagnosticsSnapshot.EgressDataBatchCount;
+    BenchmarkFanoutDiagnostics diagnostics = new(
+        diagnosticsSnapshot.PublishCount,
+        diagnosticsSnapshot.LocalBatchCount,
+        diagnosticsSnapshot.RemoteBatchCount,
+        diagnosticsSnapshot.DeliveryCount,
+        averageFanoutMicroseconds,
+        diagnosticsSnapshot.MaxFanoutTicks * 1_000_000d /
+            Stopwatch.Frequency,
+        diagnosticsSnapshot.EgressSignalCount,
+        diagnosticsSnapshot.EgressDrainCount,
+        diagnosticsSnapshot.EncodedPublishCount,
+        diagnosticsSnapshot.FlushWaitCount,
+        diagnosticsSnapshot.MaxPendingQueueDepth,
+        diagnosticsSnapshot.EgressScheduledActorCount,
+        diagnosticsSnapshot.EgressSchedulerPassCount,
+        diagnosticsSnapshot.EgressScheduledActorPassCount,
+        averageEgressSchedulerMicroseconds,
+        averageEgressDrainMicroseconds,
+        diagnosticsSnapshot.MaxEgressDrainTicks *
+            1_000_000d /
+            Stopwatch.Frequency,
+        diagnosticsSnapshot.EgressDataBatchCount,
+        diagnosticsSnapshot.EgressBatchMessageCount,
+        diagnosticsSnapshot.EgressBatchByteCount,
+        averageEgressBatchMessages,
+        diagnosticsSnapshot.EgressFlushStartCount);
+    OutboundBenchmarkResult result = new(
+        PublishedMessages: loopResult.PublishedMessages,
+        ReceivedMessages: Interlocked.Read(ref receivedMessages),
+        FailedOperations: 0,
+        ThroughputPerSecond:
+            loopResult.PublishedMessages / stopwatch.Elapsed.TotalSeconds,
+        WaitP50Microseconds: PercentileMicroseconds(
+            waitTicks.ToArray(),
+            waitTicks.Count,
+            0.50),
+        WaitP99Microseconds: PercentileMicroseconds(
+            waitTicks.ToArray(),
+            waitTicks.Count,
+            0.99),
+        PublishP50Microseconds: PercentileMicroseconds(
+            publishTicks.ToArray(),
+            publishTicks.Count,
+            0.50),
+        PublishP99Microseconds: PercentileMicroseconds(
+            publishTicks.ToArray(),
+            publishTicks.Count,
+            0.99),
+        FirstError: null,
+        Diagnostics: diagnostics);
+    Console.WriteLine(JsonSerializer.Serialize(
+        result,
+        BrokerBenchmarkJsonContext.Default.OutboundBenchmarkResult));
+    foreach (IMqttClient subscriber in subscribers)
+    {
+        await subscriber.DisconnectAsync();
+        subscriber.Dispose();
+    }
+
+    await app.StopAsync();
+}
+
+static async Task<OutboundLoopResult> RunOutboundPublishLoopAsync(
+    MqttZeroBroker broker,
+    MqttZeroPublishMessage message,
+    int maxPendingMessages,
+    CancellationToken cancellationToken,
+    int deliveryMultiplier,
+    Func<long> getReceivedMessages,
+    bool collectTimings,
+    List<long>? waitTicks = null,
+    List<long>? publishTicks = null)
+{
+    long publishedMessages = 0;
+    try
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            long waitStarted = Stopwatch.GetTimestamp();
+            while (publishedMessages * deliveryMultiplier -
+                getReceivedMessages() >
+                maxPendingMessages)
+            {
+                await Task.Delay(
+                    TimeSpan.FromMilliseconds(1),
+                    cancellationToken);
+            }
+
+            if (collectTimings)
+            {
+                waitTicks!.Add(Stopwatch.GetTimestamp() - waitStarted);
+            }
+
+            long publishStarted = Stopwatch.GetTimestamp();
+            await broker.PublishAsync(message, cancellationToken);
+            if (collectTimings)
+            {
+                publishTicks!.Add(Stopwatch.GetTimestamp() - publishStarted);
+            }
+
+            publishedMessages++;
+        }
+    }
+    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+    {
+    }
+
+    return new OutboundLoopResult(publishedMessages);
+}
+
+static Process StartServerProcess(
+    string assemblyPath,
+    string broker,
+    int port,
+    bool allowPacketFragmentation,
+    BenchmarkRuntimeConfiguration runtimeConfiguration,
+    BenchmarkTopologyOptions topologyOptions,
+    BenchmarkEgressOptions egressOptions)
 {
     ProcessStartInfo startInfo = new()
     {
@@ -177,6 +590,35 @@ static Process StartServerProcess(string assemblyPath, string broker, int port)
     startInfo.ArgumentList.Add(broker);
     startInfo.ArgumentList.Add("--port");
     startInfo.ArgumentList.Add(port.ToString(CultureInfo.InvariantCulture));
+    startInfo.ArgumentList.Add("--fragmentation");
+    startInfo.ArgumentList.Add(
+        allowPacketFragmentation ? "true" : "false");
+    startInfo.ArgumentList.Add("--event-loop-shards");
+    startInfo.ArgumentList.Add(
+        topologyOptions.EventLoopShardCount.ToString(
+            CultureInfo.InvariantCulture));
+    startInfo.ArgumentList.Add("--io-queue-count");
+    startInfo.ArgumentList.Add(
+        topologyOptions.IoQueueCount.ToString(
+            CultureInfo.InvariantCulture));
+    startInfo.ArgumentList.Add("--outbound-batch-bytes");
+    startInfo.ArgumentList.Add(
+        egressOptions.OutboundBatchBytes.ToString(
+            CultureInfo.InvariantCulture));
+    startInfo.ArgumentList.Add("--outbound-batch-messages");
+    startInfo.ArgumentList.Add(
+        egressOptions.OutboundBatchMessages.ToString(
+            CultureInfo.InvariantCulture));
+    startInfo.ArgumentList.Add("--outbound-batch-duration-us");
+    startInfo.ArgumentList.Add(
+        egressOptions.OutboundBatchDurationMicroseconds.ToString(
+            CultureInfo.InvariantCulture));
+    foreach (KeyValuePair<string, string> variable in
+        runtimeConfiguration.CreateBrokerEnvironmentVariables())
+    {
+        startInfo.Environment[variable.Key] = variable.Value;
+    }
+
     return Process.Start(startInfo) ??
         throw new InvalidOperationException("Could not start the broker process.");
 }
@@ -195,144 +637,17 @@ static async Task WaitForReadyAsync(Process process)
         $"Broker process did not become ready. Output: {line}. Error: {error}");
 }
 
-static async Task<object> RunLoadAsync(
-    int port,
-    int subscribers,
-    int publishers,
-    int qos,
-    int payloadSize,
-    int warmupSeconds,
-    int measurementSeconds)
+static async Task WaitForSubscriberDrainAsync(
+    long advertisedMessages,
+    Func<long> getReceivedMessages,
+    CancellationToken cancellationToken)
 {
-    MqttClientFactory factory = new();
-    MqttQualityOfServiceLevel qualityOfServiceLevel = qos switch
+    using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(
+        cancellationToken);
+    timeout.CancelAfter(TimeSpan.FromSeconds(30));
+    while (getReceivedMessages() < advertisedMessages)
     {
-        0 => MqttQualityOfServiceLevel.AtMostOnce,
-        1 => MqttQualityOfServiceLevel.AtLeastOnce,
-        2 => MqttQualityOfServiceLevel.ExactlyOnce,
-        _ => throw new ArgumentOutOfRangeException(nameof(qos))
-    };
-    List<IMqttClient> subscriberClients = [];
-    List<IMqttClient> publisherClients = [];
-    long receivedMessages = 0;
-    long failedOperations = 0;
-    long publishedMessages = 0;
-    ConcurrentQueue<string> errors = new();
-    try
-    {
-        for (int index = 0; index < subscribers; index++)
-        {
-            IMqttClient subscriber = factory.CreateMqttClient();
-            subscriber.ApplicationMessageReceivedAsync += _ =>
-            {
-                Interlocked.Increment(ref receivedMessages);
-                return Task.CompletedTask;
-            };
-            subscriberClients.Add(subscriber);
-            await subscriber.ConnectAsync(
-                CreateClientOptions(port, $"subscriber-{index}"),
-                CancellationToken.None);
-            await subscriber.SubscribeAsync(
-                new MqttClientSubscribeOptionsBuilder()
-                    .WithTopicFilter("bench/topic", qualityOfServiceLevel)
-                    .Build(),
-                CancellationToken.None);
-        }
-
-        for (int index = 0; index < publishers; index++)
-        {
-            IMqttClient publisher = factory.CreateMqttClient();
-            publisherClients.Add(publisher);
-            await publisher.ConnectAsync(
-                CreateClientOptions(port, $"publisher-{index}"),
-                CancellationToken.None);
-        }
-
-        byte[] payload = new byte[payloadSize];
-        MqttApplicationMessage message = new MqttApplicationMessageBuilder()
-            .WithTopic("bench/topic")
-            .WithPayload(payload)
-            .WithQualityOfServiceLevel(qualityOfServiceLevel)
-            .Build();
-        using CancellationTokenSource warmup = new(TimeSpan.FromSeconds(warmupSeconds));
-        await RunPublishersAsync(
-            publisherClients,
-            message,
-            warmup.Token,
-            qualityOfServiceLevel == MqttQualityOfServiceLevel.AtMostOnce
-                ? () =>
-                    Interlocked.Read(ref publishedMessages) * subscribers >
-                    Interlocked.Read(ref receivedMessages) + 1024
-                : null,
-            null,
-            exception =>
-            {
-                Interlocked.Increment(ref failedOperations);
-                errors.Enqueue(exception.ToString());
-            },
-            () => Interlocked.Increment(ref publishedMessages));
-        Interlocked.Exchange(ref receivedMessages, 0);
-        Interlocked.Exchange(ref publishedMessages, 0);
-
-        long[] latencySamples = new long[100_000];
-        int latencySampleCount = 0;
-        long measuredPublishes = 0;
-        Stopwatch stopwatch = Stopwatch.StartNew();
-        using CancellationTokenSource measurement = new(TimeSpan.FromSeconds(measurementSeconds));
-        await RunPublishersAsync(
-            publisherClients,
-            message,
-            measurement.Token,
-            qualityOfServiceLevel == MqttQualityOfServiceLevel.AtMostOnce
-                ? () =>
-                    Interlocked.Read(ref publishedMessages) * subscribers >
-                    Interlocked.Read(ref receivedMessages) + 1024
-                : null,
-            elapsedTicks =>
-            {
-                int index = Interlocked.Increment(ref latencySampleCount) - 1;
-                if (index < latencySamples.Length)
-                {
-                    latencySamples[index] = elapsedTicks;
-                }
-            },
-            exception =>
-            {
-                Interlocked.Increment(ref failedOperations);
-                errors.Enqueue(exception.ToString());
-            },
-            () =>
-            {
-                Interlocked.Increment(ref measuredPublishes);
-                Interlocked.Increment(ref publishedMessages);
-            });
-        stopwatch.Stop();
-
-        Array.Sort(latencySamples, 0, Math.Min(latencySampleCount, latencySamples.Length));
-        int sampleCount = Math.Min(latencySampleCount, latencySamples.Length);
-        return new
-        {
-            PublishedMessages = measuredPublishes,
-            ReceivedMessages = Interlocked.Read(ref receivedMessages),
-            FailedOperations = Interlocked.Read(ref failedOperations),
-            ThroughputPerSecond = measuredPublishes / stopwatch.Elapsed.TotalSeconds,
-            LatencyP50Microseconds = PercentileMicroseconds(latencySamples, sampleCount, 0.50),
-            LatencyP95Microseconds = PercentileMicroseconds(latencySamples, sampleCount, 0.95),
-            LatencyP99Microseconds = PercentileMicroseconds(latencySamples, sampleCount, 0.99),
-            FirstError = errors.TryPeek(out string? firstError) ? firstError : null
-        };
-    }
-    finally
-    {
-        foreach (IMqttClient client in publisherClients.Concat(subscriberClients))
-        {
-            if (client.IsConnected)
-            {
-                await client.DisconnectAsync();
-            }
-
-            client.Dispose();
-        }
+        await Task.Delay(TimeSpan.FromMilliseconds(1), timeout.Token);
     }
 }
 
@@ -344,60 +659,6 @@ static MqttClientOptions CreateClientOptions(int port, string clientId)
         .WithClientId(clientId)
         .WithCleanStart()
         .Build();
-}
-
-static async Task RunPublishersAsync(
-    IReadOnlyList<IMqttClient> publishers,
-    MqttApplicationMessage message,
-    CancellationToken cancellationToken,
-    Func<bool>? shouldPause,
-    Action<long>? recordLatency,
-    Action<Exception> recordFailure,
-    Action? recordPublish = null)
-{
-    Task[] tasks = new Task[publishers.Count];
-    for (int index = 0; index < publishers.Count; index++)
-    {
-        IMqttClient publisher = publishers[index];
-        tasks[index] = Task.Run(
-            async () =>
-            {
-                while (!cancellationToken.IsCancellationRequested)
-                {
-                    while (shouldPause?.Invoke() == true)
-                    {
-                        await Task.Delay(
-                            TimeSpan.FromMilliseconds(1),
-                            cancellationToken);
-                    }
-
-                    long started = Stopwatch.GetTimestamp();
-                    try
-                    {
-                        await publisher.PublishAsync(message, CancellationToken.None);
-                        recordLatency?.Invoke(Stopwatch.GetTimestamp() - started);
-                        recordPublish?.Invoke();
-                    }
-                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                    {
-                        return;
-                    }
-                    catch (Exception exception)
-                    {
-                        recordFailure(exception);
-                    }
-                }
-            },
-            cancellationToken);
-    }
-
-    try
-    {
-        await Task.WhenAll(tasks);
-    }
-    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-    {
-    }
 }
 
 static double PercentileMicroseconds(long[] samples, int count, double percentile)
@@ -450,6 +711,13 @@ static string GetValue(
     return arguments.TryGetValue(name, out string? value) ? value : defaultValue;
 }
 
+static string? GetNullableValue(
+    IReadOnlyDictionary<string, string> arguments,
+    string name)
+{
+    return arguments.TryGetValue(name, out string? value) ? value : null;
+}
+
 static int GetInt(
     IReadOnlyDictionary<string, string> arguments,
     string name,
@@ -457,6 +725,16 @@ static int GetInt(
 {
     return arguments.TryGetValue(name, out string? value)
         ? int.Parse(value, CultureInfo.InvariantCulture)
+        : defaultValue;
+}
+
+static bool GetBool(
+    IReadOnlyDictionary<string, string> arguments,
+    string name,
+    bool defaultValue)
+{
+    return arguments.TryGetValue(name, out string? value)
+        ? bool.Parse(value)
         : defaultValue;
 }
 
