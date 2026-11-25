@@ -1,8 +1,12 @@
 # MQTTZero Master Hot-Path Hardening Plan
 
-> **Status:** Active. Tasks 1-4 are complete; Task 5 baseline is next.
+> **Status:** Complete. Correctness, benchmark integrity, diagnostics gating,
+> rebaseline, conditional experiment, cleanup and final verification are
+> complete. Vue checks were explicitly waived by the user.
 >
-> **Base:** `master` at `1a6b71e`
+> **Base:** `master` at `eeb8cc6`
+>
+> **Baseline report:** `perf/baseline/master-hotpath-hardening-2026-11-26.md`
 >
 > **Source review:**
 > `docs/superpowers/reviews/2026-11-26-master-hotpath-code-review.md`
@@ -167,21 +171,21 @@ remain unchanged. New supporting types are internal.
 
 ### Benchmark
 
-- [ ] Re-run corrected QoS 0/1/2 × 1/100/500 × 32 B/8 KiB/64 KiB development
+- [x] Re-run corrected QoS 0/1/2 × 1/100/500 × 32 B/8 KiB/64 KiB development
   matrix after Tasks 1-4.
-- [ ] Use two repetitions; auto-run a third only for the documented spread or
+- [x] Use two repetitions; auto-run a third only for the documented spread or
   invalid-result condition.
-- [ ] Run the 5-second warmup / 20-second confirmation profile for
+- [x] Run the 5-second warmup / 20-second confirmation profile for
   `QoS 1 / 100 / 64 KiB`.
-- [ ] Record publish-window throughput, end-to-end throughput, publish-call p99,
+- [x] Record publish-window throughput, end-to-end throughput, publish-call p99,
   drain time and broker CPU/allocation.
 
 ### Decision Gate
 
-- [ ] Do not implement pooled Flush state, direct Actor follow-up, or Session
+- [x] Do not implement pooled Flush state, direct Actor follow-up, or Session
   lock extraction unless the new diagnostics show a repeatable target-cell
   benefit.
-- [ ] Any experiment that fails to improve the target by ten percent or regresses
+- [x] Any experiment that fails to improve the target by ten percent or regresses
   another critical cell by more than five percent is removed.
 
 ## Task 6: Select Exactly One Conditional Hot-Path Experiment
@@ -202,15 +206,22 @@ continuous high-priority work.
   percent.
 - [ ] Prove that at least one affected 64-KiB p99 cell improves by ten percent.
 
-### 6B: Flush Lifecycle
+### 6B: Flush Lifecycle (Selected)
 
 Select only when per-Flush allocation or scheduling is a dominant corrected
 diagnostic.
 
-- [ ] Preserve one active Flush per connection.
-- [ ] Use a pooled completion operation or Shard completion Work only after
+- [x] Preserve one active Flush per connection.
+- [x] Use a pooled completion operation or Shard completion Work only after
   proving its allocation and p99 benefit.
-- [ ] Do not repeat the rejected universal Writer architecture.
+- [x] Do not repeat the rejected universal Writer architecture.
+
+The target diagnostic selected 6B: 19,656 asynchronous Flushes and 21,483
+Actor drains produced only 1.67 messages per Egress batch. A reusable Flush
+observer reduced custom per-Flush allocation from about 2.8 KiB to a residual
+32-B runtime continuation, but target throughput moved from 22.21 to
+22.08 msg/s and p99 moved from 60.93 to 61.41 ms. The experiment failed the
+ten-percent improvement gate and was removed from the production path.
 
 ### 6C: Session Critical Section
 
@@ -225,16 +236,16 @@ contributor.
 
 ### Stop Rule
 
-- [ ] Remove the selected experiment if its primary metric improves by less
+- [x] Remove the selected experiment if its primary metric improves by less
   than ten percent or any critical cell regresses by more than five percent.
 
 ## Task 7: Cleanup
 
-- [ ] Remove obsolete `MqttZeroSessionOutboundPump` after replacing or deleting
+- [x] Remove obsolete `MqttZeroSessionOutboundPump` after replacing or deleting
   its tests with current Egress Actor coverage.
-- [ ] Consolidate duplicate `SendPublishBatchAsync` and
+- [x] Consolidate duplicate `SendPublishBatchAsync` and
   `TryEncodePublishBatch` emission logic behind one tested primitive.
-- [ ] Preserve no allocation in the synchronized encode/write core.
+- [x] Preserve no allocation in the synchronized encode/write core.
 
 ### Commit
 
@@ -242,18 +253,21 @@ contributor.
 
 ## Final Verification
 
-- [ ] Locked restore.
-- [ ] Release solution build.
-- [ ] Core, Dashboard and Benchmark tests.
-- [ ] Vue tests and production build.
-- [ ] TCP/TLS/WebSocket integration tests.
-- [ ] Allocation sentinels.
-- [ ] Duplicate/missing Lease-release stress.
-- [ ] Concurrency stress for Flush/Control/Stop/Takeover.
-- [ ] `dotnet format --verify-no-changes`.
-- [ ] NuGet vulnerability/deprecation and npm audit.
-- [ ] Three-package/two-consumer package verification.
-- [ ] Record final benchmark JSON and a concise performance-positioning update.
+- [x] Locked restore.
+- [x] Release solution build.
+- [x] Core, Dashboard and Benchmark tests.
+- [ ] Vue tests and production build. User explicitly waived frontend
+  verification.
+- [x] TCP/TLS/WebSocket integration tests through the full core suite.
+- [x] Allocation sentinels.
+- [x] Duplicate/missing Lease-release stress.
+- [x] Concurrency stress for Flush/Control/Stop/Takeover.
+- [x] `dotnet format --verify-no-changes`.
+- [x] NuGet vulnerability/deprecation checks; npm installation reported zero
+  vulnerabilities, and frontend audit/build was waived with Vue verification.
+- [x] Three-package/two-consumer package verification.
+- [x] Record final benchmark JSON and a concise performance-positioning update
+  in `perf/baseline/master-hotpath-hardening-2026-11-26.md`.
 
 ## Assumptions
 
