@@ -246,9 +246,9 @@ static async Task CompareAsync(
             runtimeConfiguration,
             topologyOptions,
             egressOptions);
-        await WaitForReadyAsync(serverProcess);
         try
         {
+            await WaitForReadyAsync(serverProcess);
             BenchmarkRunOptions options = new(
                 subscribers,
                 publishers,
@@ -781,15 +781,35 @@ static Process StartServerProcess(
 static async Task WaitForReadyAsync(Process process)
 {
     using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(20));
-    string? line = await process.StandardOutput.ReadLineAsync(timeout.Token);
+    string? line;
+    try
+    {
+        line = await process.StandardOutput.ReadLineAsync(
+            timeout.Token);
+    }
+    catch (OperationCanceledException)
+        when (!process.HasExited)
+    {
+        process.Kill(entireProcessTree: true);
+        await process.WaitForExitAsync().ConfigureAwait(false);
+        string error = await process.StandardError
+            .ReadToEndAsync()
+            .ConfigureAwait(false);
+        throw new TimeoutException(
+            $"Broker process did not become ready. Error: {error}");
+    }
+
     if (line == "READY")
     {
         return;
     }
 
-    string error = await process.StandardError.ReadToEndAsync(timeout.Token);
+    string startupError = await process.StandardError
+        .ReadToEndAsync()
+        .ConfigureAwait(false);
     throw new InvalidOperationException(
-        $"Broker process did not become ready. Output: {line}. Error: {error}");
+        $"Broker process did not become ready. " +
+        $"Output: {line}. Error: {startupError}");
 }
 
 static async Task WaitForSubscriberDrainAsync(
