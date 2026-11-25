@@ -18,6 +18,7 @@ internal sealed class MqttZeroEventLoop :
     private readonly SemaphoreSlim _queueSpace;
     private readonly TaskCompletionSource _stopped = new(
         TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly bool _trackPriorityDiagnostics;
     private long _completedCount;
     private long _enqueuedCount;
     private long _failedCount;
@@ -31,11 +32,13 @@ internal sealed class MqttZeroEventLoop :
 
     public MqttZeroEventLoop(
         int shardId,
-        int queueCapacity)
+        int queueCapacity,
+        bool trackPriorityDiagnostics = true)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(shardId);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(queueCapacity);
         ShardId = shardId;
+        _trackPriorityDiagnostics = trackPriorityDiagnostics;
         _queueSpace = new SemaphoreSlim(
             queueCapacity,
             queueCapacity);
@@ -109,14 +112,16 @@ internal sealed class MqttZeroEventLoop :
     public MqttZeroShardDiagnostics GetSnapshot()
     {
         double highPriorityOldestWorkAgeMilliseconds = 0;
-        if (_queue.TryPeek(out MqttZeroShardWork? highPriorityWork))
+        if (_trackPriorityDiagnostics &&
+            _queue.TryPeek(out MqttZeroShardWork? highPriorityWork))
         {
             highPriorityOldestWorkAgeMilliseconds = Stopwatch.GetElapsedTime(
                 highPriorityWork.EnqueuedTimestamp).TotalMilliseconds;
         }
 
         double lowPriorityOldestWorkAgeMilliseconds = 0;
-        if (_lowPriorityQueue.TryPeek(
+        if (_trackPriorityDiagnostics &&
+            _lowPriorityQueue.TryPeek(
             out MqttZeroShardWork? lowPriorityWork))
         {
             lowPriorityOldestWorkAgeMilliseconds = Stopwatch.GetElapsedTime(
@@ -136,11 +141,17 @@ internal sealed class MqttZeroEventLoop :
             Math.Max(
                 highPriorityOldestWorkAgeMilliseconds,
                 lowPriorityOldestWorkAgeMilliseconds),
-            Volatile.Read(ref _highPriorityQueuedCount),
-            Volatile.Read(ref _lowPriorityQueuedCount),
+            _trackPriorityDiagnostics
+                ? Volatile.Read(ref _highPriorityQueuedCount)
+                : 0,
+            _trackPriorityDiagnostics
+                ? Volatile.Read(ref _lowPriorityQueuedCount)
+                : 0,
             highPriorityOldestWorkAgeMilliseconds,
             lowPriorityOldestWorkAgeMilliseconds,
-            Interlocked.Read(ref _lowPriorityWaitCount));
+            _trackPriorityDiagnostics
+                ? Interlocked.Read(ref _lowPriorityWaitCount)
+                : 0);
     }
 
     public ValueTask StopAsync()
@@ -236,12 +247,18 @@ internal sealed class MqttZeroEventLoop :
         if (work.IsLowPriority)
         {
             _lowPriorityQueue.Enqueue(work);
-            Interlocked.Increment(ref _lowPriorityQueuedCount);
+            if (_trackPriorityDiagnostics)
+            {
+                Interlocked.Increment(ref _lowPriorityQueuedCount);
+            }
         }
         else
         {
             _queue.Enqueue(work);
-            Interlocked.Increment(ref _highPriorityQueuedCount);
+            if (_trackPriorityDiagnostics)
+            {
+                Interlocked.Increment(ref _highPriorityQueuedCount);
+            }
         }
 
         Interlocked.Increment(ref _queuedCount);
@@ -252,9 +269,14 @@ internal sealed class MqttZeroEventLoop :
     {
         if (_queue.TryDequeue(out work))
         {
-            Interlocked.Decrement(ref _highPriorityQueuedCount);
+            if (_trackPriorityDiagnostics)
+            {
+                Interlocked.Decrement(ref _highPriorityQueuedCount);
+            }
+
             Interlocked.Decrement(ref _queuedCount);
-            if (!_lowPriorityQueue.IsEmpty)
+            if (_trackPriorityDiagnostics &&
+                !_lowPriorityQueue.IsEmpty)
             {
                 Interlocked.Increment(ref _lowPriorityWaitCount);
             }
@@ -264,7 +286,11 @@ internal sealed class MqttZeroEventLoop :
 
         if (_lowPriorityQueue.TryDequeue(out work))
         {
-            Interlocked.Decrement(ref _lowPriorityQueuedCount);
+            if (_trackPriorityDiagnostics)
+            {
+                Interlocked.Decrement(ref _lowPriorityQueuedCount);
+            }
+
             Interlocked.Decrement(ref _queuedCount);
             return true;
         }

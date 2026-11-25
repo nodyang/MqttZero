@@ -59,6 +59,20 @@ internal sealed class MqttZeroEgressScheduler : IAsyncDisposable
         }
     }
 
+    internal ValueTask SignalAndDrainCurrentShardAsync(
+        MqttZeroEgressActor actor)
+    {
+        ArgumentNullException.ThrowIfNull(actor);
+        if (!Shard.IsCurrent)
+        {
+            throw new InvalidOperationException(
+                "The egress scheduler must run on its owning shard.");
+        }
+
+        Signal(actor);
+        return ExecuteAsync(CancellationToken.None);
+    }
+
     public async ValueTask StopAsync()
     {
         if (Interlocked.Exchange(ref _stopping, 1) != 0)

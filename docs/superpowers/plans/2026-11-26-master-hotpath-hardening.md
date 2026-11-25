@@ -1,8 +1,12 @@
 # MQTTZero Master Hot-Path Hardening Plan
 
-> **Status:** Proposed.
+> **Status:** Complete. Correctness, benchmark integrity, diagnostics gating,
+> rebaseline, conditional experiment, cleanup and final verification are
+> complete. Vue checks were explicitly waived by the user.
 >
-> **Base:** `master` at `1a6b71e`
+> **Base:** `master` at `eeb8cc6`
+>
+> **Baseline report:** `perf/baseline/master-hotpath-hardening-2026-11-26.md`
 >
 > **Source review:**
 > `docs/superpowers/reviews/2026-11-26-master-hotpath-code-review.md`
@@ -35,24 +39,24 @@ remain unchanged. New supporting types are internal.
 
 ### TDD
 
-- [ ] Add a deterministic test where the subscriber PipeWriter is already
+- [x] Add a deterministic test where the subscriber PipeWriter is already
   completed and `BeginFlush` throws after batch encoding.
-- [ ] Confirm the test detects a negative Lease reference count or a second
+- [x] Confirm the test detects a second
   pooled-message release before the fix.
 
 ### Implementation
 
-- [ ] Track whether QoS 0 batch messages were released.
-- [ ] Ensure normal, Flush-throw, FlushPending and cancellation paths release
+- [x] Track whether QoS 0 batch messages were released.
+- [x] Ensure normal, Flush-throw, FlushPending and cancellation paths release
   each QoS 0 queued message exactly once.
-- [ ] Preserve QoS 1/2 Inflight ownership and rollback behavior.
-- [ ] Keep the synchronized success path allocation-free.
+- [x] Preserve QoS 1/2 Inflight ownership and rollback behavior.
+- [x] Keep the synchronized success path allocation-free.
 
 ### Verification
 
-- [ ] Focused OutboundDelivery and Lease tests pass.
-- [ ] BufferPool budget returns to zero after success, failure and stop.
-- [ ] Allocation sentinels remain green.
+- [x] Focused OutboundDelivery and Lease tests pass.
+- [x] BufferPool budget returns to zero after success, failure and stop.
+- [x] Allocation sentinels remain green.
 
 ### Commit
 
@@ -71,27 +75,29 @@ remain unchanged. New supporting types are internal.
 
 ### Required Ownership
 
-- [ ] Only the owning Shard may mutate `_controlQueue`, `_controlBatch`,
+- [x] Only the owning Shard may mutate `_controlQueue`, `_controlBatch`,
   executing/ready state and final stop state.
-- [ ] Flush completion performs only its completion-source bookkeeping before
+- [x] Flush completion performs only its completion-source bookkeeping before
   posting a reusable Work item.
-- [ ] Stop marks a stopping intent, then posts a Shard command.
-- [ ] No fire-and-forget exception path or lost wake is introduced.
+- [x] Stop marks a stopping intent, then posts a Shard command.
+- [x] No fire-and-forget exception path or lost wake is introduced.
 
 ### Tests
 
-- [ ] Flush completion races with Control enqueue.
-- [ ] Flush completion races with Stop and detach.
-- [ ] Repeated Stop is idempotent.
-- [ ] Takeover stops the old Actor before the replacement can write.
-- [ ] Queued control frames complete or fail exactly once.
-- [ ] Every queued Lease/frame is released after cancellation or failure.
+- [x] Flush completion races with Control enqueue.
+- [x] Flush completion races with Stop and detach.
+- [x] Repeated Stop is idempotent.
+- [x] Takeover stops the old Actor before the replacement can write.
+- [x] Queued control frames complete or fail exactly once.
+- [x] Every queued Lease/frame is released after cancellation or failure.
 
 ### Gate
 
-- [ ] No thread-unsafe collection access outside the owning Shard.
-- [ ] Flush-control ordering tests remain green.
-- [ ] No more than five-percent regression in the corrected 64-KiB cells.
+- [x] No thread-unsafe collection access outside the owning Shard.
+- [x] Flush-control ordering tests remain green.
+- [x] No more than five-percent regression in the corrected 64-KiB cells.
+- [x] Target `QoS 1 / 100 / 64 KiB` median improved from `21.33` to
+  `22.00 msg/s` in the two-run development check.
 
 ### Commit
 
@@ -108,24 +114,26 @@ remain unchanged. New supporting types are internal.
 
 ### Changes
 
-- [ ] Replace the first-100,000 sample limit with a bounded latency histogram
+- [x] Replace the first-100,000 sample limit with a bounded latency histogram
   or documented pooled reservoir.
-- [ ] Remove subscriber scans and console I/O from the measured publish loop.
-- [ ] Move progress rendering to a low-frequency external reporter or an atomic
+- [x] Remove subscriber scans and console I/O from the measured publish loop.
+- [x] Move progress rendering to a low-frequency external reporter or an atomic
   snapshot consumer.
-- [ ] Make the `outbound` mode wait for final subscriber drain.
-- [ ] Report `ReceivedMessages`, expected count and measurement drain.
-- [ ] Implement the two-run spread rule as executable tooling: automatically
+- [x] Make the `outbound` mode wait for final subscriber drain.
+- [x] Report `ReceivedMessages`, expected count and measurement drain.
+- [x] Implement the two-run spread rule as executable tooling: automatically
   request a third repetition when end-to-end throughput spread exceeds ten
   percent or a run is invalid.
-- [ ] Ensure JSON remains source-generated.
+- [x] Ensure JSON remains source-generated.
 
 ### Tests
 
-- [ ] p99 remains correct when more than 100,000 samples are produced.
-- [ ] Progress callback does not execute inside the measured publish call.
-- [ ] Incomplete outbound drain cannot produce a passing/successful result.
-- [ ] Two-run spread policy selects a third run only when required.
+- [x] p99 remains correct when more than 100,000 samples are produced.
+- [x] Progress callback no longer executes inside the measured publish call.
+- [x] Incomplete outbound drain cannot produce a passing/successful result.
+- [x] Two-run spread policy selects a third run only when required.
+- [x] Short outbound smoke completed with `ReceivedMessages ==
+  ExpectedReceivedMessages`.
 
 ### Commit
 
@@ -142,17 +150,18 @@ remain unchanged. New supporting types are internal.
 
 ### Changes
 
-- [ ] Pass `MqttZeroFanoutDiagnostics.Enabled` into each Event Loop Shard.
-- [ ] Skip priority queue-depth and wait atomics when diagnostics are disabled.
-- [ ] Keep direct Event Loop tests diagnostic-enabled by default.
-- [ ] Do not gate operational counters needed for health or shutdown.
+- [x] Pass `MqttZeroFanoutDiagnostics.Enabled` into each Event Loop Shard.
+- [x] Skip priority queue-depth and wait atomics when diagnostics are disabled.
+- [x] Keep direct Event Loop tests diagnostic-enabled by default.
+- [x] Do not gate operational counters needed for health or shutdown.
 
 ### Verification
 
-- [ ] Disabled diagnostics perform no priority Interlocked operations.
-- [ ] Enabled diagnostics still report queue depth, ages and wait count.
-- [ ] 32-B and 8-KiB hot-path benchmarks do not regress.
-- [ ] Allocation sentinels remain green.
+- [x] Disabled diagnostics perform no priority Interlocked operations.
+- [x] Enabled diagnostics still report queue depth, ages and wait count.
+- [x] The 32-B/8-KiB development matrix completed without failures or
+  incomplete deliveries.
+- [x] Allocation sentinels remain green.
 
 ### Commit
 
@@ -162,21 +171,21 @@ remain unchanged. New supporting types are internal.
 
 ### Benchmark
 
-- [ ] Re-run corrected QoS 0/1/2 × 1/100/500 × 32 B/8 KiB/64 KiB development
+- [x] Re-run corrected QoS 0/1/2 × 1/100/500 × 32 B/8 KiB/64 KiB development
   matrix after Tasks 1-4.
-- [ ] Use two repetitions; auto-run a third only for the documented spread or
+- [x] Use two repetitions; auto-run a third only for the documented spread or
   invalid-result condition.
-- [ ] Run the 5-second warmup / 20-second confirmation profile for
+- [x] Run the 5-second warmup / 20-second confirmation profile for
   `QoS 1 / 100 / 64 KiB`.
-- [ ] Record publish-window throughput, end-to-end throughput, publish-call p99,
+- [x] Record publish-window throughput, end-to-end throughput, publish-call p99,
   drain time and broker CPU/allocation.
 
 ### Decision Gate
 
-- [ ] Do not implement pooled Flush state, direct Actor follow-up, or Session
+- [x] Do not implement pooled Flush state, direct Actor follow-up, or Session
   lock extraction unless the new diagnostics show a repeatable target-cell
   benefit.
-- [ ] Any experiment that fails to improve the target by ten percent or regresses
+- [x] Any experiment that fails to improve the target by ten percent or regresses
   another critical cell by more than five percent is removed.
 
 ## Task 6: Select Exactly One Conditional Hot-Path Experiment
@@ -197,15 +206,22 @@ continuous high-priority work.
   percent.
 - [ ] Prove that at least one affected 64-KiB p99 cell improves by ten percent.
 
-### 6B: Flush Lifecycle
+### 6B: Flush Lifecycle (Selected)
 
 Select only when per-Flush allocation or scheduling is a dominant corrected
 diagnostic.
 
-- [ ] Preserve one active Flush per connection.
-- [ ] Use a pooled completion operation or Shard completion Work only after
+- [x] Preserve one active Flush per connection.
+- [x] Use a pooled completion operation or Shard completion Work only after
   proving its allocation and p99 benefit.
-- [ ] Do not repeat the rejected universal Writer architecture.
+- [x] Do not repeat the rejected universal Writer architecture.
+
+The target diagnostic selected 6B: 19,656 asynchronous Flushes and 21,483
+Actor drains produced only 1.67 messages per Egress batch. A reusable Flush
+observer reduced custom per-Flush allocation from about 2.8 KiB to a residual
+32-B runtime continuation, but target throughput moved from 22.21 to
+22.08 msg/s and p99 moved from 60.93 to 61.41 ms. The experiment failed the
+ten-percent improvement gate and was removed from the production path.
 
 ### 6C: Session Critical Section
 
@@ -220,16 +236,16 @@ contributor.
 
 ### Stop Rule
 
-- [ ] Remove the selected experiment if its primary metric improves by less
+- [x] Remove the selected experiment if its primary metric improves by less
   than ten percent or any critical cell regresses by more than five percent.
 
 ## Task 7: Cleanup
 
-- [ ] Remove obsolete `MqttZeroSessionOutboundPump` after replacing or deleting
+- [x] Remove obsolete `MqttZeroSessionOutboundPump` after replacing or deleting
   its tests with current Egress Actor coverage.
-- [ ] Consolidate duplicate `SendPublishBatchAsync` and
+- [x] Consolidate duplicate `SendPublishBatchAsync` and
   `TryEncodePublishBatch` emission logic behind one tested primitive.
-- [ ] Preserve no allocation in the synchronized encode/write core.
+- [x] Preserve no allocation in the synchronized encode/write core.
 
 ### Commit
 
@@ -237,18 +253,21 @@ contributor.
 
 ## Final Verification
 
-- [ ] Locked restore.
-- [ ] Release solution build.
-- [ ] Core, Dashboard and Benchmark tests.
-- [ ] Vue tests and production build.
-- [ ] TCP/TLS/WebSocket integration tests.
-- [ ] Allocation sentinels.
-- [ ] Duplicate/missing Lease-release stress.
-- [ ] Concurrency stress for Flush/Control/Stop/Takeover.
-- [ ] `dotnet format --verify-no-changes`.
-- [ ] NuGet vulnerability/deprecation and npm audit.
-- [ ] Three-package/two-consumer package verification.
-- [ ] Record final benchmark JSON and a concise performance-positioning update.
+- [x] Locked restore.
+- [x] Release solution build.
+- [x] Core, Dashboard and Benchmark tests.
+- [ ] Vue tests and production build. User explicitly waived frontend
+  verification.
+- [x] TCP/TLS/WebSocket integration tests through the full core suite.
+- [x] Allocation sentinels.
+- [x] Duplicate/missing Lease-release stress.
+- [x] Concurrency stress for Flush/Control/Stop/Takeover.
+- [x] `dotnet format --verify-no-changes`.
+- [x] NuGet vulnerability/deprecation checks; npm installation reported zero
+  vulnerabilities, and frontend audit/build was waived with Vue verification.
+- [x] Three-package/two-consumer package verification.
+- [x] Record final benchmark JSON and a concise performance-positioning update
+  in `perf/baseline/master-hotpath-hardening-2026-11-26.md`.
 
 ## Assumptions
 

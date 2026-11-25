@@ -227,6 +227,104 @@ static async Task CompareAsync(
         payloadSizes.Length;
     int currentRun = 0;
 
+    async Task<BrokerComparisonResult> RunOneAsync(
+        int runPort,
+        int repetition,
+        string broker,
+        int qos,
+        int subscribers,
+        int payloadSize,
+        int runNumber,
+        int runTotal)
+    {
+        long brokerStarted = Stopwatch.GetTimestamp();
+        using Process serverProcess = StartServerProcess(
+            assemblyPath,
+            broker,
+            runPort,
+            allowPacketFragmentation,
+            runtimeConfiguration,
+            topologyOptions,
+            egressOptions);
+        try
+        {
+            await WaitForReadyAsync(serverProcess);
+            BenchmarkRunOptions options = new(
+                subscribers,
+                publishers,
+                qos,
+                payloadSize,
+                warmup,
+                seconds,
+                maxPendingMessages);
+            BrokerBenchmarkResult result;
+            try
+            {
+                result = await BenchmarkLoadRunner.RunAsync(
+                    runPort,
+                    options,
+                    new BenchmarkMqttClientFactory(
+                        clientKind,
+                        runPort),
+                    CancellationToken.None,
+                    update => WriteProgress(
+                        runNumber,
+                        runTotal,
+                        broker,
+                        qos,
+                        subscribers,
+                        payloadSize,
+                        update));
+            }
+            catch (Exception exception)
+            {
+                throw new InvalidOperationException(
+                    $"Broker benchmark failed at " +
+                    $"repetition={repetition}, " +
+                    $"broker={broker}, qos={qos}, " +
+                    $"subscribers={subscribers}, " +
+                    $"payload={payloadSize}, port={runPort}.",
+                    exception);
+            }
+
+            BenchmarkProcessObservation brokerObservation =
+                BenchmarkObservationCapture.CaptureProcess(
+                    serverProcess,
+                    Stopwatch.GetElapsedTime(brokerStarted));
+            BrokerComparisonResult comparison = new()
+            {
+                Broker = broker,
+                Qos = qos,
+                Subscribers = subscribers,
+                PayloadSize = payloadSize,
+                Repetition = repetition,
+                Result = result,
+                BrokerObservation = brokerObservation
+            };
+            WriteProgress(
+                runNumber,
+                runTotal,
+                broker,
+                qos,
+                subscribers,
+                payloadSize,
+                new BenchmarkRunProgress(
+                    "complete",
+                    result.PublishedMessages,
+                    result.MeasurementReceivedMessages,
+                    result.FailedOperations),
+                result);
+            return comparison;
+        }
+        finally
+        {
+            if (!serverProcess.HasExited)
+            {
+                serverProcess.Kill(entireProcessTree: true);
+            }
+        }
+    }
+
     for (int repetition = 1; repetition <= repetitions; repetition++)
     {
         foreach (string broker in brokers)
@@ -251,96 +349,64 @@ static async Task CompareAsync(
                                 0,
                                 0,
                                 0));
-                        long brokerStarted = Stopwatch.GetTimestamp();
-                        using Process serverProcess = StartServerProcess(
-                            assemblyPath,
-                            broker,
+                        results.Add(await RunOneAsync(
                             port,
-                            allowPacketFragmentation,
-                            runtimeConfiguration,
-                            topologyOptions,
-                            egressOptions);
-                        await WaitForReadyAsync(serverProcess);
-                        BenchmarkProcessObservation brokerObservation;
-                        try
-                        {
-                            BenchmarkRunOptions options = new(
-                                subscribers,
-                                publishers,
-                                qos,
-                                payloadSize,
-                                warmup,
-                                seconds,
-                                maxPendingMessages);
-                            BrokerBenchmarkResult result;
-                            try
-                            {
-                                result = await BenchmarkLoadRunner.RunAsync(
-                                    port,
-                                    options,
-                                    new BenchmarkMqttClientFactory(
-                                        clientKind,
-                                        port),
-                                    CancellationToken.None,
-                                    update => WriteProgress(
-                                        currentRun,
-                                        totalRuns,
-                                        broker,
-                                        qos,
-                                        subscribers,
-                                        payloadSize,
-                                        update));
-                            }
-                            catch (Exception exception)
-                            {
-                                throw new InvalidOperationException(
-                                    $"Broker benchmark failed at " +
-                                    $"repetition={repetition}, " +
-                                    $"broker={broker}, " +
-                                    $"qos={qos}, " +
-                                    $"subscribers={subscribers}, " +
-                                    $"payload={payloadSize}, port={port}.",
-                                    exception);
-                            }
-
-                            brokerObservation =
-                                BenchmarkObservationCapture.CaptureProcess(
-                                    serverProcess,
-                                    Stopwatch.GetElapsedTime(
-                                        brokerStarted));
-                            results.Add(new BrokerComparisonResult
-                            {
-                                Broker = broker,
-                                Qos = qos,
-                                Subscribers = subscribers,
-                                PayloadSize = payloadSize,
-                                Repetition = repetition,
-                                Result = result,
-                                BrokerObservation = brokerObservation
-                            });
-                            WriteProgress(
-                                currentRun,
-                                totalRuns,
-                                broker,
-                                qos,
-                                subscribers,
-                                payloadSize,
-                                new BenchmarkRunProgress(
-                                    "complete",
-                                    result.PublishedMessages,
-                                    result.MeasurementReceivedMessages,
-                                    result.FailedOperations),
-                                result);
-                        }
-                        finally
-                        {
-                            if (!serverProcess.HasExited)
-                            {
-                                serverProcess.Kill(entireProcessTree: true);
-                            }
-                        }
+                            repetition,
+                            broker,
+                            qos,
+                            subscribers,
+                            payloadSize,
+                            currentRun,
+                            totalRuns));
                     }
                 }
+            }
+        }
+    }
+
+    if (repetitions == 2)
+    {
+        foreach (IGrouping<
+            (int Qos, int Subscribers, int PayloadSize),
+            BrokerComparisonResult> cell in results
+                .GroupBy(static result => (
+                    result.Qos,
+                    result.Subscribers,
+                    result.PayloadSize))
+                .ToArray())
+        {
+            if (!BenchmarkRepetitionPolicy.RequiresThirdRepetition(
+                    cell.ToArray()))
+            {
+                continue;
+            }
+
+            totalRuns += brokers.Length;
+            foreach (string broker in brokers)
+            {
+                port++;
+                currentRun++;
+                WriteProgress(
+                    currentRun,
+                    totalRuns,
+                    broker,
+                    cell.Key.Qos,
+                    cell.Key.Subscribers,
+                    cell.Key.PayloadSize,
+                    new BenchmarkRunProgress(
+                        "tie-break",
+                        0,
+                        0,
+                        0));
+                results.Add(await RunOneAsync(
+                    port,
+                    repetition: 3,
+                    broker,
+                    cell.Key.Qos,
+                    cell.Key.Subscribers,
+                    cell.Key.PayloadSize,
+                    currentRun,
+                    totalRuns));
             }
         }
     }
@@ -476,6 +542,20 @@ static async Task RunOutboundAsync(Dictionary<string, string> arguments)
         waitTicks,
         publishTicks);
     stopwatch.Stop();
+    long expectedReceivedMessages =
+        loopResult.PublishedMessages * subscriberCount;
+    long measurementDrainStarted = Stopwatch.GetTimestamp();
+    await WaitForSubscriberDrainAsync(
+        advertisedMessages: expectedReceivedMessages,
+        () => Interlocked.Read(ref receivedMessages),
+        CancellationToken.None);
+    long measurementDrainCompleted = Stopwatch.GetTimestamp();
+    TimeSpan measurementDrain = Stopwatch.GetElapsedTime(
+        measurementDrainStarted,
+        measurementDrainCompleted);
+    double endToEndSeconds =
+        stopwatch.Elapsed.TotalSeconds +
+        measurementDrain.TotalSeconds;
     waitTicks.Sort();
     publishTicks.Sort();
     MqttZero.Server.Broker.MqttZeroFanoutDiagnosticsSnapshot
@@ -554,9 +634,16 @@ static async Task RunOutboundAsync(Dictionary<string, string> arguments)
     OutboundBenchmarkResult result = new(
         PublishedMessages: loopResult.PublishedMessages,
         ReceivedMessages: Interlocked.Read(ref receivedMessages),
+        ExpectedReceivedMessages: expectedReceivedMessages,
         FailedOperations: 0,
         ThroughputPerSecond:
             loopResult.PublishedMessages / stopwatch.Elapsed.TotalSeconds,
+        EndToEndThroughputPerSecond:
+            endToEndSeconds > 0
+                ? loopResult.PublishedMessages / endToEndSeconds
+                : 0,
+        MeasurementDrainMilliseconds:
+            measurementDrain.TotalMilliseconds,
         WaitP50Microseconds: PercentileMicroseconds(
             waitTicks.ToArray(),
             waitTicks.Count,
@@ -694,15 +781,35 @@ static Process StartServerProcess(
 static async Task WaitForReadyAsync(Process process)
 {
     using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(20));
-    string? line = await process.StandardOutput.ReadLineAsync(timeout.Token);
+    string? line;
+    try
+    {
+        line = await process.StandardOutput.ReadLineAsync(
+            timeout.Token);
+    }
+    catch (OperationCanceledException)
+        when (!process.HasExited)
+    {
+        process.Kill(entireProcessTree: true);
+        await process.WaitForExitAsync().ConfigureAwait(false);
+        string error = await process.StandardError
+            .ReadToEndAsync()
+            .ConfigureAwait(false);
+        throw new TimeoutException(
+            $"Broker process did not become ready. Error: {error}");
+    }
+
     if (line == "READY")
     {
         return;
     }
 
-    string error = await process.StandardError.ReadToEndAsync(timeout.Token);
+    string startupError = await process.StandardError
+        .ReadToEndAsync()
+        .ConfigureAwait(false);
     throw new InvalidOperationException(
-        $"Broker process did not become ready. Output: {line}. Error: {error}");
+        $"Broker process did not become ready. " +
+        $"Output: {line}. Error: {startupError}");
 }
 
 static async Task WaitForSubscriberDrainAsync(

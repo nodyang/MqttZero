@@ -183,7 +183,7 @@ public sealed class MqttZeroEgressActorTests
     }
 
     [Fact(Timeout = 5_000)]
-    public async Task StopRejectsSignalsAndFailsWaitingControls()
+    public async Task StopWaitsForInFlightControlAndRejectsNewSignals()
     {
         await using MqttZeroEventLoop shard = new(0, 32);
         await using MqttZeroEgressScheduler scheduler = new(
@@ -218,10 +218,9 @@ public sealed class MqttZeroEgressActorTests
 
         try
         {
-            await Assert.ThrowsAnyAsync<Exception>(async () =>
-                await completion.WaitAsync(
-                    TimeSpan.FromSeconds(1),
-                    TestContext.Current.CancellationToken));
+            await completion.WaitAsync(
+                TimeSpan.FromSeconds(1),
+                TestContext.Current.CancellationToken);
         }
         finally
         {
