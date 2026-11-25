@@ -12,6 +12,7 @@ internal sealed class MqttZeroQueuedMessage
                 DefaultCapacity);
 
     private MqttZeroMessageLease _lease = null!;
+    private bool _isHeld;
     private uint[] _subscriptionIdentifierBuffer = [];
 
     internal MqttZeroQueuedMessage? QueueNext { get; set; }
@@ -120,6 +121,13 @@ internal sealed class MqttZeroQueuedMessage
             message = new MqttZeroQueuedMessage();
         }
 
+        if (message._isHeld)
+        {
+            throw new InvalidOperationException(
+                "The queued message was rented while already held.");
+        }
+
+        message._isHeld = true;
         lease.EnsureOwned();
         lease.Retain();
         message._lease = lease;
@@ -267,7 +275,8 @@ internal sealed class MqttZeroQueuedMessage
 
     public void Release()
     {
-        ObjectDisposedException.ThrowIf(_lease is null, this);
+        ObjectDisposedException.ThrowIf(!_isHeld || _lease is null, this);
+        _isHeld = false;
         if (_subscriptionIdentifierBuffer.Length > 0)
         {
             ArrayPool<uint>.Shared.Return(
