@@ -48,4 +48,5 @@ Flush allocation observable and bounded without changing public APIs.
 5. `fix: reject queued message ownership reuse`
 6. `test: add memory stability soak`
 7. `perf: reduce memory pool accounting overhead`
-
+8. `release: prepare MQTTZero 0.11.0-alpha.3`
+9. `test: use deterministic memory benchmark waves`
