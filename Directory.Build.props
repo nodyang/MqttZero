@@ -13,7 +13,7 @@
     <Deterministic>true</Deterministic>
     <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
     <Product>MQTTZero</Product>
-    <Version>0.11.0-alpha.2</Version>
+    <Version>0.11.0-alpha.3</Version>
     <Authors>The MQTTZero contributors</Authors>
     <Company>The MQTTZero contributors</Company>
     <Copyright>Copyright (c) The MQTTZero contributors</Copyright>

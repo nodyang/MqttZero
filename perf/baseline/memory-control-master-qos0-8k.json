@@ -1,0 +1,491 @@
+{
+  "Environment": {
+    "OsDescription": "Microsoft Windows 10.0.26300",
+    "OsVersion": "Microsoft Windows NT 10.0.26300.0",
+    "RuntimeVersion": ".NET 10.0.15",
+    "ProcessArchitecture": "X64",
+    "RuntimeIdentifier": "win-x64",
+    "ProcessorCount": 12,
+    "Runtime": {
+      "IsServerGarbageCollection": true,
+      "IsConcurrentGarbageCollection": true,
+      "IsTieredPgoEnabled": true,
+      "MinimumWorkerThreads": 12,
+      "MaximumWorkerThreads": 32767,
+      "MinimumCompletionPortThreads": 1,
+      "MaximumCompletionPortThreads": 1000
+    },
+    "Topology": {
+      "EventLoopShardCount": 0,
+      "ResolvedEventLoopShardCount": 12,
+      "IoQueueCount": 0,
+      "ResolvedIoQueueCount": 12
+    },
+    "Egress": {
+      "OutboundBatchBytes": 524288,
+      "OutboundBatchMessages": 128,
+      "OutboundBatchDurationMicroseconds": 500
+    }
+  },
+  "Results": [
+    {
+      "Broker": "mqttzero",
+      "Qos": 0,
+      "Subscribers": 1,
+      "PayloadSize": 8192,
+      "Repetition": 1,
+      "BrokerObservation": {
+        "TotalProcessorMilliseconds": 4375,
+        "PrivateMemoryBytes": 55386112,
+        "PeakWorkingSetBytes": 88563712,
+        "UptimeMilliseconds": 9951.2364
+      },
+      "Result": {
+        "PublishedMessages": 15011,
+        "ReceivedMessages": 14899,
+        "FailedOperations": 0,
+        "WarmupPublishedMessages": 7853,
+        "WarmupReceivedMessages": 7853,
+        "MeasurementReceivedMessages": 15011,
+        "PublishWindowThroughputPerSecond": 2496.4489921470704,
+        "EndToEndThroughputPerSecond": 2365.1815775942323,
+        "PublishCallLatencyP50Microseconds": 87,
+        "PublishCallLatencyP95Microseconds": 204,
+        "PublishCallLatencyP99Microseconds": 556,
+        "LoadObservation": {
+          "ProcessCpuMilliseconds": 2390.625,
+          "WorkingSetBytes": 50769920,
+          "AllocatedBytesDelta": 286177728,
+          "Gen0CollectionCountDelta": 105,
+          "Gen1CollectionCountDelta": 2,
+          "Gen2CollectionCountDelta": 2,
+          "ThreadPoolPendingWorkItemCount": 0,
+          "ThreadPoolCompletedWorkItemCountDelta": 34786
+        },
+        "ConnectionSetupMilliseconds": 97.6696,
+        "WarmupMilliseconds": 2000.817,
+        "MeasurementMilliseconds": 6012.9408,
+        "WarmupDrainMilliseconds": 1265.6022,
+        "MeasurementDrainMilliseconds": 333.5575,
+        "FirstError": null
+      }
+    },
+    {
+      "Broker": "mqttzero",
+      "Qos": 0,
+      "Subscribers": 100,
+      "PayloadSize": 8192,
+      "Repetition": 1,
+      "BrokerObservation": {
+        "TotalProcessorMilliseconds": 5421.875,
+        "PrivateMemoryBytes": 51924992,
+        "PeakWorkingSetBytes": 90431488,
+        "UptimeMilliseconds": 8850.0966
+      },
+      "Result": {
+        "PublishedMessages": 986,
+        "ReceivedMessages": 97900,
+        "FailedOperations": 0,
+        "WarmupPublishedMessages": 332,
+        "WarmupReceivedMessages": 33200,
+        "MeasurementReceivedMessages": 98600,
+        "PublishWindowThroughputPerSecond": 164.2982857706737,
+        "EndToEndThroughputPerSecond": 163.18359881037503,
+        "PublishCallLatencyP50Microseconds": 1110,
+        "PublishCallLatencyP95Microseconds": 10578,
+        "PublishCallLatencyP99Microseconds": 16620,
+        "LoadObservation": {
+          "ProcessCpuMilliseconds": 5328.125,
+          "WorkingSetBytes": 81096704,
+          "AllocatedBytesDelta": 1787042776,
+          "Gen0CollectionCountDelta": 95,
+          "Gen1CollectionCountDelta": 95,
+          "Gen2CollectionCountDelta": 2,
+          "ThreadPoolPendingWorkItemCount": 0,
+          "ThreadPoolCompletedWorkItemCountDelta": 123020
+        },
+        "ConnectionSetupMilliseconds": 252.9623,
+        "WarmupMilliseconds": 1996.6317,
+        "MeasurementMilliseconds": 6001.2799,
+        "WarmupDrainMilliseconds": 324.0853,
+        "MeasurementDrainMilliseconds": 40.6276,
+        "FirstError": null
+      }
+    },
+    {
+      "Broker": "mqttnet",
+      "Qos": 0,
+      "Subscribers": 1,
+      "PayloadSize": 8192,
+      "Repetition": 1,
+      "BrokerObservation": {
+        "TotalProcessorMilliseconds": 3562.5,
+        "PrivateMemoryBytes": 40370176,
+        "PeakWorkingSetBytes": 100323328,
+        "UptimeMilliseconds": 9694.2633
+      },
+      "Result": {
+        "PublishedMessages": 13903,
+        "ReceivedMessages": 12878,
+        "FailedOperations": 0,
+        "WarmupPublishedMessages": 3821,
+        "WarmupReceivedMessages": 3821,
+        "MeasurementReceivedMessages": 13903,
+        "PublishWindowThroughputPerSecond": 2313.7067495933247,
+        "EndToEndThroughputPerSecond": 2044.4020058696674,
+        "PublishCallLatencyP50Microseconds": 85,
+        "PublishCallLatencyP95Microseconds": 227,
+        "PublishCallLatencyP99Microseconds": 441,
+        "LoadObservation": {
+          "ProcessCpuMilliseconds": 2015.625,
+          "WorkingSetBytes": 68923392,
+          "AllocatedBytesDelta": 264741728,
+          "Gen0CollectionCountDelta": 48,
+          "Gen1CollectionCountDelta": 1,
+          "Gen2CollectionCountDelta": 1,
+          "ThreadPoolPendingWorkItemCount": 0,
+          "ThreadPoolCompletedWorkItemCountDelta": 31386
+        },
+        "ConnectionSetupMilliseconds": 47.1438,
+        "WarmupMilliseconds": 1991.7453,
+        "MeasurementMilliseconds": 6008.9724,
+        "WarmupDrainMilliseconds": 670.8788,
+        "MeasurementDrainMilliseconds": 791.4341,
+        "FirstError": null
+      }
+    },
+    {
+      "Broker": "mqttnet",
+      "Qos": 0,
+      "Subscribers": 100,
+      "PayloadSize": 8192,
+      "Repetition": 1,
+      "BrokerObservation": {
+        "TotalProcessorMilliseconds": 5578.125,
+        "PrivateMemoryBytes": 60567552,
+        "PeakWorkingSetBytes": 90472448,
+        "UptimeMilliseconds": 8623.547
+      },
+      "Result": {
+        "PublishedMessages": 815,
+        "ReceivedMessages": 80958,
+        "FailedOperations": 0,
+        "WarmupPublishedMessages": 279,
+        "WarmupReceivedMessages": 27900,
+        "MeasurementReceivedMessages": 81500,
+        "PublishWindowThroughputPerSecond": 135.6776477551226,
+        "EndToEndThroughputPerSecond": 134.64136455305882,
+        "PublishCallLatencyP50Microseconds": 5137,
+        "PublishCallLatencyP95Microseconds": 11175,
+        "PublishCallLatencyP99Microseconds": 15644,
+        "LoadObservation": {
+          "ProcessCpuMilliseconds": 6640.625,
+          "WorkingSetBytes": 86257664,
+          "AllocatedBytesDelta": 1284276512,
+          "Gen0CollectionCountDelta": 76,
+          "Gen1CollectionCountDelta": 75,
+          "Gen2CollectionCountDelta": 2,
+          "ThreadPoolPendingWorkItemCount": 0,
+          "ThreadPoolCompletedWorkItemCountDelta": 140226
+        },
+        "ConnectionSetupMilliseconds": 205.7268,
+        "WarmupMilliseconds": 2003.33,
+        "MeasurementMilliseconds": 6006.8848,
+        "WarmupDrainMilliseconds": 170.6103,
+        "MeasurementDrainMilliseconds": 45.7877,
+        "FirstError": null
+      }
+    },
+    {
+      "Broker": "mqttzero",
+      "Qos": 0,
+      "Subscribers": 1,
+      "PayloadSize": 8192,
+      "Repetition": 2,
+      "BrokerObservation": {
+        "TotalProcessorMilliseconds": 4234.375,
+        "PrivateMemoryBytes": 55291904,
+        "PeakWorkingSetBytes": 90132480,
+        "UptimeMilliseconds": 9113.3477
+      },
+      "Result": {
+        "PublishedMessages": 18828,
+        "ReceivedMessages": 17803,
+        "FailedOperations": 0,
+        "WarmupPublishedMessages": 6009,
+        "WarmupReceivedMessages": 6009,
+        "MeasurementReceivedMessages": 18828,
+        "PublishWindowThroughputPerSecond": 3137.3748257763837,
+        "EndToEndThroughputPerSecond": 2879.0267898580637,
+        "PublishCallLatencyP50Microseconds": 80,
+        "PublishCallLatencyP95Microseconds": 200,
+        "PublishCallLatencyP99Microseconds": 537,
+        "LoadObservation": {
+          "ProcessCpuMilliseconds": 2375,
+          "WorkingSetBytes": 68460544,
+          "AllocatedBytesDelta": 2703269784,
+          "Gen0CollectionCountDelta": 84,
+          "Gen1CollectionCountDelta": 1,
+          "Gen2CollectionCountDelta": 1,
+          "ThreadPoolPendingWorkItemCount": 0,
+          "ThreadPoolCompletedWorkItemCountDelta": 42217
+        },
+        "ConnectionSetupMilliseconds": 63.6523,
+        "WarmupMilliseconds": 2002.0969,
+        "MeasurementMilliseconds": 6001.1956,
+        "WarmupDrainMilliseconds": 299.9481,
+        "MeasurementDrainMilliseconds": 538.4132,
+        "FirstError": null
+      }
+    },
+    {
+      "Broker": "mqttzero",
+      "Qos": 0,
+      "Subscribers": 100,
+      "PayloadSize": 8192,
+      "Repetition": 2,
+      "BrokerObservation": {
+        "TotalProcessorMilliseconds": 3921.875,
+        "PrivateMemoryBytes": 48558080,
+        "PeakWorkingSetBytes": 84299776,
+        "UptimeMilliseconds": 8719.2345
+      },
+      "Result": {
+        "PublishedMessages": 1045,
+        "ReceivedMessages": 103862,
+        "FailedOperations": 0,
+        "WarmupPublishedMessages": 341,
+        "WarmupReceivedMessages": 34100,
+        "MeasurementReceivedMessages": 104500,
+        "PublishWindowThroughputPerSecond": 173.83356389430634,
+        "EndToEndThroughputPerSecond": 172.99372882006324,
+        "PublishCallLatencyP50Microseconds": 909,
+        "PublishCallLatencyP95Microseconds": 9203,
+        "PublishCallLatencyP99Microseconds": 14857,
+        "LoadObservation": {
+          "ProcessCpuMilliseconds": 6093.75,
+          "WorkingSetBytes": 88899584,
+          "AllocatedBytesDelta": 1894686040,
+          "Gen0CollectionCountDelta": 98,
+          "Gen1CollectionCountDelta": 98,
+          "Gen2CollectionCountDelta": 2,
+          "ThreadPoolPendingWorkItemCount": 0,
+          "ThreadPoolCompletedWorkItemCountDelta": 132695
+        },
+        "ConnectionSetupMilliseconds": 204.5245,
+        "WarmupMilliseconds": 2004.6687,
+        "MeasurementMilliseconds": 6011.4973,
+        "WarmupDrainMilliseconds": 240.2519,
+        "MeasurementDrainMilliseconds": 29.0671,
+        "FirstError": null
+      }
+    },
+    {
+      "Broker": "mqttnet",
+      "Qos": 0,
+      "Subscribers": 1,
+      "PayloadSize": 8192,
+      "Repetition": 2,
+      "BrokerObservation": {
+        "TotalProcessorMilliseconds": 3468.75,
+        "PrivateMemoryBytes": 41893888,
+        "PeakWorkingSetBytes": 100978688,
+        "UptimeMilliseconds": 9878.1677
+      },
+      "Result": {
+        "PublishedMessages": 14580,
+        "ReceivedMessages": 13555,
+        "FailedOperations": 0,
+        "WarmupPublishedMessages": 4630,
+        "WarmupReceivedMessages": 4630,
+        "MeasurementReceivedMessages": 14580,
+        "PublishWindowThroughputPerSecond": 2428.8001322546643,
+        "EndToEndThroughputPerSecond": 2144.6014754593384,
+        "PublishCallLatencyP50Microseconds": 82,
+        "PublishCallLatencyP95Microseconds": 207,
+        "PublishCallLatencyP99Microseconds": 450,
+        "LoadObservation": {
+          "ProcessCpuMilliseconds": 2296.875,
+          "WorkingSetBytes": 69136384,
+          "AllocatedBytesDelta": 0,
+          "Gen0CollectionCountDelta": 74,
+          "Gen1CollectionCountDelta": 2,
+          "Gen2CollectionCountDelta": 2,
+          "ThreadPoolPendingWorkItemCount": 0,
+          "ThreadPoolCompletedWorkItemCountDelta": 32864
+        },
+        "ConnectionSetupMilliseconds": 49.507,
+        "WarmupMilliseconds": 2000.4384,
+        "MeasurementMilliseconds": 6002.9641,
+        "WarmupDrainMilliseconds": 850.8669,
+        "MeasurementDrainMilliseconds": 795.3849,
+        "FirstError": null
+      }
+    },
+    {
+      "Broker": "mqttnet",
+      "Qos": 0,
+      "Subscribers": 100,
+      "PayloadSize": 8192,
+      "Repetition": 2,
+      "BrokerObservation": {
+        "TotalProcessorMilliseconds": 5109.375,
+        "PrivateMemoryBytes": 50012160,
+        "PeakWorkingSetBytes": 79511552,
+        "UptimeMilliseconds": 8939.3116
+      },
+      "Result": {
+        "PublishedMessages": 851,
+        "ReceivedMessages": 84788,
+        "FailedOperations": 0,
+        "WarmupPublishedMessages": 282,
+        "WarmupReceivedMessages": 28200,
+        "MeasurementReceivedMessages": 85100,
+        "PublishWindowThroughputPerSecond": 141.7097860182231,
+        "EndToEndThroughputPerSecond": 133.74567444328872,
+        "PublishCallLatencyP50Microseconds": 4843,
+        "PublishCallLatencyP95Microseconds": 10466,
+        "PublishCallLatencyP99Microseconds": 15422,
+        "LoadObservation": {
+          "ProcessCpuMilliseconds": 7187.5,
+          "WorkingSetBytes": 94486528,
+          "AllocatedBytesDelta": 1556976336,
+          "Gen0CollectionCountDelta": 77,
+          "Gen1CollectionCountDelta": 77,
+          "Gen2CollectionCountDelta": 1,
+          "ThreadPoolPendingWorkItemCount": 0,
+          "ThreadPoolCompletedWorkItemCountDelta": 144551
+        },
+        "ConnectionSetupMilliseconds": 185.0367,
+        "WarmupMilliseconds": 1998.9403,
+        "MeasurementMilliseconds": 6005.231,
+        "WarmupDrainMilliseconds": 206.6118,
+        "MeasurementDrainMilliseconds": 357.3788,
+        "FirstError": null
+      }
+    },
+    {
+      "Broker": "mqttzero",
+      "Qos": 0,
+      "Subscribers": 1,
+      "PayloadSize": 8192,
+      "Repetition": 3,
+      "BrokerObservation": {
+        "TotalProcessorMilliseconds": 3750,
+        "PrivateMemoryBytes": 56012800,
+        "PeakWorkingSetBytes": 89964544,
+        "UptimeMilliseconds": 9270.9921
+      },
+      "Result": {
+        "PublishedMessages": 18999,
+        "ReceivedMessages": 18090,
+        "FailedOperations": 0,
+        "WarmupPublishedMessages": 6334,
+        "WarmupReceivedMessages": 6334,
+        "MeasurementReceivedMessages": 18999,
+        "PublishWindowThroughputPerSecond": 3164.79317429455,
+        "EndToEndThroughputPerSecond": 2980.430483094383,
+        "PublishCallLatencyP50Microseconds": 83,
+        "PublishCallLatencyP95Microseconds": 239,
+        "PublishCallLatencyP99Microseconds": 627,
+        "LoadObservation": {
+          "ProcessCpuMilliseconds": 3046.875,
+          "WorkingSetBytes": 74035200,
+          "AllocatedBytesDelta": 361928608,
+          "Gen0CollectionCountDelta": 73,
+          "Gen1CollectionCountDelta": 0,
+          "Gen2CollectionCountDelta": 0,
+          "ThreadPoolPendingWorkItemCount": 0,
+          "ThreadPoolCompletedWorkItemCountDelta": 43309
+        },
+        "ConnectionSetupMilliseconds": 62.2763,
+        "WarmupMilliseconds": 2002.0103,
+        "MeasurementMilliseconds": 6003.2359,
+        "WarmupDrainMilliseconds": 622.1821,
+        "MeasurementDrainMilliseconds": 371.2279,
+        "FirstError": null
+      }
+    },
+    {
+      "Broker": "mqttnet",
+      "Qos": 0,
+      "Subscribers": 1,
+      "PayloadSize": 8192,
+      "Repetition": 3,
+      "BrokerObservation": {
+        "TotalProcessorMilliseconds": 2812.5,
+        "PrivateMemoryBytes": 48300032,
+        "PeakWorkingSetBytes": 104783872,
+        "UptimeMilliseconds": 9114.9843
+      },
+      "Result": {
+        "PublishedMessages": 12766,
+        "ReceivedMessages": 11809,
+        "FailedOperations": 0,
+        "WarmupPublishedMessages": 3460,
+        "WarmupReceivedMessages": 3460,
+        "MeasurementReceivedMessages": 12766,
+        "PublishWindowThroughputPerSecond": 2127.2044605907877,
+        "EndToEndThroughputPerSecond": 1982.0376710433225,
+        "PublishCallLatencyP50Microseconds": 80,
+        "PublishCallLatencyP95Microseconds": 208,
+        "PublishCallLatencyP99Microseconds": 510,
+        "LoadObservation": {
+          "ProcessCpuMilliseconds": 2015.625,
+          "WorkingSetBytes": 71110656,
+          "AllocatedBytesDelta": 0,
+          "Gen0CollectionCountDelta": 77,
+          "Gen1CollectionCountDelta": 1,
+          "Gen2CollectionCountDelta": 1,
+          "ThreadPoolPendingWorkItemCount": 0,
+          "ThreadPoolCompletedWorkItemCountDelta": 28713
+        },
+        "ConnectionSetupMilliseconds": 45.4633,
+        "WarmupMilliseconds": 2007.7546,
+        "MeasurementMilliseconds": 6001.3037,
+        "WarmupDrainMilliseconds": 444.6836,
+        "MeasurementDrainMilliseconds": 439.4635,
+        "FirstError": null
+      }
+    }
+  ],
+  "Gate": {
+    "Summaries": [
+      {
+        "Qos": 0,
+        "Subscribers": 1,
+        "PayloadSize": 8192,
+        "MqttZeroEndToEndThroughput": 2879.0267898580637,
+        "MqttNetEndToEndThroughput": 2044.4020058696674,
+        "ThroughputRatio": 1.4082488579017782,
+        "MqttZeroPublishCallP99Microseconds": 556,
+        "MqttNetPublishCallP99Microseconds": 450,
+        "P99Ratio": 1.2355555555555555,
+        "MqttZeroFailures": 0,
+        "MqttNetFailures": 0,
+        "Passed": false,
+        "FailureReason": "mqttzero p99 ratio must be less than 1.0."
+      },
+      {
+        "Qos": 0,
+        "Subscribers": 100,
+        "PayloadSize": 8192,
+        "MqttZeroEndToEndThroughput": 168.08866381521915,
+        "MqttNetEndToEndThroughput": 134.19351949817377,
+        "ThroughputRatio": 1.2525840625076283,
+        "MqttZeroPublishCallP99Microseconds": 15738.5,
+        "MqttNetPublishCallP99Microseconds": 15533,
+        "P99Ratio": 1.0132298976372884,
+        "MqttZeroFailures": 0,
+        "MqttNetFailures": 0,
+        "Passed": false,
+        "FailureReason": "mqttzero p99 ratio must be less than 1.0."
+      }
+    ],
+    "Passed": false,
+    "Errors": [
+      "QoS=0, Subscribers=1, Payload=8192: mqttzero p99 ratio must be less than 1.0.",
+      "QoS=0, Subscribers=100, Payload=8192: mqttzero p99 ratio must be less than 1.0."
+    ]
+  }
+}
