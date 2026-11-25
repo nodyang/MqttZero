@@ -1,7 +1,8 @@
 # MQTTZero Egress Fairness and Adaptive Send Recovery Plan
 
-> **Status:** Active. Task 1 is complete; Task 2 was rejected after benchmark;
-> Task 3 is next.
+> **Status:** Tasks 1-4 are closed. Task 1 delivered Benchmark corrections;
+> Tasks 2 and 3 were rejected after benchmark; Task 4 was not justified by the
+> remaining cost model. Final verification is next.
 >
 > **Date:** 2026-11-26
 >
@@ -274,6 +275,10 @@ throughput gain.
 
 ## Task 3: Add Adaptive Direct And Backlog Egress Modes
 
+> **Status: Rejected.** Backlog continuation and Flush-completion reuse were
+> removed after long-run comparisons showed no retained improvement. Evidence:
+> `perf/baseline/egress-adaptive-send-result-2026-11-26.md`.
+
 This task is conditional on Task 1 and Task 2 evidence. It must not repeat the
 rejected universal connection writer.
 
@@ -290,80 +295,62 @@ rejected universal connection writer.
 
 ### Required Ownership
 
-- [ ] The Egress Actor remains the only owner of Session outbound execution.
-- [ ] Pending, Inflight, control ordering and FlushPending have one owner.
-- [ ] Exactly one of Direct or Backlog mode may execute at a time.
-- [ ] Switching modes cannot reorder messages or release a Lease twice.
-- [ ] Control frames end the current data segment at a complete MQTT packet
-  boundary before the next data packet.
-
-### Direct Mode
-
-- [ ] Use when the Session has low queue depth, no existing FlushPending and
-  no persistent backlog.
-- [ ] Avoid introducing a permanent per-connection asynchronous loop.
-- [ ] Avoid adding another handoff layer around the existing low-latency path.
-- [ ] Preserve immediate Flush when the queue becomes empty.
-
-### Backlog Mode
-
-- [ ] Enter only after measurable backlog or repeated asynchronous Flush
-  waits.
-- [ ] Reuse one long-lived send state and one Flush completion path while the
-  Session remains backlogged.
-- [ ] Continue sending multiple batches within the Actor turn only when each
-  batch is already available and the configured time budget permits.
-- [ ] Return to Direct mode after the backlog is removed.
-- [ ] Use an Actor-owned reusable completion source instead of creating a new
-  flush-completion state machine for every batch when measurement confirms
-  that path contributes to allocation or tail latency.
-- [ ] Never start a second Flush while one is pending.
+- [x] Prototype one Egress owner with Direct/Backlog execution policies.
+- [x] Preserve Pending, Inflight, control and FlushPending ordering during the
+  prototype.
+- [x] Verify control frames remain at complete packet boundaries.
+- [x] Remove the production prototype after its performance gate failed.
+- [x] Keep the original Direct execution path as the production behavior.
+- [x] Verify lower queue depth uses the original Direct path.
+- [x] Enter the prototype Backlog path only when a prior Drain reports both
+  remaining data and continuable QoS 1/2 backlog.
+- [x] Limit one Actor execution to four Backlog data batches or 250 us.
+- [x] Return to Direct execution when the queue drains or the next batch is not
+  continuable.
+- [x] Never start a second Flush while one is pending.
+- [x] Revert the reusable Flush awaiter after it did not provide a retained
+  benefit.
 
 ### Tests
 
-- [ ] Idle Session takes the Direct mode.
-- [ ] Snapshot of Queue depth, batch count and Flush behavior shows the
-  expected mode transitions.
-- [ ] Backlogged Session disables further batch collection without changing
-  order.
-- [ ] Direct-to-Backlog and Backlog-to-Direct transitions preserve QoS 0/1/2
-  state.
-- [ ] Flush blocking, cancellation, takeover and broker stop release all
+- [x] Direct execution remained the idle and non-continuable QoS 0 path.
+- [x] Backlogged QoS 1 execution processed multiple batches in one Actor turn.
+- [x] The four-batch budget rescheduled pending work.
+- [x] Flush blocking, cancellation, takeover and broker stop release all
   Leases.
-- [ ] A control frame waiting during a multi-batch turn is sent before the next
-  data packet.
-- [ ] Queue exhaustion immediately ends the current send turn.
-- [ ] Synchronized enqueue, signal and reusable Flush completion paths stay at
-  `0 B/op` after warmup where applicable.
+- [x] Queue exhaustion immediately ended the current send turn.
 
 ### Performance Gate
 
-- [ ] The corrected QoS 1 single-subscriber 64-KiB cell improves by at least
-  ten percent over the Task 1 baseline and does not regress by more than five
-  percent relative to MQTTnet.
-- [ ] The corrected QoS 0 single-subscriber 64-KiB cell does not regress and
-  improves by at least ten percent or Task 4 remains required.
-- [ ] QoS 1 / 100 and 500 / 64 KiB do not regress by more than five percent
-  from Task 2.
-- [ ] At least one critical large-payload tail-latency measurement improves.
-- [ ] No current small-payload cell regresses by more than five percent.
-- [ ] Development comparisons use two repetitions unless the spread rule
-  requires a third run.
+- [x] Measured QoS 1 single-subscriber 64-KiB: no durable ten-percent gain.
+- [x] Measured QoS 0 single-subscriber 64-KiB: no durable ten-percent gain.
+- [x] Measured QoS 1 / 100 and 500 / 64 KiB: short-run gains did not survive
+  the 5-second warmup / 20-second measurement comparison.
+- [x] No durable critical large-payload tail-latency improvement remained.
+- [x] No current small-payload cell regressed by more than five percent.
+- [x] Development comparisons used two repetitions.
+- [x] A five-second warmup and twenty-second confirmation run was used before
+  rejecting the short-run result.
 
 ### Stop Condition
 
-If either single-subscriber 64-KiB cell regresses as in the rejected universal
-writer experiment, remove the Backlog implementation and leave Direct mode
-unchanged.
+Completed: no durable improvement remained, so the Backlog implementation and
+Flush-completion reuse were removed.
 
 ### Commit
 
-`perf: adapt egress execution to backlog pressure`
+`perf: record adaptive send experiment`
 
 ## Task 4: Evaluate A QoS 0 Light Delivery Path
 
 Start only if corrected QoS 0 large-payload cells remain materially behind
 after Tasks 1 through 3.
+
+> **Status: Not started.** The longer comparison left QoS 0 fanout around
+> `0.93–0.95x` MQTTnet, while the measured 64-KiB copy lower bound is about
+> `1.17 us` versus a p99 measured in tens of milliseconds. The borrowed-input
+> ownership risk is not justified. Evidence:
+> `perf/baseline/egress-adaptive-send-result-2026-11-26.md`.
 
 ### Scope
 

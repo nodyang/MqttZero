@@ -133,6 +133,12 @@
   ten-percent gain and regressed two critical cells by more than five percent,
   so the scheduling behavior was reverted. The result is recorded in
   `egress-fairness-result-2026-11-26.md`.
+- Adaptive Direct/Backlog Egress execution and Flush-completion reuse were
+  rejected after short-run gains disappeared under a 5-second warmup /
+  20-second measurement comparison. The production implementation was
+  removed. The conditional QoS 0 borrowed-input path was not started because
+  Payload copy is too small relative to the remaining tail latency. Evidence:
+  `egress-adaptive-send-result-2026-11-26.md`.
 - The next plan targets fair Shard progress and, only if still needed,
   Direct/Backlog modes under one Egress owner:
   `docs/superpowers/plans/2026-11-26-egress-fairness-adaptive-recovery.md`.
