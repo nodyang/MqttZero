@@ -405,6 +405,77 @@ public sealed class MqttZeroEgressFlushTests
         await actor.StopAsync();
     }
 
+    [Fact(Timeout = 5_000)]
+    public async Task StopCompletesWhenCalledFromOwningShard()
+    {
+        await using MqttZeroEventLoop shard = new(0, 32);
+        await using MqttZeroEgressScheduler scheduler = new(
+            shard,
+            diagnostics: null);
+        await using MqttZeroEgressActor actor = new(
+            scheduler,
+            (_, _) => ValueTask.CompletedTask,
+            _ => ValueTask.FromResult(false),
+            _ => { });
+
+        bool completed = await shard.InvokeAsync(
+            async cancellationToken =>
+            {
+                await actor.StopAsync().AsTask().WaitAsync(
+                    cancellationToken).ConfigureAwait(false);
+                return true;
+            },
+            TestContext.Current.CancellationToken);
+
+        Assert.True(completed);
+    }
+
+    [Fact(Timeout = 5_000)]
+    public async Task StopFromOwningShardResumesAfterPendingFlush()
+    {
+        await using MqttZeroEventLoop shard = new(0, 32);
+        await using MqttZeroEgressScheduler scheduler = new(
+            shard,
+            diagnostics: null);
+        TaskCompletionSource<FlushResult> flushCompletion = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource flushStarted = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        MqttZeroEgressActor? actorReference = null;
+        actorReference = new MqttZeroEgressActor(
+            scheduler,
+            (_, _) => ValueTask.CompletedTask,
+            _ =>
+            {
+                Assert.False(actorReference!.BeginFlush(
+                    new ValueTask<FlushResult>(flushCompletion.Task)));
+                flushStarted.TrySetResult();
+                return ValueTask.FromResult(false);
+            },
+            _ => { });
+        await using MqttZeroEgressActor actor = actorReference;
+
+        actor.Signal();
+        await flushStarted.Task.WaitAsync(
+            TestContext.Current.CancellationToken);
+        Task<bool> stop = shard.InvokeAsync<bool>(
+            async cancellationToken =>
+            {
+                await actor.StopAsync().AsTask().WaitAsync(
+                    cancellationToken).ConfigureAwait(false);
+                return true;
+            },
+            TestContext.Current.CancellationToken).AsTask();
+        await Task.Delay(
+            TimeSpan.FromMilliseconds(50),
+            TestContext.Current.CancellationToken);
+        Assert.False(stop.IsCompleted);
+
+        flushCompletion.TrySetResult(new FlushResult(false, false));
+        Assert.True(await stop.WaitAsync(
+            TestContext.Current.CancellationToken));
+    }
+
     private static MqttZeroEgressControlFrame CreateFrame(
         MqttZeroEgressControlFramePool framePool)
     {

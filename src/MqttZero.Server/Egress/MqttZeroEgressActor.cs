@@ -21,6 +21,7 @@ internal sealed class MqttZeroEgressActor : IAsyncDisposable
     private int _dataSignaled;
     private int _executing;
     private Exception? _flushFailure;
+    private TaskCompletionSource? _flushStopWaiter;
     private int _flushPending;
     private int _ready;
     private int _stopping;
@@ -150,10 +151,26 @@ internal sealed class MqttZeroEgressActor : IAsyncDisposable
     {
         if (Interlocked.Exchange(ref _stopping, 1) == 0)
         {
+            bool ownsShard = _scheduler.Shard.IsCurrent;
             Volatile.Write(
                 ref _state,
                 (int)MqttZeroEgressActorState.Stopping);
-            _scheduler.Signal(this);
+            if (ownsShard &&
+                Volatile.Read(ref _flushPending) != 0)
+            {
+                await WaitForPendingFlushAsync().ConfigureAwait(false);
+            }
+
+            if (ownsShard)
+            {
+                await _scheduler
+                    .SignalAndDrainCurrentShardAsync(this)
+                    .ConfigureAwait(false);
+            }
+            else
+            {
+                _scheduler.Signal(this);
+            }
         }
 
         await _stopped.Task.ConfigureAwait(false);
@@ -283,6 +300,10 @@ internal sealed class MqttZeroEgressActor : IAsyncDisposable
             Volatile.Write(ref _flushFailure, exception);
         }
 
+        TaskCompletionSource? flushStopWaiter = Interlocked.Exchange(
+            ref _flushStopWaiter,
+            null);
+        flushStopWaiter?.TrySetResult();
         if (Volatile.Read(ref _stopping) != 0 ||
             Volatile.Read(ref _flushFailure) != null ||
             Volatile.Read(ref _controlSignaled) != 0 ||
@@ -295,6 +316,31 @@ internal sealed class MqttZeroEgressActor : IAsyncDisposable
         Volatile.Write(
             ref _state,
             (int)MqttZeroEgressActorState.Idle);
+    }
+
+    private async ValueTask WaitForPendingFlushAsync()
+    {
+        TaskCompletionSource waiter = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        if (Interlocked.CompareExchange(
+                ref _flushStopWaiter,
+                waiter,
+                null) != null)
+        {
+            throw new InvalidOperationException(
+                "The egress actor already has a flush stop waiter.");
+        }
+
+        if (Volatile.Read(ref _flushPending) == 0)
+        {
+            Interlocked.CompareExchange(
+                ref _flushStopWaiter,
+                null,
+                waiter);
+            return;
+        }
+
+        await waiter.Task.ConfigureAwait(false);
     }
 
     private async ValueTask RunControlBatchAsync(
