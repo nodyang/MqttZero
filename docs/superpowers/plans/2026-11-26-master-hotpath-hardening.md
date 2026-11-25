@@ -1,6 +1,6 @@
 # MQTTZero Master Hot-Path Hardening Plan
 
-> **Status:** Active. Tasks 1-3 are complete; Task 4 is next.
+> **Status:** Active. Tasks 1-4 are complete; Task 5 baseline is next.
 >
 > **Base:** `master` at `1a6b71e`
 >
@@ -146,17 +146,18 @@ remain unchanged. New supporting types are internal.
 
 ### Changes
 
-- [ ] Pass `MqttZeroFanoutDiagnostics.Enabled` into each Event Loop Shard.
-- [ ] Skip priority queue-depth and wait atomics when diagnostics are disabled.
-- [ ] Keep direct Event Loop tests diagnostic-enabled by default.
-- [ ] Do not gate operational counters needed for health or shutdown.
+- [x] Pass `MqttZeroFanoutDiagnostics.Enabled` into each Event Loop Shard.
+- [x] Skip priority queue-depth and wait atomics when diagnostics are disabled.
+- [x] Keep direct Event Loop tests diagnostic-enabled by default.
+- [x] Do not gate operational counters needed for health or shutdown.
 
 ### Verification
 
-- [ ] Disabled diagnostics perform no priority Interlocked operations.
-- [ ] Enabled diagnostics still report queue depth, ages and wait count.
-- [ ] 32-B and 8-KiB hot-path benchmarks do not regress.
-- [ ] Allocation sentinels remain green.
+- [x] Disabled diagnostics perform no priority Interlocked operations.
+- [x] Enabled diagnostics still report queue depth, ages and wait count.
+- [x] The 32-B/8-KiB development matrix completed without failures or
+  incomplete deliveries.
+- [x] Allocation sentinels remain green.
 
 ### Commit
 

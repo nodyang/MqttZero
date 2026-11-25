@@ -384,6 +384,76 @@ public sealed class MqttZeroEventLoopTests
     }
 
     [Fact(Timeout = 5_000)]
+    public async Task DisabledPriorityDiagnosticsSkipOptionalCounters()
+    {
+        await using MqttZeroEventLoop shard = new(
+            0,
+            32,
+            trackPriorityDiagnostics: false);
+        TaskCompletionSource blockerStarted = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource releaseBlocker = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource completed = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        int remaining = 2;
+
+        await shard.EnqueueAsync(
+            new DelegateShardWork(
+                async cancellationToken =>
+                {
+                    blockerStarted.TrySetResult();
+                    await releaseBlocker.Task.WaitAsync(cancellationToken);
+                }),
+            TestContext.Current.CancellationToken);
+        await blockerStarted.Task.WaitAsync(
+            TestContext.Current.CancellationToken);
+        await shard.EnqueueAsync(
+            new PriorityShardWork(
+                isLowPriority: true,
+                _ =>
+                {
+                    if (Interlocked.Decrement(ref remaining) == 0)
+                    {
+                        completed.TrySetResult();
+                    }
+
+                    return ValueTask.CompletedTask;
+                }),
+            TestContext.Current.CancellationToken);
+        await shard.EnqueueAsync(
+            new PriorityShardWork(
+                isLowPriority: false,
+                _ =>
+                {
+                    if (Interlocked.Decrement(ref remaining) == 0)
+                    {
+                        completed.TrySetResult();
+                    }
+
+                    return ValueTask.CompletedTask;
+                }),
+            TestContext.Current.CancellationToken);
+
+        MqttZeroShardDiagnostics queued = shard.GetSnapshot();
+        Assert.Equal(2, queued.QueuedCount);
+        Assert.Equal(0, queued.HighPriorityQueuedCount);
+        Assert.Equal(0, queued.LowPriorityQueuedCount);
+        Assert.Equal(
+            0,
+            queued.HighPriorityOldestWorkAgeMilliseconds);
+        Assert.Equal(
+            0,
+            queued.LowPriorityOldestWorkAgeMilliseconds);
+
+        releaseBlocker.TrySetResult();
+        await completed.Task.WaitAsync(
+            TestContext.Current.CancellationToken);
+        Assert.Equal(0, shard.GetSnapshot().LowPriorityWaitCount);
+        await shard.StopAsync();
+    }
+
+    [Fact(Timeout = 5_000)]
     public async Task TryEnqueueRunsWorkWhenCapacityIsAvailable()
     {
         await using MqttZeroEventLoop shard = new(0, 4);

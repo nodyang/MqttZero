@@ -29,7 +29,8 @@ internal sealed class MqttZeroShardSet : IAsyncDisposable
         {
             _shards[index] = new MqttZeroEventLoop(
                 index,
-                queueCapacity);
+                queueCapacity,
+                fanoutDiagnostics?.Enabled == true);
             _egressSchedulers[index] = new MqttZeroEgressScheduler(
                 _shards[index],
                 fanoutDiagnostics);
