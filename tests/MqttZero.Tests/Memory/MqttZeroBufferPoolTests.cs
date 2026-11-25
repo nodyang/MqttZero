@@ -42,6 +42,41 @@ namespace MqttZero.Tests.Memory
         }
 
         [Fact]
+        public void SnapshotSeparatesRentedAndCachedBytes()
+        {
+            using MqttZeroBufferPool pool = new(2048);
+            byte[] buffer = pool.Rent(1024);
+            MqttZeroBufferPoolSnapshot rented = pool.GetSnapshot();
+
+            Assert.True(rented.RentedBytes >= 1024);
+            Assert.Equal(0, rented.CachedBytes);
+            Assert.Equal(rented.RentedBytes, rented.CommittedBytes);
+
+            pool.Return(buffer);
+            MqttZeroBufferPoolSnapshot cached = pool.GetSnapshot();
+
+            Assert.Equal(0, cached.RentedBytes);
+            Assert.True(cached.CachedBytes >= 1024);
+            Assert.Equal(cached.CachedBytes, cached.CommittedBytes);
+            Assert.InRange(cached.CommittedBytes, 0, 2048);
+            Assert.Equal(
+                cached.CachedBytes,
+                cached.Buckets.Sum(static bucket => bucket.CachedBytes));
+        }
+
+        [Fact]
+        public void CachedBytesReduceCapacityForOtherBuckets()
+        {
+            using MqttZeroBufferPool pool = new(2048);
+            byte[] cached = pool.Rent(1024);
+            pool.Return(cached);
+
+            Assert.False(pool.TryRent(2048, out byte[] unavailable));
+            Assert.Empty(unavailable);
+            Assert.Equal(1024, pool.GetSnapshot().CommittedBytes);
+        }
+
+        [Fact]
         public void FailedMessageLeaseDoesNotLeakEarlierBuffers()
         {
             using MqttZeroBufferPool pool = new(512);
@@ -90,17 +125,41 @@ namespace MqttZero.Tests.Memory
             pool.Return(buffer);
         }
 
-        [Fact]
-        public void CachedBufferReturnsToBucketWhenCapacityCannotBeReserved()
+        [Fact(Timeout = 5_000)]
+        public async Task WaitForCapacityIgnoresHistoricalReturnSignals()
         {
             using MqttZeroBufferPool pool = new(1024);
+            byte[] buffer = pool.Rent(1024);
+            pool.Return(buffer);
+
+            buffer = pool.Rent(1024);
+            Task wait = pool.WaitForCapacityAsync(
+                TestContext.Current.CancellationToken).AsTask();
+            await Task.Delay(
+                TimeSpan.FromMilliseconds(50),
+                TestContext.Current.CancellationToken);
+
+            Assert.False(wait.IsCompleted);
+            pool.Return(buffer);
+            await wait.WaitAsync(
+                TimeSpan.FromSeconds(2),
+                TestContext.Current.CancellationToken);
+        }
+
+        [Fact]
+        public void CachedBufferCanBeReusedAtCommittedLimit()
+        {
+            using MqttZeroBufferPool pool = new(1280);
             byte[] cached = pool.Rent(256);
             pool.Return(cached);
             byte[] held = pool.Rent(1024);
 
+            Assert.True(pool.TryRent(256, out byte[] reused));
+            Assert.Equal(256, reused.Length);
             Assert.False(pool.TryRent(256, out byte[] unavailable));
             Assert.Empty(unavailable);
 
+            pool.Return(reused);
             pool.Return(held);
         }
 
