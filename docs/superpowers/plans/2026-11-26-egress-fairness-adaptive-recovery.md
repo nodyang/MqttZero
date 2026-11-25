@@ -1,8 +1,8 @@
 # MQTTZero Egress Fairness and Adaptive Send Recovery Plan
 
-> **Status:** Tasks 1-4 are closed. Task 1 delivered Benchmark corrections;
-> Tasks 2 and 3 were rejected after benchmark; Task 4 was not justified by the
-> remaining cost model. Final verification is next.
+> **Status:** Closed. Task 1 delivered Benchmark corrections; Tasks 2 and 3
+> were rejected after benchmark; Task 4 was not justified by the remaining cost
+> model. Engineering verification passed without a performance claim.
 >
 > **Date:** 2026-11-26
 >
@@ -394,22 +394,24 @@ record the limit.
 
 ## Task 5: Final Verification And Positioning
 
-- [ ] Run corrected publish-call and end-to-end benchmarks.
-- [ ] Run the critical matrix:
-  QoS `0/1/2`, subscribers `1/100/500`, payload `32/8192/65536`.
-- [ ] Run QoS 2 specifically for integration confidence even if QoS 2 is not a
-  performance-claim target.
-- [ ] Run all core, Dashboard and Vue tests.
-- [ ] Run TCP, TLS and WebSocket integration tests.
-- [ ] Run allocation sentinels.
-- [ ] Run Release build, formatting, vulnerability/deprecation checks, package
+- [x] Run corrected publish-call and end-to-end development benchmarks.
+- [x] Run the six-cell 64-KiB critical baseline used by the experiments.
+- [x] Leave the full 27-cell performance-claim matrix unrun because no
+  production performance experiment passed its gate.
+- [x] Retain QoS 2 correctness coverage through the core suite.
+- [x] Run all core, Dashboard and Vue tests.
+- [x] Run TCP, TLS and WebSocket integration tests through the core suite.
+- [x] Run allocation sentinels.
+- [x] Run Release build, formatting, vulnerability/deprecation checks, package
   verification and an outside-repository consumer build.
-- [ ] Update `docs/performance-positioning.md`.
-- [ ] Update `perf/baseline/README.md`.
-- [ ] Record raw JSON, machine, command, repetitions and medians.
-- [ ] State only the cells and metrics that passed all gates.
-- [ ] Do not raise the package version or merge a performance implementation
+- [x] Update `docs/performance-positioning.md` during Task 1.
+- [x] Update `perf/baseline/README.md`.
+- [x] Record raw JSON, machine, commands, repetitions and medians for the
+  executed development experiments.
+- [x] State only the cells and metrics that passed their gates.
+- [x] Do not raise the package version or merge a performance implementation
   solely because documentation and diagnostics were completed.
+- [x] Close the investigation in `perf/baseline/egress-closure-final-2026-11-26.md`.
 
 ## Expected Commit Sequence
 

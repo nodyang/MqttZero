@@ -139,6 +139,10 @@
   removed. The conditional QoS 0 borrowed-input path was not started because
   Payload copy is too small relative to the remaining tail latency. Evidence:
   `egress-adaptive-send-result-2026-11-26.md`.
+- The investigation closure, retained tooling/diagnostics and final verification
+  record are summarized in `egress-closure-final-2026-11-26.md`. No production
+  hot-path performance experiment was retained and no performance-claim matrix
+  was published.
 - The next plan targets fair Shard progress and, only if still needed,
   Direct/Backlog modes under one Egress owner:
   `docs/superpowers/plans/2026-11-26-egress-fairness-adaptive-recovery.md`.
