@@ -116,10 +116,7 @@ internal static class BenchmarkLoadRunner
                     errors.Enqueue(exception.ToString());
                 },
                 () => Interlocked.Increment(ref publishedMessages),
-                warmup.Token,
-                () => ReportProgress(
-                    "warmup",
-                    Interlocked.Read(ref publishedMessages)))
+                warmup.Token)
                 .ConfigureAwait(false);
             long warmupPublishingCompleted = Stopwatch.GetTimestamp();
             long warmupDrainStarted = Stopwatch.GetTimestamp();
@@ -155,8 +152,7 @@ internal static class BenchmarkLoadRunner
             Interlocked.Exchange(ref publishedMessages, 0);
             ReportProgress("warmup-complete", warmupPublishedMessages);
 
-            long[] latencySamples = new long[100_000];
-            int latencySampleCount = 0;
+            using MqttZeroLatencyHistogram latencyHistogram = new();
             long measuredPublishes = 0;
             BenchmarkLoadSnapshot loadBeforeMeasurement =
                 BenchmarkObservationCapture.CreateLoadSnapshot();
@@ -165,33 +161,47 @@ internal static class BenchmarkLoadRunner
             Stopwatch measurement = Stopwatch.StartNew();
             using CancellationTokenSource measurementCancellation = new(
                 TimeSpan.FromSeconds(options.MeasurementSeconds));
-            await RunPublishersAsync(
-                publisherClients,
-                payload,
-                qualityOfServiceLevel,
-                () => ShouldPause(
-                    Interlocked.Read(ref measuredPublishes)),
-                CountReceived,
-                elapsedTicks =>
-                {
-                    int index = Interlocked.Increment(
-                        ref latencySampleCount) - 1;
-                    if (index < latencySamples.Length)
+            using CancellationTokenSource progressCancellation = new();
+            Task progressTask = progress == null
+                ? Task.CompletedTask
+                : MonitorMeasurementProgressAsync(
+                    progress,
+                    () => Interlocked.Read(ref measuredPublishes),
+                    CountReceived,
+                    () => Interlocked.Read(ref failedOperations),
+                    progressCancellation.Token);
+            try
+            {
+                await RunPublishersAsync(
+                    publisherClients,
+                    payload,
+                    qualityOfServiceLevel,
+                    () => ShouldPause(
+                        Interlocked.Read(ref measuredPublishes)),
+                    CountReceived,
+                    latencyHistogram.RecordTicks,
+                    exception =>
                     {
-                        latencySamples[index] = elapsedTicks;
-                    }
-                },
-                exception =>
+                        Interlocked.Increment(ref failedOperations);
+                        errors.Enqueue(exception.ToString());
+                    },
+                    () => Interlocked.Increment(ref measuredPublishes),
+                    measurementCancellation.Token)
+                    .ConfigureAwait(false);
+            }
+            finally
+            {
+                progressCancellation.Cancel();
+                try
                 {
-                    Interlocked.Increment(ref failedOperations);
-                    errors.Enqueue(exception.ToString());
-                },
-                () => Interlocked.Increment(ref measuredPublishes),
-                measurementCancellation.Token,
-                () => ReportProgress(
-                    "measurement",
-                    Interlocked.Read(ref measuredPublishes)))
-                .ConfigureAwait(false);
+                    await progressTask.ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                    when (progressCancellation.IsCancellationRequested)
+                {
+                }
+            }
+
             measurement.Stop();
             long measurementReceived = CountReceived();
             ReportProgress(
@@ -234,10 +244,6 @@ internal static class BenchmarkLoadRunner
                 BenchmarkObservationCapture.CaptureLoadDelta(
                     loadBeforeMeasurement);
 
-            int sampleCount = Math.Min(
-                latencySampleCount,
-                latencySamples.Length);
-            Array.Sort(latencySamples, 0, sampleCount);
             return new BrokerBenchmarkResult
             {
                 PublishedMessages = measuredPublishes,
@@ -253,18 +259,12 @@ internal static class BenchmarkLoadRunner
                     endToEndSeconds > 0
                         ? measuredPublishes / endToEndSeconds
                         : 0,
-                PublishCallLatencyP50Microseconds = PercentileMicroseconds(
-                    latencySamples,
-                    sampleCount,
-                    0.50),
-                PublishCallLatencyP95Microseconds = PercentileMicroseconds(
-                    latencySamples,
-                    sampleCount,
-                    0.95),
-                PublishCallLatencyP99Microseconds = PercentileMicroseconds(
-                    latencySamples,
-                    sampleCount,
-                    0.99),
+                PublishCallLatencyP50Microseconds =
+                    latencyHistogram.GetPercentileMicroseconds(0.50),
+                PublishCallLatencyP95Microseconds =
+                    latencyHistogram.GetPercentileMicroseconds(0.95),
+                PublishCallLatencyP99Microseconds =
+                    latencyHistogram.GetPercentileMicroseconds(0.99),
                 LoadObservation = loadObservation,
                 ConnectionSetupMilliseconds = Stopwatch.GetElapsedTime(
                     setupStarted,
@@ -301,8 +301,7 @@ internal static class BenchmarkLoadRunner
         Action<long>? recordLatency,
         Action<Exception> recordFailure,
         Action recordPublish,
-        CancellationToken cancellationToken,
-        Action? heartbeat = null)
+        CancellationToken cancellationToken)
     {
         Task[] tasks = new Task[publishers.Count];
         for (int index = 0; index < publishers.Count; index++)
@@ -311,7 +310,6 @@ internal static class BenchmarkLoadRunner
             tasks[index] = Task.Run(
                 async () =>
                 {
-                    long lastProgress = Stopwatch.GetTimestamp();
                     while (!cancellationToken.IsCancellationRequested)
                     {
                         while (!cancellationToken.IsCancellationRequested &&
@@ -334,13 +332,6 @@ internal static class BenchmarkLoadRunner
                             recordLatency?.Invoke(
                                 Stopwatch.GetTimestamp() - started);
                             recordPublish();
-                            if (heartbeat != null &&
-                                Stopwatch.GetElapsedTime(lastProgress) >=
-                                    TimeSpan.FromSeconds(5))
-                            {
-                                lastProgress = Stopwatch.GetTimestamp();
-                                heartbeat();
-                            }
                         }
                         catch (OperationCanceledException)
                             when (cancellationToken.IsCancellationRequested)
@@ -363,6 +354,25 @@ internal static class BenchmarkLoadRunner
         catch (OperationCanceledException)
             when (cancellationToken.IsCancellationRequested)
         {
+        }
+    }
+
+    private static async Task MonitorMeasurementProgressAsync(
+        Action<BenchmarkRunProgress> progress,
+        Func<long> getPublishedMessages,
+        Func<long> getReceivedMessages,
+        Func<long> getFailedOperations,
+        CancellationToken cancellationToken)
+    {
+        using PeriodicTimer timer = new(TimeSpan.FromSeconds(5));
+        while (await timer.WaitForNextTickAsync(cancellationToken)
+            .ConfigureAwait(false))
+        {
+            progress(new BenchmarkRunProgress(
+                "measurement",
+                getPublishedMessages(),
+                getReceivedMessages(),
+                getFailedOperations()));
         }
     }
 
@@ -419,20 +429,4 @@ internal static class BenchmarkLoadRunner
         };
     }
 
-    private static double PercentileMicroseconds(
-        long[] samples,
-        int count,
-        double percentile)
-    {
-        if (count == 0)
-        {
-            return 0;
-        }
-
-        int index = Math.Clamp(
-            (int)Math.Ceiling(percentile * count) - 1,
-            0,
-            count - 1);
-        return samples[index] * 1_000_000d / Stopwatch.Frequency;
-    }
 }

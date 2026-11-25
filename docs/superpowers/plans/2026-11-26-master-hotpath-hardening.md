@@ -1,6 +1,6 @@
 # MQTTZero Master Hot-Path Hardening Plan
 
-> **Status:** Active. Tasks 1-2 are complete; Task 3 is next.
+> **Status:** Active. Tasks 1-3 are complete; Task 4 is next.
 >
 > **Base:** `master` at `1a6b71e`
 >
@@ -110,24 +110,26 @@ remain unchanged. New supporting types are internal.
 
 ### Changes
 
-- [ ] Replace the first-100,000 sample limit with a bounded latency histogram
+- [x] Replace the first-100,000 sample limit with a bounded latency histogram
   or documented pooled reservoir.
-- [ ] Remove subscriber scans and console I/O from the measured publish loop.
-- [ ] Move progress rendering to a low-frequency external reporter or an atomic
+- [x] Remove subscriber scans and console I/O from the measured publish loop.
+- [x] Move progress rendering to a low-frequency external reporter or an atomic
   snapshot consumer.
-- [ ] Make the `outbound` mode wait for final subscriber drain.
-- [ ] Report `ReceivedMessages`, expected count and measurement drain.
-- [ ] Implement the two-run spread rule as executable tooling: automatically
+- [x] Make the `outbound` mode wait for final subscriber drain.
+- [x] Report `ReceivedMessages`, expected count and measurement drain.
+- [x] Implement the two-run spread rule as executable tooling: automatically
   request a third repetition when end-to-end throughput spread exceeds ten
   percent or a run is invalid.
-- [ ] Ensure JSON remains source-generated.
+- [x] Ensure JSON remains source-generated.
 
 ### Tests
 
-- [ ] p99 remains correct when more than 100,000 samples are produced.
-- [ ] Progress callback does not execute inside the measured publish call.
-- [ ] Incomplete outbound drain cannot produce a passing/successful result.
-- [ ] Two-run spread policy selects a third run only when required.
+- [x] p99 remains correct when more than 100,000 samples are produced.
+- [x] Progress callback no longer executes inside the measured publish call.
+- [x] Incomplete outbound drain cannot produce a passing/successful result.
+- [x] Two-run spread policy selects a third run only when required.
+- [x] Short outbound smoke completed with `ReceivedMessages ==
+  ExpectedReceivedMessages`.
 
 ### Commit
 
