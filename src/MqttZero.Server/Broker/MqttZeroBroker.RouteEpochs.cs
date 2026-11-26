@@ -1,5 +1,6 @@
 using MqttZero.Server.Routing;
 using MqttZero.Server.Sessions;
+using System.Text;
 
 namespace MqttZero.Server.Broker;
 
@@ -212,13 +213,16 @@ public sealed partial class MqttZeroBroker
         List<MqttZeroSubscription> removed,
         List<MqttZeroSubscription> added)
     {
+        Dictionary<string, MqttZeroSubscription> originalsByFilter =
+            IndexByFilter(original);
+        Dictionary<string, MqttZeroSubscription> candidatesByFilter =
+            IndexByFilter(candidate);
         for (int index = 0; index < original.Count; index++)
         {
             MqttZeroSubscription subscription = original[index];
-            MqttZeroSubscription? match = FindByFilter(
-                candidate,
-                subscription.TopicFilter);
-            if (match == null ||
+            if (!candidatesByFilter.TryGetValue(
+                    GetFilterKey(subscription),
+                    out MqttZeroSubscription? match) ||
                 !HasSameRouteSettings(match, subscription))
             {
                 removed.Add(subscription);
@@ -228,10 +232,9 @@ public sealed partial class MqttZeroBroker
         for (int index = 0; index < candidate.Count; index++)
         {
             MqttZeroSubscription subscription = candidate[index];
-            MqttZeroSubscription? match = FindByFilter(
-                original,
-                subscription.TopicFilter);
-            if (match == null ||
+            if (!originalsByFilter.TryGetValue(
+                    GetFilterKey(subscription),
+                    out MqttZeroSubscription? match) ||
                 !HasSameRouteSettings(match, subscription))
             {
                 added.Add(subscription);
@@ -239,21 +242,25 @@ public sealed partial class MqttZeroBroker
         }
     }
 
-    private static MqttZeroSubscription? FindByFilter(
-        List<MqttZeroSubscription> subscriptions,
-        byte[] topicFilter)
+    private static Dictionary<string, MqttZeroSubscription> IndexByFilter(
+        List<MqttZeroSubscription> subscriptions)
     {
+        Dictionary<string, MqttZeroSubscription> result = new(
+            subscriptions.Count,
+            StringComparer.Ordinal);
         for (int index = 0; index < subscriptions.Count; index++)
         {
-            if (subscriptions[index].TopicFilter
-                .AsSpan()
-                .SequenceEqual(topicFilter))
-            {
-                return subscriptions[index];
-            }
+            MqttZeroSubscription subscription = subscriptions[index];
+            result[GetFilterKey(subscription)] = subscription;
         }
 
-        return null;
+        return result;
+    }
+
+    private static string GetFilterKey(
+        MqttZeroSubscription subscription)
+    {
+        return Encoding.UTF8.GetString(subscription.TopicFilter);
     }
 
     private static bool HasSameRouteSettings(
