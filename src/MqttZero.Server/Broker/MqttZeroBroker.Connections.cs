@@ -425,6 +425,7 @@ public sealed partial class MqttZeroBroker
                                     case MqttPacketType.PubAck:
                                         await ProcessOutboundPubAckAsync(
                                             session,
+                                            connection!,
                                             acknowledgement.PacketIdentifier,
                                             connectionLifetime.Token).ConfigureAwait(false);
                                         break;
@@ -446,6 +447,7 @@ public sealed partial class MqttZeroBroker
                                     case MqttPacketType.PubComp:
                                         await ProcessOutboundPubCompAsync(
                                             session,
+                                            connection!,
                                             acknowledgement.PacketIdentifier,
                                             connectionLifetime.Token).ConfigureAwait(false);
                                         break;

@@ -43,6 +43,7 @@ public sealed partial class MqttZeroBroker
             case MqttPubAckPacket pubAckPacket:
                 await ProcessOutboundPubAckAsync(
                     session,
+                    connection,
                     pubAckPacket.PacketIdentifier,
                     cancellationToken).ConfigureAwait(false);
                 break;
@@ -64,6 +65,7 @@ public sealed partial class MqttZeroBroker
             case MqttPubCompPacket pubCompPacket:
                 await ProcessOutboundPubCompAsync(
                     session,
+                    connection,
                     pubCompPacket.PacketIdentifier,
                     cancellationToken).ConfigureAwait(false);
                 break;
@@ -91,20 +93,37 @@ public sealed partial class MqttZeroBroker
 
     private async ValueTask ProcessOutboundPubAckAsync(
         MqttZeroSessionState session,
+        MqttZeroClientConnection connection,
         ushort packetIdentifier,
         CancellationToken cancellationToken)
     {
         MqttZeroQueuedMessage? acknowledgedMessage = null;
+        bool protocolViolation = false;
         lock (session.SyncRoot)
         {
             if (session.InflightMessages.TryGetValue(
                     packetIdentifier,
-                    out acknowledgedMessage) &&
-                acknowledgedMessage.QualityOfServiceLevel ==
-                    MqttQualityOfServiceLevel.AtLeastOnce)
+                    out acknowledgedMessage))
             {
-                session.InflightMessages.Remove(packetIdentifier);
+                if (acknowledgedMessage.QualityOfServiceLevel ==
+                    MqttQualityOfServiceLevel.AtLeastOnce)
+                {
+                    session.InflightMessages.Remove(packetIdentifier);
+                }
+                else
+                {
+                    acknowledgedMessage = null;
+                    protocolViolation = true;
+                }
             }
+        }
+
+        if (protocolViolation)
+        {
+            await connection.CloseAsync(
+                MqttReasonCode.ProtocolError,
+                cancellationToken).ConfigureAwait(false);
+            return;
         }
 
         if (acknowledgedMessage != null)

@@ -717,13 +717,37 @@ public sealed partial class MqttZeroBroker
 
     private async ValueTask ProcessOutboundPubCompAsync(
         MqttZeroSessionState session,
+        MqttZeroClientConnection connection,
         ushort packetIdentifier,
         CancellationToken cancellationToken)
     {
         MqttZeroQueuedMessage? completed = null;
+        bool protocolViolation = false;
         lock (session.SyncRoot)
         {
-            session.InflightMessages.Remove(packetIdentifier, out completed);
+            if (session.InflightMessages.TryGetValue(
+                    packetIdentifier,
+                    out completed))
+            {
+                if (completed.QualityOfServiceLevel ==
+                    MqttQualityOfServiceLevel.ExactlyOnce)
+                {
+                    session.InflightMessages.Remove(packetIdentifier);
+                }
+                else
+                {
+                    completed = null;
+                    protocolViolation = true;
+                }
+            }
+        }
+
+        if (protocolViolation)
+        {
+            await connection.CloseAsync(
+                MqttReasonCode.ProtocolError,
+                cancellationToken).ConfigureAwait(false);
+            return;
         }
 
         if (completed != null)
