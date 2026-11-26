@@ -10,6 +10,52 @@ namespace MqttZero.Tests.Broker
     public sealed class ClientWriteSerializationTests
     {
         [Fact(Timeout = 30_000)]
+        public async Task ControlWriteClosesConnectionWhenTheGateStaysBusy()
+        {
+            BlockingFlushPipeWriter writer = new();
+            await using MqttZeroClientConnection connection =
+                CreateConnection(writer);
+            List<MqttZeroQueuedMessage> messages = CreateMessages();
+            using CancellationTokenSource cancellation =
+                CancellationTokenSource.CreateLinkedTokenSource(
+                    TestContext.Current.CancellationToken);
+            cancellation.CancelAfter(TimeSpan.FromSeconds(20));
+            try
+            {
+                Task batch = Task.Run(
+                    async () => await connection.SendPublishBatchAsync(
+                        messages,
+                        cancellation.Token),
+                    cancellation.Token);
+                await writer.FlushStarted.WaitAsync(
+                    TimeSpan.FromSeconds(5),
+                    cancellation.Token);
+                Assert.False(batch.IsCompleted);
+
+                Task acknowledgement = Task.Run(
+                    async () => await connection.SendPubAckAsync(
+                        1,
+                        MqttReasonCode.Success,
+                        cancellation.Token),
+                    cancellation.Token);
+                await acknowledgement.WaitAsync(
+                    TimeSpan.FromSeconds(8),
+                    cancellation.Token);
+
+                Assert.True(connection.IsClosed);
+                writer.Release();
+                await batch.WaitAsync(
+                    TimeSpan.FromSeconds(5),
+                    cancellation.Token);
+            }
+            finally
+            {
+                writer.Release();
+                ReleaseMessages(messages);
+            }
+        }
+
+        [Fact(Timeout = 30_000)]
         public async Task ControlPacketAndPublishBatchWritesNeverOverlap()
         {
             OverlapDetectingPipeWriter writer = new(
@@ -155,6 +201,77 @@ namespace MqttZero.Tests.Broker
             for (int index = 0; index < messages.Count; index++)
             {
                 messages[index].Release();
+            }
+        }
+
+        private sealed class BlockingFlushPipeWriter : PipeWriter
+        {
+            private readonly ArrayBufferWriter<byte> _buffer = new(
+                1024 * 1024);
+            private readonly TaskCompletionSource _flushStarted = new(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            private readonly TaskCompletionSource _release = new(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+
+            public Task FlushStarted
+            {
+                get
+                {
+                    return _flushStarted.Task;
+                }
+            }
+
+            public void Release()
+            {
+                _release.TrySetResult();
+            }
+
+            public override void Advance(int bytes)
+            {
+                _buffer.Advance(bytes);
+            }
+
+            public override void CancelPendingFlush()
+            {
+            }
+
+            public override void Complete(Exception? exception = null)
+            {
+            }
+
+            public override ValueTask CompleteAsync(
+                Exception? exception = null)
+            {
+                return ValueTask.CompletedTask;
+            }
+
+            public override async ValueTask<FlushResult> FlushAsync(
+                CancellationToken cancellationToken = default)
+            {
+                _flushStarted.TrySetResult();
+                await _release.Task
+                    .WaitAsync(cancellationToken)
+                    .ConfigureAwait(false);
+                return new FlushResult(false, false);
+            }
+
+            public override Memory<byte> GetMemory(int sizeHint = 0)
+            {
+                return _buffer.GetMemory(sizeHint);
+            }
+
+            public override Span<byte> GetSpan(int sizeHint = 0)
+            {
+                return _buffer.GetSpan(sizeHint);
+            }
+
+            public override ValueTask<FlushResult> WriteAsync(
+                ReadOnlyMemory<byte> source,
+                CancellationToken cancellationToken = default)
+            {
+                source.Span.CopyTo(_buffer.GetSpan(source.Length));
+                _buffer.Advance(source.Length);
+                return ValueTask.FromResult(new FlushResult(false, false));
             }
         }
 

@@ -13,6 +13,9 @@ namespace MqttZero.Server.Clients;
 internal sealed class MqttZeroClientConnection : IAsyncDisposable
 {
     private static long NextConnectionId;
+    private static readonly TimeSpan WriteGateTimeout =
+        TimeSpan.FromSeconds(2);
+
     private readonly MqttZeroPacketWriter _bufferWriter = new();
     private readonly MqttZeroBufferPool _bufferPool;
     private readonly CancellationTokenSource _closed = new();
@@ -529,7 +532,15 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
             return;
         }
 
-        using (await EnterWriteAsync(cancellationToken).ConfigureAwait(false))
+        MqttZeroWriteLease? pubAckLease =
+            await TryEnterWriteAsync(cancellationToken).ConfigureAwait(false);
+        if (pubAckLease == null)
+        {
+            Abort();
+            return;
+        }
+
+        using (pubAckLease.Value)
         {
             BeginControlWrite();
             try
@@ -1011,6 +1022,34 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
         return new MqttZeroWriteLease(this);
     }
 
+    /// <summary>
+    /// Acquires the write gate with a bounded wait for writers that run off
+    /// the session shard. A gate held for longer than the timeout means the
+    /// peer stopped reading, so the connection is aborted instead of letting
+    /// the shard wait behind it.
+    /// </summary>
+    private async ValueTask<MqttZeroWriteLease?> TryEnterWriteAsync(
+        CancellationToken cancellationToken)
+    {
+        bool acquired = await _writeGate
+            .WaitAsync(WriteGateTimeout, cancellationToken)
+            .ConfigureAwait(false);
+        if (!acquired)
+        {
+            return null;
+        }
+
+        if (Interlocked.Increment(ref _writersInFlight) != 1)
+        {
+            Interlocked.Decrement(ref _writersInFlight);
+            _writeGate.Release();
+            throw new InvalidOperationException(
+                "Concurrent writes to one MQTT connection are not allowed.");
+        }
+
+        return new MqttZeroWriteLease(this);
+    }
+
     internal void ReleaseWrite()
     {
         Interlocked.Decrement(ref _writersInFlight);
@@ -1108,7 +1147,15 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
             return;
         }
 
-        using (await EnterWriteAsync(cancellationToken).ConfigureAwait(false))
+        MqttZeroWriteLease? ackLease =
+            await TryEnterWriteAsync(cancellationToken).ConfigureAwait(false);
+        if (ackLease == null)
+        {
+            Abort();
+            return;
+        }
+
+        using (ackLease.Value)
         {
             BeginControlWrite();
             try
