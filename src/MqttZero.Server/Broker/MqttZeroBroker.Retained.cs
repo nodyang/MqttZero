@@ -70,7 +70,7 @@ public sealed partial class MqttZeroBroker
         DateTimeOffset? expiresAt)
     {
         MqttZeroRetainedMessage? replaced;
-        lock (_sessionGate)
+        lock (_retainedGate)
         {
             _retainedMessages.TryGetValue(topicKey, out MqttZeroRetainedMessage? existing);
             if (existing == null &&
@@ -112,7 +112,7 @@ public sealed partial class MqttZeroBroker
 
     private void ValidateRetainedCapacity(string topicKey, long replacementBytes)
     {
-        lock (_sessionGate)
+        lock (_retainedGate)
         {
             _retainedMessages.TryGetValue(topicKey, out MqttZeroRetainedMessage? existing);
             if (existing == null &&
@@ -133,7 +133,7 @@ public sealed partial class MqttZeroBroker
     private void RemoveRetainedMessage(string topicKey)
     {
         MqttZeroRetainedMessage? removed = null;
-        lock (_sessionGate)
+        lock (_retainedGate)
         {
             if (_retainedMessages.TryRemove(topicKey, out removed))
             {
@@ -153,7 +153,7 @@ public sealed partial class MqttZeroBroker
         ReadOnlySpan<byte> filter,
         List<MqttZeroRetainedMessage> results)
     {
-        lock (_sessionGate)
+        lock (_retainedGate)
         {
             MqttZeroRetainedTopicTrie trie =
                 Volatile.Read(ref _retainedTopicTrie);

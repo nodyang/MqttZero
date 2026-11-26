@@ -24,6 +24,10 @@ namespace MqttZero.Server.Broker;
 /// </summary>
 public sealed partial class MqttZeroBroker : IMqttZeroBroker, IAsyncDisposable
 {
+    // Lock hierarchy: _lifecycleGate -> _routeMutationGate -> session.SyncRoot,
+    // and _retainedMutationGate -> _retainedGate. _sessionGate, _retainedGate
+    // and session.SyncRoot are leaves. Every write to one PipeWriter must run
+    // through the owning connection's write gate or on its session shard.
     private readonly object _sessionGate = new();
     private readonly MqttZeroBufferPool _bufferPool;
     private readonly IMqttZeroPublishInterceptor[] _publishInterceptors;
@@ -56,6 +60,7 @@ public sealed partial class MqttZeroBroker : IMqttZeroBroker, IAsyncDisposable
     private readonly SemaphoreSlim _lifecycleGate = new(1, 1);
     private readonly SemaphoreSlim _retainedMutationGate = new(1, 1);
     private readonly SemaphoreSlim _routeMutationGate = new(1, 1);
+    private readonly object _retainedGate = new();
     private readonly MqttZeroFanoutDiagnostics _fanoutDiagnostics = new();
     private readonly MqttZeroRouteEpochManager _routeEpochs = new();
     private MqttZeroFanoutDispatcher? _fanoutDispatcher;

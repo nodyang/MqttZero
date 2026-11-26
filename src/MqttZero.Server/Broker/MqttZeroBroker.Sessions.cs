@@ -139,7 +139,11 @@ public sealed partial class MqttZeroBroker
                 }
                 catch (Exception)
                 {
-                    _sessions[session.ClientId] = session;
+                    lock (_sessionGate)
+                    {
+                        _sessions[session.ClientId] = session;
+                    }
+
                     await AddSessionSubscriptionsToRouteAsync(session)
                         .ConfigureAwait(false);
                     throw;
