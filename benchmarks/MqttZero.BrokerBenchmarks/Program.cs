@@ -486,14 +486,22 @@ static async Task RunAbAsync(
             "The ab mode requires --baseline-broker and --candidate-broker.");
     }
 
+    Dictionary<string, string> baselineArguments =
+        BenchmarkVariantArguments.Build(arguments, "baseline");
+    Dictionary<string, string> candidateArguments =
+        BenchmarkVariantArguments.Build(arguments, "candidate");
     BrokerAbVariantInfo baseline = new(
         "baseline",
         Path.GetFullPath(baselineAssembly),
-        GetNullableValue(arguments, "baseline-commit"));
+        GetNullableValue(arguments, "baseline-commit"),
+        BenchmarkTopologyOptions.Parse(baselineArguments),
+        BenchmarkEgressOptions.Parse(baselineArguments));
     BrokerAbVariantInfo candidate = new(
         "candidate",
         Path.GetFullPath(candidateAssembly),
-        GetNullableValue(arguments, "candidate-commit"));
+        GetNullableValue(arguments, "candidate-commit"),
+        BenchmarkTopologyOptions.Parse(candidateArguments),
+        BenchmarkEgressOptions.Parse(candidateArguments));
     int qos = GetInt(arguments, "qos", 1);
     int subscribers = GetInt(arguments, "subscribers", 100);
     int payloadSize = GetInt(arguments, "payload", 64 * 1024);
@@ -521,10 +529,6 @@ static async Task RunAbAsync(
             "The benchmark payload must hold the delivery envelope.");
     }
 
-    BenchmarkTopologyOptions topologyOptions =
-        BenchmarkTopologyOptions.Parse(arguments);
-    BenchmarkEgressOptions egressOptions =
-        BenchmarkEgressOptions.Parse(arguments);
     BenchmarkClientKind clientKind = BenchmarkClientSelection.Parse(
         GetValue(arguments, "client", "mqttnet"));
     if (clientKind == BenchmarkClientKind.Raw &&
@@ -553,8 +557,8 @@ static async Task RunAbAsync(
                 port,
                 allowPacketFragmentation,
                 runtimeConfiguration,
-                topologyOptions,
-                egressOptions);
+                variant.Topology!,
+                variant.Egress!);
             long started = Stopwatch.GetTimestamp();
             try
             {
