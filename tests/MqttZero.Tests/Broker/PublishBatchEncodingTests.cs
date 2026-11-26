@@ -47,6 +47,70 @@ public sealed class PublishBatchEncodingTests
         }
     }
 
+    [Fact]
+    public void ExpiringMessageKeepsCachedEncodedLength()
+    {
+        const uint MaximumPacketSize = 1024 * 1024;
+        MqttZeroMessageLease lease = MqttZeroMessageLease.CopyFrom(
+            new ReadOnlySequence<byte>("cache/topic"u8.ToArray()),
+            ReadOnlySequence<byte>.Empty,
+            new ReadOnlySequence<byte>(new byte[16]),
+            MqttQualityOfServiceLevel.AtLeastOnce,
+            retain: false,
+            messageExpiryInterval: 30,
+            subscriptionIdentifier: null);
+        MqttZeroQueuedMessage message =
+            MqttZeroQueuedMessage.RentWithIdentifiers(
+                lease,
+                MqttQualityOfServiceLevel.AtLeastOnce,
+                retain: false,
+                ReadOnlyMemory<uint>.Empty,
+                expiresAt: DateTimeOffset.UtcNow.AddSeconds(30));
+        lease.Release();
+        try
+        {
+            Assert.False(message.IsEncodedLengthValidFor(MaximumPacketSize));
+
+            message.SetEncodedLength(42, MaximumPacketSize);
+
+            Assert.True(message.IsEncodedLengthValidFor(MaximumPacketSize));
+            Assert.False(
+                message.IsEncodedLengthValidFor(MaximumPacketSize + 1));
+        }
+        finally
+        {
+            message.Release();
+        }
+    }
+
+    [Fact]
+    public void MessageExpiryValueDoesNotChangeEncodedLength()
+    {
+        int hourRemaining = GetEncodedLength(3600);
+        int expired = GetEncodedLength(0);
+        int withoutExpiry = GetEncodedLength(null);
+
+        Assert.Equal(hourRemaining, expired);
+        Assert.Equal(hourRemaining - 5, withoutExpiry);
+    }
+
+    private static int GetEncodedLength(uint? remainingExpiry)
+    {
+        MqttZeroPublishView view = new(
+            new ReadOnlySequence<byte>("length/topic"u8.ToArray()),
+            ReadOnlySequence<byte>.Empty,
+            new ReadOnlySequence<byte>(new byte[16]),
+            MqttQualityOfServiceLevel.AtMostOnce,
+            0,
+            false,
+            false,
+            remainingExpiry,
+            null,
+            ReadOnlyMemory<uint>.Empty,
+            null);
+        return MqttPublishPacketCodec.GetEncodedLength(view);
+    }
+
     private static MqttZeroClientConnection CreateConnection(
         PipeWriter writer)
     {

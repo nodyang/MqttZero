@@ -370,10 +370,10 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
                 null,
                 message.SubscriptionIdentifiers,
                 null);
-            int encodedLength = message.EncodedLength > 0 &&
-                message.ExpiresAt == null
-                ? message.EncodedLength
-                : MqttPublishPacketCodec.GetEncodedLength(view);
+            int encodedLength =
+                message.IsEncodedLengthValidFor(MaximumPacketSize)
+                    ? message.EncodedLength
+                    : MqttPublishPacketCodec.GetEncodedLength(view);
             if (encodedLength > MaximumPacketSize)
             {
                 throw new InvalidOperationException(

@@ -205,8 +205,7 @@ internal sealed class MqttZeroQueuedMessage
     public bool IsEncodedLengthValidFor(uint maximumPacketSize)
     {
         return EncodedLength > 0 &&
-            _encodedLengthMaximumPacketSize == maximumPacketSize &&
-            ExpiresAt == null;
+            _encodedLengthMaximumPacketSize == maximumPacketSize;
     }
 
     public void Restore(ushort packetIdentifier, MqttZeroOutboundState state)
