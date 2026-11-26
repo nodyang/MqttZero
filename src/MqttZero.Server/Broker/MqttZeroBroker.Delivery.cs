@@ -988,6 +988,7 @@ public sealed partial class MqttZeroBroker
             MqttZeroQueuedMessage? next = null;
             bool hasNext = false;
             bool nextTooLarge = false;
+            int inflightLimit = GetInflightLimit(connection);
             List<MqttZeroQueuedMessage> expired = session.ExpiredMessages;
             List<MqttZeroQueuedMessage> batch = session.OutboundBatch;
             bool diagnosticsEnabled = _fanoutDiagnostics.Enabled;
@@ -1012,8 +1013,7 @@ public sealed partial class MqttZeroBroker
                 hasNext = session.PendingMessages.Count > 0 &&
                     (session.PendingMessages[0].QualityOfServiceLevel ==
                         MqttQualityOfServiceLevel.AtMostOnce ||
-                    session.InflightMessages.Count <
-                        GetInflightLimit(connection));
+                    session.InflightMessages.Count < inflightLimit);
                 if (hasNext)
                 {
                     next = session.PendingMessages.Dequeue();
@@ -1050,7 +1050,7 @@ public sealed partial class MqttZeroBroker
                             if (head.QualityOfServiceLevel !=
                                     MqttQualityOfServiceLevel.AtMostOnce &&
                                 session.InflightMessages.Count >=
-                                    GetInflightLimit(connection))
+                                    inflightLimit)
                             {
                                 break;
                             }
