@@ -309,8 +309,11 @@ public sealed partial class MqttZeroBroker
                             out _,
                             out _))
                     {
-                        throw new InvalidOperationException(
-                            "The retained MQTT PUBLISH properties are invalid.");
+                        MqttZeroBrokerLogging.LogInvalidRetainedProperties(
+                            _logger,
+                            Encoding.UTF8.GetString(
+                                retainedMessage.Topic.Span));
+                        continue;
                     }
 
                     properties = new MqttPublishProperties

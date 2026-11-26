@@ -62,4 +62,12 @@ internal static partial class MqttZeroBrokerLogging
     public static partial void LogFanoutFailure(
         ILogger<MqttZeroBroker> logger,
         Exception exception);
+
+    [LoggerMessage(
+        EventId = 1007,
+        Level = LogLevel.Warning,
+        Message = "MQTTZero skipped a retained message with invalid properties on topic {Topic}.")]
+    public static partial void LogInvalidRetainedProperties(
+        ILogger<MqttZeroBroker> logger,
+        string topic);
 }

@@ -313,9 +313,21 @@ public sealed partial class MqttZeroBroker
                     continue;
                 }
 
+                if (!TryNormalizePersistedMessageProperties(
+                        persisted.Properties,
+                        out ReadOnlySequence<byte> retainedProperties))
+                {
+                    MqttZeroBrokerLogging.LogInvalidRetainedProperties(
+                        _logger,
+                        topic);
+                    await DeleteRetainedAsync(topic, cancellationToken)
+                        .ConfigureAwait(false);
+                    continue;
+                }
+
                 MqttZeroMessageLease lease = MqttZeroMessageLease.CopyFrom(
                     new ReadOnlySequence<byte>(persisted.Topic),
-                    NormalizePersistedMessageProperties(persisted.Properties),
+                    retainedProperties,
                     new ReadOnlySequence<byte>(persisted.Payload),
                     persisted.QualityOfServiceLevel,
                     true,
@@ -1150,9 +1162,25 @@ public sealed partial class MqttZeroBroker
     private static ReadOnlySequence<byte> NormalizePersistedMessageProperties(
         ReadOnlyMemory<byte> properties)
     {
+        if (!TryNormalizePersistedMessageProperties(
+                properties,
+                out ReadOnlySequence<byte> normalized))
+        {
+            throw new InvalidOperationException(
+                "The persisted MQTT PUBLISH properties are invalid.");
+        }
+
+        return normalized;
+    }
+
+    private static bool TryNormalizePersistedMessageProperties(
+        ReadOnlyMemory<byte> properties,
+        out ReadOnlySequence<byte> normalized)
+    {
         if (properties.IsEmpty)
         {
-            return ReadOnlySequence<byte>.Empty;
+            normalized = ReadOnlySequence<byte>.Empty;
+            return true;
         }
 
         if (!MqttPublishPropertiesCodec.TryDecode(
@@ -1161,11 +1189,12 @@ public sealed partial class MqttZeroBroker
                 out _,
                 out _))
         {
-            throw new InvalidOperationException(
-                "The persisted MQTT PUBLISH properties are invalid.");
+            normalized = ReadOnlySequence<byte>.Empty;
+            return false;
         }
 
-        return MqttPublishPropertiesCodec.Encode(publishProperties);
+        normalized = MqttPublishPropertiesCodec.Encode(publishProperties);
+        return true;
     }
 
     private DateTimeOffset? CalculateMessageExpiresAt(uint? expiryInterval)

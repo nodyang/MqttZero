@@ -86,7 +86,6 @@ public sealed partial class MqttZeroBroker
             MqttZeroRetainedMessage message = pair.Value;
             if (message.ExpiresAt.HasValue && message.ExpiresAt.Value <= now)
             {
-                RemoveRetainedMessage(pair.Key);
                 continue;
             }
 
