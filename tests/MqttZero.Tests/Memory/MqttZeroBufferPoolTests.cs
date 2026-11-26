@@ -65,15 +65,99 @@ namespace MqttZero.Tests.Memory
         }
 
         [Fact]
-        public void CachedBytesReduceCapacityForOtherBuckets()
+        public void LargeRequestReclaimsCachedSmallerBuffers()
         {
             using MqttZeroBufferPool pool = new(2048);
             byte[] cached = pool.Rent(1024);
             pool.Return(cached);
 
+            Assert.Equal(1024, pool.GetSnapshot().CommittedBytes);
+
+            Assert.True(pool.TryRent(2048, out byte[] large));
+            Assert.Equal(2048, large.Length);
+            Assert.InRange(
+                pool.GetSnapshot().CommittedBytes,
+                0,
+                2048);
+
+            pool.Return(large);
+        }
+
+        [Fact]
+        public void ReclaimNeverTouchesRentedBuffers()
+        {
+            using MqttZeroBufferPool pool = new(2048);
+            byte[] rented = pool.Rent(1024);
+            byte[] cached = pool.Rent(256);
+            pool.Return(cached);
+
             Assert.False(pool.TryRent(2048, out byte[] unavailable));
             Assert.Empty(unavailable);
-            Assert.Equal(1024, pool.GetSnapshot().CommittedBytes);
+            Assert.InRange(
+                pool.GetSnapshot().CommittedBytes,
+                0,
+                2048);
+
+            pool.Return(rented);
+            Assert.True(pool.TryRent(2048, out byte[] large));
+            pool.Return(large);
+        }
+
+        [Fact]
+        public void ExhaustionReportsTheReturnGenerationItObserved()
+        {
+            using MqttZeroBufferPool pool = new(1024);
+            byte[] buffer = pool.Rent(1024);
+
+            MqttZeroBufferPoolExhaustedException failure =
+                Assert.Throws<MqttZeroBufferPoolExhaustedException>(
+                    () => pool.Rent(1024));
+
+            Assert.Equal(1024, failure.RequiredBytes);
+            Assert.True(failure.ReturnGeneration >= 0);
+            pool.Return(buffer);
+        }
+
+        [Fact(Timeout = 5_000)]
+        public async Task WaitReturnsWhenReleasePrecededWaitRegistration()
+        {
+            using MqttZeroBufferPool pool = new(1024);
+            byte[] buffer = pool.Rent(1024);
+            MqttZeroBufferPoolExhaustedException failure =
+                Assert.Throws<MqttZeroBufferPoolExhaustedException>(
+                    () => pool.Rent(1024));
+
+            pool.Return(buffer);
+
+            await pool.WaitForCapacityAsync(
+                failure.ReturnGeneration,
+                TestContext.Current.CancellationToken);
+
+            Assert.True(pool.TryRent(1024, out byte[] replacement));
+            pool.Return(replacement);
+        }
+
+        [Fact(Timeout = 5_000)]
+        public async Task WaitStillBlocksWithoutRelease()
+        {
+            using MqttZeroBufferPool pool = new(1024);
+            byte[] buffer = pool.Rent(1024);
+            MqttZeroBufferPoolExhaustedException failure =
+                Assert.Throws<MqttZeroBufferPoolExhaustedException>(
+                    () => pool.Rent(1024));
+
+            Task wait = pool.WaitForCapacityAsync(
+                failure.ReturnGeneration,
+                TestContext.Current.CancellationToken).AsTask();
+            await Task.Delay(
+                TimeSpan.FromMilliseconds(50),
+                TestContext.Current.CancellationToken);
+
+            Assert.False(wait.IsCompleted);
+            pool.Return(buffer);
+            await wait.WaitAsync(
+                TimeSpan.FromSeconds(2),
+                TestContext.Current.CancellationToken);
         }
 
         [Fact]

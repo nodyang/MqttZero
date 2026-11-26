@@ -68,7 +68,9 @@ internal sealed class MqttZeroBufferPool : IDisposable
             return buffer;
         }
 
-        throw new MqttZeroBufferPoolExhaustedException();
+        throw new MqttZeroBufferPoolExhaustedException(
+            BucketSizes[GetBucketIndex(minimumLength)],
+            Volatile.Read(ref _returnGeneration));
     }
 
     public MqttZeroBufferPoolSnapshot GetSnapshot()
@@ -109,7 +111,7 @@ internal sealed class MqttZeroBufferPool : IDisposable
 
         int bucketIndex = GetBucketIndex(minimumLength);
         int bucketSize = BucketSizes[bucketIndex];
-        if (!TryReserveCommitted(bucketSize))
+        if (!TryReserveWithReclaim(bucketIndex, bucketSize))
         {
             buffer = [];
             return false;
@@ -189,11 +191,30 @@ internal sealed class MqttZeroBufferPool : IDisposable
         _capacityReleased.Dispose();
     }
 
-    public async ValueTask WaitForCapacityAsync(CancellationToken cancellationToken)
+    public ValueTask WaitForCapacityAsync(CancellationToken cancellationToken)
+    {
+        return WaitForCapacityAsync(
+            Volatile.Read(ref _returnGeneration),
+            cancellationToken);
+    }
+
+    public async ValueTask WaitForCapacityAsync(
+        long observedReturnGeneration,
+        CancellationToken cancellationToken)
     {
         Interlocked.Increment(ref _capacityWaiters);
         try
         {
+            if (Volatile.Read(ref _returnGeneration) !=
+                observedReturnGeneration)
+            {
+                return;
+            }
+
+            while (_capacityReleased.Wait(0, CancellationToken.None))
+            {
+            }
+
             long generation = Volatile.Read(ref _returnGeneration);
             while (Volatile.Read(ref _returnGeneration) == generation)
             {
@@ -237,9 +258,9 @@ internal sealed class MqttZeroBufferPool : IDisposable
 
     private void SignalCapacityRelease()
     {
+        Interlocked.Increment(ref _returnGeneration);
         if (Volatile.Read(ref _capacityWaiters) > 0)
         {
-            Interlocked.Increment(ref _returnGeneration);
             _capacityReleased.Release();
         }
     }
@@ -295,5 +316,59 @@ internal sealed class MqttZeroBufferPool : IDisposable
                 return true;
             }
         }
+    }
+
+    private bool TryReserveWithReclaim(
+        int requestedBucketIndex,
+        int bucketSize)
+    {
+        if (TryReserveCommitted(bucketSize))
+        {
+            return true;
+        }
+
+        if (!TryReclaimCachedBuffers(requestedBucketIndex, bucketSize))
+        {
+            return false;
+        }
+
+        return TryReserveCommitted(bucketSize);
+    }
+
+    private bool TryReclaimCachedBuffers(
+        int requestedBucketIndex,
+        int bucketSize)
+    {
+        long committed = Volatile.Read(ref _committedBytes);
+        long required = bucketSize - Math.Max(0, _maximumBytes - committed);
+        if (required <= 0)
+        {
+            return true;
+        }
+
+        long released = 0;
+        for (int index = BucketCount - 1;
+            index >= 0 && released < required;
+            index--)
+        {
+            if (index == requestedBucketIndex)
+            {
+                continue;
+            }
+
+            while (released < required &&
+                _buckets[index].TryDequeue(out byte[]? cached))
+            {
+                Interlocked.Decrement(ref _cachedCounts[index]);
+                Interlocked.Add(
+                    ref _cachedBucketBytes[index],
+                    -cached.Length);
+                Interlocked.Add(ref _committedBytes, -cached.Length);
+                _source.Return(cached);
+                released += cached.Length;
+            }
+        }
+
+        return released >= required;
     }
 }

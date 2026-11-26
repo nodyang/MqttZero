@@ -269,6 +269,11 @@ public sealed partial class MqttZeroBroker
                             }
 
                             lease = candidate!;
+                            ushort inboundPacketIdentifier =
+                                publishView.PacketIdentifier;
+                            await OwnInboundLeaseAsync(
+                                lease,
+                                connectionLifetime.Token).ConfigureAwait(false);
                             bool transferred = false;
                             try
                             {
@@ -279,7 +284,7 @@ public sealed partial class MqttZeroBroker
                                         session,
                                         connection,
                                         lease,
-                                        publishView.PacketIdentifier,
+                                        inboundPacketIdentifier,
                                         connectionLifetime.Token).ConfigureAwait(false);
                                 }
                                 else if (lease.QualityOfServiceLevel ==
@@ -389,9 +394,10 @@ public sealed partial class MqttZeroBroker
                         }
                         catch (MqttZeroBufferPoolExhaustedException)
                         {
-                            await _bufferPool.WaitForCapacityAsync(connectionLifetime.Token)
-                                .ConfigureAwait(false);
-                            continue;
+                            await connection!.CloseAsync(
+                                MqttReasonCode.QuotaExceeded,
+                                connectionLifetime.Token).ConfigureAwait(false);
+                            return;
                         }
 
                         buffer = buffer.Slice(publishConsumed);
@@ -1301,6 +1307,26 @@ public sealed partial class MqttZeroBroker
         public MqttZeroSessionState Session { get; }
 
         public MqttZeroClientConnection Connection { get; }
+    }
+
+    private async ValueTask OwnInboundLeaseAsync(
+        MqttZeroMessageLease lease,
+        CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            try
+            {
+                lease.EnsureOwned();
+                return;
+            }
+            catch (MqttZeroBufferPoolExhaustedException exhaustion)
+            {
+                await _bufferPool.WaitForCapacityAsync(
+                    exhaustion.ReturnGeneration,
+                    cancellationToken).ConfigureAwait(false);
+            }
+        }
     }
 
     private async ValueTask<SessionMutationLease> AcquireSessionMutationAsync(
