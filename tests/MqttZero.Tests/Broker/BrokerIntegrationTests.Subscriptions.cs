@@ -253,7 +253,8 @@ namespace MqttZero.Tests.Broker
 
         private static async Task<WebApplication> StartStoredBrokerAsync(
             int port,
-            IMqttZeroSessionStore sessionStore)
+            IMqttZeroSessionStore sessionStore,
+            Action<MqttZeroOptions>? configure = null)
         {
             WebApplicationBuilder builder = WebApplication.CreateBuilder();
             builder.Logging.ClearProviders();
@@ -263,7 +264,7 @@ namespace MqttZero.Tests.Broker
                     port,
                     listen => listen.UseMqttZero()));
             builder.Services.AddSingleton<IMqttZeroSessionStore>(sessionStore);
-            builder.Services.AddMqttZero();
+            builder.Services.AddMqttZero(configure);
             WebApplication app = builder.Build();
             await app.StartAsync(
                 TestContext.Current.CancellationToken);

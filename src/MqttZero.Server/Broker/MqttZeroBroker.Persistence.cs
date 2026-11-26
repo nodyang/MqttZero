@@ -422,6 +422,7 @@ public sealed partial class MqttZeroBroker
                 _sharedGroupCursors.PruneTo([]);
             }
 
+            _sharedGroupReferences.Clear();
             MqttZeroBrokerLogging.LogPersistenceFailure(
                 _logger,
                 nameof(RestorePersistenceAsync),

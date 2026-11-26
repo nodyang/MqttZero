@@ -59,4 +59,9 @@ internal sealed class MqttZeroSharedGroupCursors
             }
         }
     }
+
+    public void Remove(MqttZeroSharedGroupKey key)
+    {
+        _cursors.TryRemove(key, out _);
+    }
 }
