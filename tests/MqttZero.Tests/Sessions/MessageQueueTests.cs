@@ -54,7 +54,6 @@ namespace MqttZero.Tests.Sessions
 
             queue.RemoveAt(0);
 
-            Assert.False(queue.HasExpiringMessages);
             expiring.Release();
             lease.Release();
         }
@@ -74,7 +73,6 @@ namespace MqttZero.Tests.Sessions
 
             queue.RemoveAt(0);
 
-            Assert.True(queue.HasExpiringMessages);
             Assert.Same(expiring, queue.Peek());
             persistent.Release();
             expiring.Release();
@@ -159,7 +157,6 @@ namespace MqttZero.Tests.Sessions
             queue.Clear();
 
             Assert.Equal(0, queue.Count);
-            Assert.False(queue.HasExpiringMessages);
             expiring.Release();
             lease.Release();
         }
@@ -201,7 +198,6 @@ namespace MqttZero.Tests.Sessions
 
             _ = queue.Dequeue();
 
-            Assert.False(queue.HasExpiringMessages);
             expiring.Release();
             lease.Release();
         }
@@ -216,7 +212,6 @@ namespace MqttZero.Tests.Sessions
 
             queue.Prepend(expiring);
 
-            Assert.True(queue.HasExpiringMessages);
             Assert.Same(expiring, queue.Dequeue());
             expiring.Release();
             lease.Release();

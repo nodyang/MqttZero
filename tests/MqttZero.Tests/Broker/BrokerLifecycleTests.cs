@@ -292,7 +292,7 @@ namespace MqttZero.Tests.Broker
                 false,
                 null));
             AddSession(broker, receiver);
-            broker.ResetRouteEpochFromSessions();
+            await broker.ResetRouteEpochFromSessionsAsync();
             PipeWriter writer = PipeWriter.Create(Stream.Null);
             await using MqttZeroClientConnection senderConnection = new(
                 writer,

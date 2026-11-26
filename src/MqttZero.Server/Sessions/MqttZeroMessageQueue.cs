@@ -33,14 +33,6 @@ internal sealed class MqttZeroMessageQueue
         }
     }
 
-    public bool HasExpiringMessages
-    {
-        get
-        {
-            return _expiringCount > 0;
-        }
-    }
-
     internal int ExpiryIndexCountForTest
     {
         get

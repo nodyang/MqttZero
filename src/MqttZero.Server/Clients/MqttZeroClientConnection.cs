@@ -29,6 +29,7 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
     private int _disposed;
     private int _pendingControlWrites;
     private int _writersInFlight;
+    private long _lastPacketReceivedTicks;
     private long _packetsReceived;
     private long _packetsSent;
     private long _bytesReceived;
@@ -67,7 +68,9 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
         AllowPacketFragmentation = allowPacketFragmentation;
         RequestProblemInformation = requestProblemInformation;
         RequestResponseInformation = requestResponseInformation;
-        LastPacketReceivedAt = timeProvider.GetUtcNow();
+        Volatile.Write(
+            ref _lastPacketReceivedTicks,
+            timeProvider.GetUtcNow().UtcTicks);
         _connectedAt = LastPacketReceivedAt;
     }
 
@@ -125,7 +128,19 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
 
     public MqttReasonCode? CloseReasonCode { get; private set; }
 
-    public DateTimeOffset LastPacketReceivedAt { get; private set; }
+    /// <summary>
+    /// Gets the UTC time of the last received packet. The underlying value is
+    /// stored as one tick value so readers never observe a torn timestamp.
+    /// </summary>
+    public DateTimeOffset LastPacketReceivedAt
+    {
+        get
+        {
+            return new DateTimeOffset(
+                Volatile.Read(ref _lastPacketReceivedTicks),
+                TimeSpan.Zero);
+        }
+    }
 
     public bool IsReadingIncompletePacket { get; set; }
 
@@ -148,7 +163,9 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
 
     public void MarkPacketReceived(TimeProvider timeProvider)
     {
-        LastPacketReceivedAt = timeProvider.GetUtcNow();
+        Volatile.Write(
+            ref _lastPacketReceivedTicks,
+            timeProvider.GetUtcNow().UtcTicks);
         Interlocked.Increment(ref _packetsReceived);
     }
 
@@ -157,7 +174,9 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
         long byteCount,
         bool applicationMessage)
     {
-        LastPacketReceivedAt = timeProvider.GetUtcNow();
+        Volatile.Write(
+            ref _lastPacketReceivedTicks,
+            timeProvider.GetUtcNow().UtcTicks);
         Interlocked.Increment(ref _packetsReceived);
         Interlocked.Add(ref _bytesReceived, byteCount);
         if (applicationMessage)
@@ -1327,9 +1346,8 @@ internal sealed class MqttZeroClientConnection : IAsyncDisposable
             if (gateAcquired)
             {
                 _writeGate.Release();
+                _writeGate.Dispose();
             }
-
-            _writeGate.Dispose();
         }
     }
 

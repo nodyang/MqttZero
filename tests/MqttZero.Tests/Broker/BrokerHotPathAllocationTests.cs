@@ -49,7 +49,7 @@ namespace MqttZero.Tests.Broker
             ConcurrentDictionary<string, MqttZeroSessionState> sessions =
                 (ConcurrentDictionary<string, MqttZeroSessionState>)sessionsField.GetValue(broker)!;
             Assert.True(sessions.TryAdd(receiver.ClientId, receiver));
-            broker.ResetRouteEpochFromSessions();
+            await broker.ResetRouteEpochFromSessionsAsync();
 
             AllocationPipeWriter senderWriter = new(16 * 1024);
             MqttZeroClientConnection senderConnection = new(
@@ -239,7 +239,7 @@ namespace MqttZero.Tests.Broker
             ConcurrentDictionary<string, MqttZeroSessionState> sessions =
                 (ConcurrentDictionary<string, MqttZeroSessionState>)sessionsField.GetValue(broker)!;
             Assert.True(sessions.TryAdd(receiver.ClientId, receiver));
-            broker.ResetRouteEpochFromSessions();
+            await broker.ResetRouteEpochFromSessionsAsync();
             FieldInfo shardSetField = typeof(MqttZeroBroker).GetField(
                 "_shardSet",
                 BindingFlags.Instance | BindingFlags.NonPublic)!;
@@ -451,7 +451,7 @@ namespace MqttZero.Tests.Broker
                 TimeProvider.System);
             receiver.Connection = receiverConnection;
             Assert.True(sessions.TryAdd(receiver.ClientId, receiver));
-            broker.ResetRouteEpochFromSessions();
+            await broker.ResetRouteEpochFromSessionsAsync();
 
             MqttZeroSessionState sender = new("sender");
             MqttPublishPacket packet = new()

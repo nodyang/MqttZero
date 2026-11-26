@@ -30,7 +30,20 @@ internal sealed class MqttZeroMessageLease : IDisposable
 
     public ReadOnlyMemory<byte> Properties { get; private set; }
 
-    public ReadOnlyMemory<byte> Payload { get; private set; }
+    /// <summary>
+    /// Gets the payload as one contiguous block. A borrowed lease with a
+    /// multi-segment payload only exposes data through
+    /// <see cref="PayloadSequence"/> until <see cref="EnsureOwned"/> promotes it.
+    /// </summary>
+    public ReadOnlyMemory<byte> Payload
+    {
+        get
+        {
+            return PayloadSequence.IsSingleSegment
+                ? PayloadSequence.First
+                : ReadOnlyMemory<byte>.Empty;
+        }
+    }
 
     public ReadOnlySequence<byte> TopicSequence { get; private set; }
 
@@ -273,9 +286,6 @@ internal sealed class MqttZeroMessageLease : IDisposable
                 Properties = properties.First;
             }
 
-            Payload = payload.IsSingleSegment
-                ? payload.First
-                : ReadOnlyMemory<byte>.Empty;
             SetMetadata(
                 qualityOfServiceLevel,
                 retain,
@@ -355,7 +365,6 @@ internal sealed class MqttZeroMessageLease : IDisposable
     {
         Topic = ReadOnlyMemory<byte>.Empty;
         Properties = ReadOnlyMemory<byte>.Empty;
-        Payload = ReadOnlyMemory<byte>.Empty;
         TopicSequence = ReadOnlySequence<byte>.Empty;
         PropertiesSequence = ReadOnlySequence<byte>.Empty;
         PayloadSequence = ReadOnlySequence<byte>.Empty;
@@ -412,9 +421,9 @@ internal sealed class MqttZeroMessageLease : IDisposable
         Properties = slab.AsMemory(
             _propertiesOffset,
             _propertiesLength);
-        Payload = slab.AsMemory(_payloadOffset, _payloadLength);
         TopicSequence = new ReadOnlySequence<byte>(Topic);
         PropertiesSequence = new ReadOnlySequence<byte>(Properties);
-        PayloadSequence = new ReadOnlySequence<byte>(Payload);
+        PayloadSequence = new ReadOnlySequence<byte>(
+            slab.AsMemory(_payloadOffset, _payloadLength));
     }
 }

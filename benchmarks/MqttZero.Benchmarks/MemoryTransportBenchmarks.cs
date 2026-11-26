@@ -75,7 +75,10 @@ public class MemoryTransportBenchmarks : IDisposable
             (ConcurrentDictionary<string, MqttZeroSessionState>)sessionsField
                 .GetValue(_broker)!;
         sessions.TryAdd(_receiver.ClientId, _receiver);
-        _broker.ResetRouteEpochFromSessions();
+        _broker.ResetRouteEpochFromSessionsAsync()
+            .AsTask()
+            .GetAwaiter()
+            .GetResult();
 
         _sender = _broker.CreateSessionState("sender");
         MqttPublishPacket packet = new()

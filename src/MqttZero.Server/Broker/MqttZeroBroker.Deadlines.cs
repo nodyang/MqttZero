@@ -211,6 +211,7 @@ public sealed partial class MqttZeroBroker
             await connection!.CloseAsync(
                 MqttReasonCode.KeepAliveTimeout,
                 cancellationToken).ConfigureAwait(false);
+            _deadlines.Remove(deadline.Key);
         }
         catch (Exception exception)
         {

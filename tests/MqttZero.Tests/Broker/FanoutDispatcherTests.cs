@@ -618,7 +618,7 @@ public sealed class FanoutDispatcherTests
             shardId: 1);
         receiver.Connection = receiverConnection;
         AddSession(broker, receiver);
-        broker.ResetRouteEpochFromSessions();
+        await broker.ResetRouteEpochFromSessionsAsync();
         MqttZeroSessionState sender =
             new("sender", options.MaxMessageQueueLength, 0);
         AddSession(broker, sender);
@@ -825,7 +825,7 @@ public sealed class FanoutDispatcherTests
             identifier: 22));
         AddSession(broker, firstReceiver);
         AddSession(broker, secondReceiver);
-        broker.ResetRouteEpochFromSessions();
+        await broker.ResetRouteEpochFromSessionsAsync();
         MqttZeroSessionState publisher =
             broker.CreateSessionState("publisher");
         PipeWriter writer = PipeWriter.Create(Stream.Null);
@@ -945,7 +945,7 @@ public sealed class FanoutDispatcherTests
             broker.CreateSessionState("allocation-receiver");
         receiver.Subscriptions.Add(CreateSubscription("allocation/#"));
         AddSession(broker, receiver);
-        broker.ResetRouteEpochFromSessions();
+        await broker.ResetRouteEpochFromSessionsAsync();
         MqttZeroSessionState sender =
             broker.CreateSessionState("allocation-sender");
         PipeWriter writer = PipeWriter.Create(Stream.Null);
@@ -1060,7 +1060,7 @@ public sealed class FanoutDispatcherTests
         second.Connection = secondConnection;
         AddSession(broker, first);
         AddSession(broker, second);
-        broker.ResetRouteEpochFromSessions();
+        await broker.ResetRouteEpochFromSessionsAsync();
         SequenceSegment start = new(new byte[32]);
         SequenceSegment end = new(new byte[32]);
         start.SetNext(end);

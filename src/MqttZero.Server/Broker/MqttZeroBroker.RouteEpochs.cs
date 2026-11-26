@@ -127,12 +127,12 @@ public sealed partial class MqttZeroBroker
         }
     }
 
-    internal void ResetRouteEpochFromSessions()
+    internal async ValueTask ResetRouteEpochFromSessionsAsync()
     {
         MqttZeroRouteEpoch epoch =
             MqttZeroRouteEpochManager.BuildFromSessions(
                 _sessions.Values);
-        _routeMutationGate.Wait();
+        await _routeMutationGate.WaitAsync().ConfigureAwait(false);
         try
         {
             _routeEpochs.Reset(epoch);

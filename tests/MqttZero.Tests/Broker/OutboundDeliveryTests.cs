@@ -1266,7 +1266,10 @@ namespace MqttZero.Tests.Broker
 
         private static void RebuildRoutes(MqttZeroBroker broker)
         {
-            broker.ResetRouteEpochFromSessions();
+            broker.ResetRouteEpochFromSessionsAsync()
+                .AsTask()
+                .GetAwaiter()
+                .GetResult();
         }
 
         private sealed class BlockingPipeWriter : PipeWriter

@@ -376,7 +376,8 @@ public sealed partial class MqttZeroBroker
                 _retainedBytes = stagedRetainedBytes;
             }
 
-            ResetRouteEpochFromSessions();
+            await ResetRouteEpochFromSessionsAsync()
+                .ConfigureAwait(false);
             foreach (MqttZeroSessionState restoredSession in _sessions.Values)
             {
                 RegisterSessionDeadlines(restoredSession);
