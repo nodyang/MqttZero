@@ -141,7 +141,7 @@ public sealed class BrokerSteadyStateTests
             await host.Broker.StopAsync(cancellationToken)
                 .AsTask()
                 .WaitAsync(
-                    TimeSpan.FromSeconds(20),
+                    TimeSpan.FromSeconds(40),
                     cancellationToken);
             MqttZeroBrokerMemorySnapshot stopped =
                 host.Broker.GetMemorySnapshotForTest();

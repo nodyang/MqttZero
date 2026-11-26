@@ -26,11 +26,15 @@ internal sealed class BrokerBenchmarkResult
 
     public double PublishCallLatencyP99Microseconds { get; init; }
 
+    public double PublishCallLatencyMaxMicroseconds { get; init; }
+
     public double DeliveryLatencyP50Microseconds { get; init; }
 
     public double DeliveryLatencyP95Microseconds { get; init; }
 
     public double DeliveryLatencyP99Microseconds { get; init; }
+
+    public double DeliveryLatencyMaxMicroseconds { get; init; }
 
     public long SequenceRegressions { get; init; }
 

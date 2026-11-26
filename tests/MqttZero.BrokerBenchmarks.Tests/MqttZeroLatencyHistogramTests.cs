@@ -38,6 +38,60 @@ public sealed class MqttZeroLatencyHistogramTests
         Assert.Equal(10, histogram.GetPercentileMicroseconds(0.99));
     }
 
+    [Fact]
+    public void KeepsExactMicrosecondsUpToOneSecond()
+    {
+        using MqttZeroLatencyHistogram histogram = new();
+
+        histogram.RecordTicks(TicksForMicroseconds(999_999));
+
+        Assert.Equal(
+            999_999,
+            histogram.GetPercentileMicroseconds(0.99));
+    }
+
+    [Fact]
+    public void RecordsTailValuesWithoutClippingAtOneSecond()
+    {
+        using MqttZeroLatencyHistogram histogram = new();
+
+        histogram.RecordTicks(TicksForMicroseconds(5_000_000));
+
+        double p99 = histogram.GetPercentileMicroseconds(0.99);
+        Assert.InRange(p99, 5_000_000, 5_100_000);
+        Assert.Equal(5_000_000, histogram.MaxMicroseconds);
+    }
+
+    [Fact]
+    public void TailBucketsStayWithinTwoPercent()
+    {
+        using MqttZeroLatencyHistogram histogram = new();
+        int[] samples = [1_500_000, 7_000_000, 45_000_000];
+
+        foreach (int sample in samples)
+        {
+            histogram.RecordTicks(TicksForMicroseconds(sample));
+            double p99 = histogram.GetPercentileMicroseconds(0.99);
+            Assert.InRange(
+                p99,
+                sample,
+                Math.Ceiling(sample * 1.02));
+        }
+    }
+
+    [Fact]
+    public void ClampsValuesAboveSixtySeconds()
+    {
+        using MqttZeroLatencyHistogram histogram = new();
+
+        histogram.RecordTicks(TicksForMicroseconds(120_000_000));
+
+        Assert.Equal(
+            60_000_000,
+            histogram.GetPercentileMicroseconds(0.99));
+        Assert.Equal(120_000_000, histogram.MaxMicroseconds);
+    }
+
     private static long TicksForMicroseconds(int microseconds)
     {
         return checked(

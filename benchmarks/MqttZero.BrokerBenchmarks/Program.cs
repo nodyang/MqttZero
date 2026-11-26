@@ -61,6 +61,7 @@ else if (mode == "load")
         GetInt(arguments, "warmup", 2),
         GetInt(arguments, "seconds", 10),
         GetInt(arguments, "max-pending", 1024));
+    TimeSpan drainTimeout = GetDrainTimeout(arguments);
     BrokerBenchmarkResult result = await BenchmarkLoadRunner.RunAsync(
         port,
         options,
@@ -73,7 +74,8 @@ else if (mode == "load")
             options.Qos,
             options.Subscribers,
             options.PayloadSize,
-            update));
+            update),
+        drainTimeout);
     await BenchmarkOutputWriter.WriteAsync(
         GetNullableValue(arguments, "output"),
         result,
@@ -241,6 +243,7 @@ static async Task CompareAsync(
         arguments,
         "max-pending",
         1024);
+    TimeSpan drainTimeout = GetDrainTimeout(arguments);
     BenchmarkTopologyOptions topologyOptions =
         BenchmarkTopologyOptions.Parse(arguments);
     BenchmarkEgressOptions egressOptions =
@@ -317,7 +320,8 @@ static async Task CompareAsync(
                         qos,
                         subscribers,
                         payloadSize,
-                        update));
+                        update),
+                    drainTimeout);
             }
             catch (Exception exception)
             {
@@ -510,6 +514,7 @@ static async Task RunAbAsync(
     int seconds = GetInt(arguments, "seconds", 20);
     int rounds = Math.Max(1, GetInt(arguments, "rounds", 3));
     int maxPendingMessages = GetInt(arguments, "max-pending", 1024);
+    TimeSpan drainTimeout = GetDrainTimeout(arguments);
     int startPort = GetInt(arguments, "start-port", 21000);
     int minimumGainPercent = GetInt(
         arguments,
@@ -578,7 +583,9 @@ static async Task RunAbAsync(
                         new BenchmarkMqttClientFactory(
                             clientKind,
                             port),
-                        CancellationToken.None).ConfigureAwait(false);
+                        CancellationToken.None,
+                        progress: null,
+                        drainTimeout: drainTimeout).ConfigureAwait(false);
                 BenchmarkProcessObservation brokerObservation =
                     BenchmarkObservationCapture.CaptureProcess(
                         serverProcess,
@@ -1834,6 +1841,13 @@ static long GetLong(
     return arguments.TryGetValue(name, out string? value)
         ? long.Parse(value, CultureInfo.InvariantCulture)
         : defaultValue;
+}
+
+static TimeSpan GetDrainTimeout(
+    IReadOnlyDictionary<string, string> arguments)
+{
+    return TimeSpan.FromSeconds(
+        GetInt(arguments, "drain-timeout", 30));
 }
 
 static bool GetBool(

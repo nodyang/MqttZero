@@ -23,10 +23,13 @@ internal static class BenchmarkLoadRunner
         BenchmarkRunOptions options,
         IBenchmarkMqttClientFactory clientFactory,
         CancellationToken cancellationToken,
-        Action<BenchmarkRunProgress>? progress = null)
+        Action<BenchmarkRunProgress>? progress = null,
+        TimeSpan? drainTimeout = null)
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(clientFactory);
+        TimeSpan effectiveDrainTimeout =
+            drainTimeout ?? TimeSpan.FromSeconds(30);
 
         MqttQualityOfServiceLevel qualityOfServiceLevel = GetQos(options.Qos);
         List<IBenchmarkMqttClient> subscriberClients = [];
@@ -139,6 +142,7 @@ internal static class BenchmarkLoadRunner
                 await WaitForSubscriberDrainAsync(
                     Interlocked.Read(ref publishedMessages) * options.Subscribers,
                     CountReceived,
+                    effectiveDrainTimeout,
                     cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
@@ -240,6 +244,7 @@ internal static class BenchmarkLoadRunner
                     Interlocked.Read(ref measuredPublishes) *
                         options.Subscribers,
                     CountReceived,
+                    effectiveDrainTimeout,
                     cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
@@ -315,12 +320,16 @@ internal static class BenchmarkLoadRunner
                     latencyHistogram.GetPercentileMicroseconds(0.95),
                 PublishCallLatencyP99Microseconds =
                     latencyHistogram.GetPercentileMicroseconds(0.99),
+                PublishCallLatencyMaxMicroseconds =
+                    latencyHistogram.MaxMicroseconds,
                 DeliveryLatencyP50Microseconds =
                     deliveryHistogram.GetPercentileMicroseconds(0.50),
                 DeliveryLatencyP95Microseconds =
                     deliveryHistogram.GetPercentileMicroseconds(0.95),
                 DeliveryLatencyP99Microseconds =
                     deliveryHistogram.GetPercentileMicroseconds(0.99),
+                DeliveryLatencyMaxMicroseconds =
+                    deliveryHistogram.MaxMicroseconds,
                 SequenceRegressions = sequenceRegressions,
                 DuplicateDeliveryMessages = duplicateDeliveries,
                 MissingDeliveryMessages = Math.Max(
@@ -447,12 +456,13 @@ internal static class BenchmarkLoadRunner
     private static async Task WaitForSubscriberDrainAsync(
         long advertisedMessages,
         Func<long> getReceivedMessages,
+        TimeSpan drainTimeout,
         CancellationToken cancellationToken)
     {
         using CancellationTokenSource timeout =
             CancellationTokenSource.CreateLinkedTokenSource(
                 cancellationToken);
-        timeout.CancelAfter(TimeSpan.FromSeconds(30));
+        timeout.CancelAfter(drainTimeout);
         while (getReceivedMessages() < advertisedMessages)
         {
             await Task.Delay(
