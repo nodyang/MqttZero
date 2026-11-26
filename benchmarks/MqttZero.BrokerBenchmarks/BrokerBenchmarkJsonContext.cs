@@ -4,6 +4,7 @@ namespace MqttZero.BrokerBenchmarks;
 
 [JsonSourceGenerationOptions(WriteIndented = true)]
 [JsonSerializable(typeof(BenchmarkReport))]
+[JsonSerializable(typeof(BrokerAbReport))]
 [JsonSerializable(typeof(BrokerBenchmarkResult))]
 [JsonSerializable(typeof(MemoryBenchmarkResult))]
 [JsonSerializable(typeof(

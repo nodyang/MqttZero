@@ -6,6 +6,8 @@ internal interface IBenchmarkMqttClient : IAsyncDisposable
 {
     bool IsConnected { get; }
 
+    BenchmarkDeliveryTracker Delivery { get; }
+
     long ReceivedMessageCount { get; }
 
     ValueTask ConnectAsync(

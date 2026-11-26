@@ -41,4 +41,34 @@ internal sealed record BenchmarkMemorySnapshot(
             broker.SharedCursorCount,
             broker.ObjectPools);
     }
+
+    public static BenchmarkMemorySnapshot FromProbe(
+        BrokerMemoryProbeSnapshot probe)
+    {
+        ArgumentNullException.ThrowIfNull(probe);
+        return new BenchmarkMemorySnapshot(
+            probe.AllocatedBytes,
+            probe.ManagedHeapBytes,
+            probe.WorkingSetBytes,
+            probe.WorkingSetBytes,
+            probe.Gen2CollectionCount,
+            probe.Gen2CollectionCount,
+            probe.Gen2CollectionCount,
+            probe.BufferRentedBytes,
+            probe.BufferCachedBytes,
+            probe.BufferCommittedBytes,
+            probe.RoutePlanAvailableCount,
+            probe.RoutePlanInUseCount,
+            probe.RoutePlanRetainedBytes,
+            probe.SharedCursorCount,
+            new MqttZero.Server.Broker.MqttZeroObjectPoolSnapshot(
+                probe.LeaseCount,
+                probe.QueuedMessageCount,
+                probe.PublishContextCount,
+                probe.InboundWorkCount,
+                probe.InboundShardWorkCount,
+                probe.FanoutOperationCount,
+                probe.FanoutBatchWorkCount,
+                probe.FanoutScheduledBatchCount));
+    }
 }

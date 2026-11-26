@@ -31,9 +31,11 @@ internal static class BenchmarkLoadRunner
         MqttQualityOfServiceLevel qualityOfServiceLevel = GetQos(options.Qos);
         List<IBenchmarkMqttClient> subscriberClients = [];
         List<IBenchmarkMqttClient> publisherClients = [];
+        List<BenchmarkDeliveryTracker> subscriberTrackers = [];
         long receivedMessages = 0;
         long failedOperations = 0;
         long publishedMessages = 0;
+        long publishSequence = 0;
         long receivedMessageBaseline = 0;
         ConcurrentQueue<string> errors = new();
         long setupStarted = Stopwatch.GetTimestamp();
@@ -43,6 +45,7 @@ internal static class BenchmarkLoadRunner
             {
                 IBenchmarkMqttClient subscriber = clientFactory.Create();
                 subscriberClients.Add(subscriber);
+                subscriberTrackers.Add(subscriber.Delivery);
                 await subscriber.ConnectAsync(
                     $"subscriber-{index}",
                     cancellationToken).ConfigureAwait(false);
@@ -62,7 +65,17 @@ internal static class BenchmarkLoadRunner
             }
 
             long connectionSetupCompleted = Stopwatch.GetTimestamp();
-            byte[] payload = new byte[options.PayloadSize];
+            byte[][] payloads = new byte[Math.Max(1, options.Publishers)][];
+            for (int index = 0; index < payloads.Length; index++)
+            {
+                payloads[index] = new byte[options.PayloadSize];
+            }
+
+            long NextSequence()
+            {
+                return Interlocked.Increment(ref publishSequence);
+            }
+
             bool ShouldPause(long publishedMessages)
             {
                 return BenchmarkLoadRunner.ShouldPause(
@@ -104,7 +117,7 @@ internal static class BenchmarkLoadRunner
                 TimeSpan.FromSeconds(options.WarmupSeconds));
             await RunPublishersAsync(
                 publisherClients,
-                payload,
+                payloads,
                 qualityOfServiceLevel,
                 () => ShouldPause(
                     Interlocked.Read(ref publishedMessages)),
@@ -116,6 +129,7 @@ internal static class BenchmarkLoadRunner
                     errors.Enqueue(exception.ToString());
                 },
                 () => Interlocked.Increment(ref publishedMessages),
+                NextSequence,
                 warmup.Token)
                 .ConfigureAwait(false);
             long warmupPublishingCompleted = Stopwatch.GetTimestamp();
@@ -153,6 +167,12 @@ internal static class BenchmarkLoadRunner
             ReportProgress("warmup-complete", warmupPublishedMessages);
 
             using MqttZeroLatencyHistogram latencyHistogram = new();
+            using MqttZeroLatencyHistogram deliveryHistogram = new();
+            foreach (BenchmarkDeliveryTracker tracker in subscriberTrackers)
+            {
+                tracker.AttachLatency(deliveryHistogram);
+            }
+
             long measuredPublishes = 0;
             BenchmarkLoadSnapshot loadBeforeMeasurement =
                 BenchmarkObservationCapture.CreateLoadSnapshot();
@@ -174,7 +194,7 @@ internal static class BenchmarkLoadRunner
             {
                 await RunPublishersAsync(
                     publisherClients,
-                    payload,
+                    payloads,
                     qualityOfServiceLevel,
                     () => ShouldPause(
                         Interlocked.Read(ref measuredPublishes)),
@@ -186,11 +206,17 @@ internal static class BenchmarkLoadRunner
                         errors.Enqueue(exception.ToString());
                     },
                     () => Interlocked.Increment(ref measuredPublishes),
+                    NextSequence,
                     measurementCancellation.Token)
                     .ConfigureAwait(false);
             }
             finally
             {
+                foreach (BenchmarkDeliveryTracker tracker in subscriberTrackers)
+                {
+                    tracker.AttachLatency(null);
+                }
+
                 progressCancellation.Cancel();
                 try
                 {
@@ -243,10 +269,34 @@ internal static class BenchmarkLoadRunner
             BenchmarkLoadObservation loadObservation =
                 BenchmarkObservationCapture.CaptureLoadDelta(
                     loadBeforeMeasurement);
+            long totalPublishedMessages =
+                warmupPublishedMessages + measuredPublishes;
+            long minimumMaxSequence = long.MaxValue;
+            long sequenceRegressions = 0;
+            long duplicateDeliveries = 0;
+            long unsequencedDeliveries = 0;
+            for (int index = 0; index < subscriberTrackers.Count; index++)
+            {
+                BenchmarkDeliveryTracker tracker = subscriberTrackers[index];
+                minimumMaxSequence = Math.Min(
+                    minimumMaxSequence,
+                    tracker.MaxSequence);
+                sequenceRegressions += tracker.SequenceRegressions;
+                duplicateDeliveries += Math.Max(
+                    0,
+                    tracker.ReceivedMessages - tracker.MaxSequence);
+                unsequencedDeliveries += tracker.UnsequencedMessages;
+            }
+
+            if (subscriberTrackers.Count == 0)
+            {
+                minimumMaxSequence = totalPublishedMessages;
+            }
 
             return new BrokerBenchmarkResult
             {
                 PublishedMessages = measuredPublishes,
+                Publishers = options.Publishers,
                 ReceivedMessages = measurementReceived,
                 MeasurementReceivedMessages =
                     measurementReceivedCompleted,
@@ -265,6 +315,18 @@ internal static class BenchmarkLoadRunner
                     latencyHistogram.GetPercentileMicroseconds(0.95),
                 PublishCallLatencyP99Microseconds =
                     latencyHistogram.GetPercentileMicroseconds(0.99),
+                DeliveryLatencyP50Microseconds =
+                    deliveryHistogram.GetPercentileMicroseconds(0.50),
+                DeliveryLatencyP95Microseconds =
+                    deliveryHistogram.GetPercentileMicroseconds(0.95),
+                DeliveryLatencyP99Microseconds =
+                    deliveryHistogram.GetPercentileMicroseconds(0.99),
+                SequenceRegressions = sequenceRegressions,
+                DuplicateDeliveryMessages = duplicateDeliveries,
+                MissingDeliveryMessages = Math.Max(
+                    0,
+                    totalPublishedMessages - minimumMaxSequence),
+                UnsequencedDeliveryMessages = unsequencedDeliveries,
                 LoadObservation = loadObservation,
                 ConnectionSetupMilliseconds = Stopwatch.GetElapsedTime(
                     setupStarted,
@@ -294,19 +356,21 @@ internal static class BenchmarkLoadRunner
 
     private static async ValueTask RunPublishersAsync(
         List<IBenchmarkMqttClient> publishers,
-        byte[] payload,
+        byte[][] payloads,
         MqttQualityOfServiceLevel qualityOfServiceLevel,
         Func<bool> shouldPause,
         Func<long> getReceivedMessages,
         Action<long>? recordLatency,
         Action<Exception> recordFailure,
         Action recordPublish,
+        Func<long> nextSequence,
         CancellationToken cancellationToken)
     {
         Task[] tasks = new Task[publishers.Count];
         for (int index = 0; index < publishers.Count; index++)
         {
             IBenchmarkMqttClient publisher = publishers[index];
+            byte[] payload = payloads[index % payloads.Length];
             tasks[index] = Task.Run(
                 async () =>
                 {
@@ -321,6 +385,10 @@ internal static class BenchmarkLoadRunner
                                 cancellationToken).ConfigureAwait(false);
                         }
 
+                        BenchmarkDeliveryEnvelope.Write(
+                            payload,
+                            nextSequence(),
+                            Stopwatch.GetTimestamp());
                         long started = Stopwatch.GetTimestamp();
                         try
                         {

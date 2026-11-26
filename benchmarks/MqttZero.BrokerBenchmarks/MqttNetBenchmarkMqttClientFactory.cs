@@ -16,8 +16,15 @@ internal sealed class MqttNetBenchmarkMqttClientFactory :
 
     public IBenchmarkMqttClient Create()
     {
+        return Create(null);
+    }
+
+    public IBenchmarkMqttClient Create(
+        BenchmarkDeliveryTracker? delivery)
+    {
         return new MqttNetBenchmarkMqttClient(
             _factory.CreateMqttClient(),
-            _port);
+            _port,
+            delivery);
     }
 }

@@ -6,4 +6,5 @@ internal sealed record MemoryWaveResult(
     long ReceivedMessages,
     long FailedOperations,
     double MeasurementDrainMilliseconds,
-    BenchmarkMemorySnapshot Snapshot);
+    BenchmarkMemorySnapshot Snapshot,
+    MemoryWavePeak? Peak = null);

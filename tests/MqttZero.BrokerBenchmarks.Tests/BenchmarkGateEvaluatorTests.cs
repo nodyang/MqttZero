@@ -146,6 +146,51 @@ public sealed class BenchmarkGateEvaluatorTests
             Assert.Single(gate.Summaries).FailureReason);
     }
 
+    [Fact]
+    public void GateRejectsDeliveryGaps()
+    {
+        BrokerComparisonResult[] results =
+        [
+            Create(
+                "mqttzero",
+                throughput: 101,
+                p99: 99,
+                failures: 0,
+                missingDeliveries: 1),
+            Create("mqttnet", throughput: 100, p99: 100, failures: 0)
+        ];
+
+        BenchmarkGateResult gate = BenchmarkGateEvaluator.Evaluate(results);
+
+        Assert.False(gate.Passed);
+        Assert.Contains(
+            "gaps",
+            Assert.Single(gate.Summaries).FailureReason);
+    }
+
+    [Fact]
+    public void GateRejectsSequenceRegressionsAndDuplicates()
+    {
+        BrokerComparisonResult[] results =
+        [
+            Create(
+                "mqttzero",
+                throughput: 101,
+                p99: 99,
+                failures: 0,
+                sequenceRegressions: 1,
+                duplicateDeliveries: 1),
+            Create("mqttnet", throughput: 100, p99: 100, failures: 0)
+        ];
+
+        BenchmarkGateResult gate = BenchmarkGateEvaluator.Evaluate(results);
+
+        Assert.False(gate.Passed);
+        string? reason = Assert.Single(gate.Summaries).FailureReason;
+        Assert.Contains("ordered", reason);
+        Assert.Contains("duplicates", reason);
+    }
+
     private static BrokerComparisonResult Create(
         string broker,
         double throughput,
@@ -156,7 +201,10 @@ public sealed class BenchmarkGateEvaluatorTests
         long receivedMessages = 1,
         double? endToEndThroughput = null,
         double measurementMilliseconds = 1000,
-        double drainMilliseconds = 0)
+        double drainMilliseconds = 0,
+        long missingDeliveries = 0,
+        long sequenceRegressions = 0,
+        long duplicateDeliveries = 0)
     {
         return new BrokerComparisonResult
         {
@@ -184,6 +232,9 @@ public sealed class BenchmarkGateEvaluatorTests
                 PublishCallLatencyP50Microseconds = p99,
                 PublishCallLatencyP95Microseconds = p99,
                 PublishCallLatencyP99Microseconds = p99,
+                MissingDeliveryMessages = missingDeliveries,
+                SequenceRegressions = sequenceRegressions,
+                DuplicateDeliveryMessages = duplicateDeliveries,
                 LoadObservation = new BenchmarkLoadObservation(
                     0,
                     0,

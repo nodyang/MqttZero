@@ -8,18 +8,20 @@ namespace MqttZero.BrokerBenchmarks;
 internal sealed class MqttNetBenchmarkMqttClient : IBenchmarkMqttClient
 {
     private readonly IMqttClient _client;
+    private readonly BenchmarkDeliveryTracker _delivery;
     private readonly int _port;
-    private long _receivedMessages;
 
     public MqttNetBenchmarkMqttClient(
         IMqttClient client,
-        int port)
+        int port,
+        BenchmarkDeliveryTracker? delivery = null)
     {
         _client = client;
         _port = port;
-        _client.ApplicationMessageReceivedAsync += _ =>
+        _delivery = delivery ?? new BenchmarkDeliveryTracker();
+        _client.ApplicationMessageReceivedAsync += message =>
         {
-            Interlocked.Increment(ref _receivedMessages);
+            _delivery.OnMessageReceived(message.ApplicationMessage.Payload);
             return Task.CompletedTask;
         };
     }
@@ -36,7 +38,15 @@ internal sealed class MqttNetBenchmarkMqttClient : IBenchmarkMqttClient
     {
         get
         {
-            return Interlocked.Read(ref _receivedMessages);
+            return _delivery.ReceivedMessages;
+        }
+    }
+
+    public BenchmarkDeliveryTracker Delivery
+    {
+        get
+        {
+            return _delivery;
         }
     }
 

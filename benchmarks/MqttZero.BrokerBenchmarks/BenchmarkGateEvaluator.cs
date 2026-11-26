@@ -167,6 +167,36 @@ internal static class BenchmarkGateEvaluator
                     $"expected={expected}, " +
                     $"actual={result.Result.MeasurementReceivedMessages}.");
             }
+
+            if (result.Result.UnsequencedDeliveryMessages != 0)
+            {
+                failureReasons.Add(
+                    $"{broker} deliveries must carry a benchmark sequence: " +
+                    $"unsequenced={result.Result.UnsequencedDeliveryMessages}.");
+            }
+
+            if (result.Result.MissingDeliveryMessages != 0)
+            {
+                failureReasons.Add(
+                    $"{broker} deliveries must not contain gaps: " +
+                    $"missing={result.Result.MissingDeliveryMessages}.");
+            }
+
+            if (result.Result.Publishers <= 1 &&
+                result.Result.SequenceRegressions != 0)
+            {
+                failureReasons.Add(
+                    $"{broker} single-publisher deliveries must be ordered: " +
+                    $"regressions={result.Result.SequenceRegressions}.");
+            }
+
+            if (result.Result.Publishers <= 1 &&
+                result.Result.DuplicateDeliveryMessages != 0)
+            {
+                failureReasons.Add(
+                    $"{broker} deliveries must not contain duplicates: " +
+                    $"duplicates={result.Result.DuplicateDeliveryMessages}.");
+            }
         }
     }
 

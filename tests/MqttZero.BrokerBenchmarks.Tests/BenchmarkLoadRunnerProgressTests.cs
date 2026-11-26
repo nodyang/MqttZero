@@ -88,6 +88,8 @@ public sealed class BenchmarkLoadRunnerProgressTests
             }
         }
 
+        public BenchmarkDeliveryTracker Delivery { get; } = new();
+
         public long ReceivedMessageCount
         {
             get

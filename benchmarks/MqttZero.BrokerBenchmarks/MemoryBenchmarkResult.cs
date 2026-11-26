@@ -1,4 +1,5 @@
 namespace MqttZero.BrokerBenchmarks;
 
 internal sealed record MemoryBenchmarkResult(
-    MemoryWaveResult[] Waves);
+    MemoryWaveResult[] Waves,
+    MemoryRunInfo? Run = null);

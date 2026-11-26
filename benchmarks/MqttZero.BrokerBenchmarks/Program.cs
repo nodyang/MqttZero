@@ -95,6 +95,13 @@ else if (mode == "memory")
 {
     await RunMemoryAsync(arguments);
 }
+else if (mode == "ab")
+{
+    await RunAbAsync(
+        arguments,
+        environment,
+        runtimeConfiguration).ConfigureAwait(false);
+}
 else
 {
     throw new ArgumentException($"Unknown mode '{mode}'.");
@@ -112,6 +119,14 @@ static async Task ServeAsync(Dictionary<string, string> arguments)
         BenchmarkTopologyOptions.Parse(arguments);
     BenchmarkEgressOptions egressOptions =
         BenchmarkEgressOptions.Parse(arguments);
+    long maxBufferedBytes = GetLong(
+        arguments,
+        "max-buffered-bytes",
+        0);
+    int memoryProbeMilliseconds = GetInt(
+        arguments,
+        "memory-probe-ms",
+        0);
     CancellationTokenSource lifetime = new();
     Console.CancelKeyPress += (_, eventArgs) =>
     {
@@ -139,6 +154,11 @@ static async Task ServeAsync(Dictionary<string, string> arguments)
             options.MaxMessageQueueLength = 100_000;
             options.EventLoopShardCount =
                 topologyOptions.EventLoopShardCount;
+            if (maxBufferedBytes > 0)
+            {
+                options.MaxBufferedBytes = maxBufferedBytes;
+            }
+
             egressOptions.ApplyTo(options);
         });
         if (topologyOptions.IoQueueCount > 0)
@@ -149,6 +169,25 @@ static async Task ServeAsync(Dictionary<string, string> arguments)
         }
         await using WebApplication app = builder.Build();
         await app.StartAsync(lifetime.Token);
+        if (memoryProbeMilliseconds > 0)
+        {
+            MqttZeroBroker probeBroker =
+                app.Services.GetRequiredService<MqttZeroBroker>();
+            BrokerMemoryProbeState probeState = new();
+            _ = Task.Run(
+                () => RunMemoryProbeAsync(
+                    probeBroker,
+                    probeState,
+                    memoryProbeMilliseconds,
+                    lifetime.Token),
+                CancellationToken.None);
+            _ = Task.Run(
+                () => ReadProbeCommandsAsync(
+                    probeState,
+                    lifetime.Token),
+                CancellationToken.None);
+        }
+
         Console.WriteLine("READY");
         await WaitForCancellationAsync(lifetime.Token);
         await app.StopAsync(CancellationToken.None);
@@ -428,6 +467,176 @@ static async Task CompareAsync(
     }
 }
 
+static async Task RunAbAsync(
+    Dictionary<string, string> arguments,
+    BenchmarkEnvironmentInfo environment,
+    BenchmarkRuntimeConfiguration runtimeConfiguration)
+{
+    string baselineAssembly = GetValue(
+        arguments,
+        "baseline-broker",
+        string.Empty);
+    string candidateAssembly = GetValue(
+        arguments,
+        "candidate-broker",
+        string.Empty);
+    if (baselineAssembly.Length == 0 || candidateAssembly.Length == 0)
+    {
+        throw new ArgumentException(
+            "The ab mode requires --baseline-broker and --candidate-broker.");
+    }
+
+    BrokerAbVariantInfo baseline = new(
+        "baseline",
+        Path.GetFullPath(baselineAssembly),
+        GetNullableValue(arguments, "baseline-commit"));
+    BrokerAbVariantInfo candidate = new(
+        "candidate",
+        Path.GetFullPath(candidateAssembly),
+        GetNullableValue(arguments, "candidate-commit"));
+    int qos = GetInt(arguments, "qos", 1);
+    int subscribers = GetInt(arguments, "subscribers", 100);
+    int payloadSize = GetInt(arguments, "payload", 64 * 1024);
+    int publishers = GetInt(arguments, "publishers", 1);
+    int warmup = GetInt(arguments, "warmup", 5);
+    int seconds = GetInt(arguments, "seconds", 20);
+    int rounds = Math.Max(1, GetInt(arguments, "rounds", 3));
+    int maxPendingMessages = GetInt(arguments, "max-pending", 1024);
+    int startPort = GetInt(arguments, "start-port", 21000);
+    int minimumGainPercent = GetInt(
+        arguments,
+        "min-gain-percent",
+        10);
+    int maximumP99RegressionPercent = GetInt(
+        arguments,
+        "max-delivery-p99-regression-percent",
+        5);
+    bool allowPacketFragmentation = GetBool(
+        arguments,
+        "fragmentation",
+        true);
+    if (payloadSize < BenchmarkDeliveryEnvelope.HeaderLength)
+    {
+        throw new ArgumentException(
+            "The benchmark payload must hold the delivery envelope.");
+    }
+
+    BenchmarkTopologyOptions topologyOptions =
+        BenchmarkTopologyOptions.Parse(arguments);
+    BenchmarkEgressOptions egressOptions =
+        BenchmarkEgressOptions.Parse(arguments);
+    BenchmarkClientKind clientKind = BenchmarkClientSelection.Parse(
+        GetValue(arguments, "client", "mqttnet"));
+    if (clientKind == BenchmarkClientKind.Raw &&
+        qos == 2)
+    {
+        throw new ArgumentException(
+            "The raw benchmark client supports QoS 0 and QoS 1 only.");
+    }
+
+    List<BrokerAbRoundResult> results = [];
+    int port = startPort;
+    for (int round = 1; round <= rounds; round++)
+    {
+        BrokerAbVariantInfo[] order = round % 2 == 1
+            ? [baseline, candidate]
+            : [candidate, baseline];
+        foreach (BrokerAbVariantInfo variant in order)
+        {
+            port++;
+            Console.Error.WriteLine(
+                FormattableString.Invariant(
+                    $"ab round={round}/{rounds} variant={variant.Name} qos={qos} subscribers={subscribers} payload={payloadSize} port={port}"));
+            using Process serverProcess = StartServerProcess(
+                variant.AssemblyPath,
+                "mqttzero",
+                port,
+                allowPacketFragmentation,
+                runtimeConfiguration,
+                topologyOptions,
+                egressOptions);
+            long started = Stopwatch.GetTimestamp();
+            try
+            {
+                await WaitForReadyAsync(serverProcess);
+                BenchmarkRunOptions options = new(
+                    subscribers,
+                    publishers,
+                    qos,
+                    payloadSize,
+                    warmup,
+                    seconds,
+                    maxPendingMessages);
+                BrokerBenchmarkResult result =
+                    await BenchmarkLoadRunner.RunAsync(
+                        port,
+                        options,
+                        new BenchmarkMqttClientFactory(
+                            clientKind,
+                            port),
+                        CancellationToken.None).ConfigureAwait(false);
+                BenchmarkProcessObservation brokerObservation =
+                    BenchmarkObservationCapture.CaptureProcess(
+                        serverProcess,
+                        Stopwatch.GetElapsedTime(started));
+                using Process clientProcess =
+                    Process.GetCurrentProcess();
+                BenchmarkProcessObservation clientObservation =
+                    BenchmarkObservationCapture.CaptureProcess(
+                        clientProcess,
+                        Stopwatch.GetElapsedTime(started));
+                results.Add(new BrokerAbRoundResult
+                {
+                    Round = round,
+                    Variant = variant.Name,
+                    Commit = variant.Commit,
+                    Result = result,
+                    BrokerObservation = brokerObservation,
+                    ClientObservation = clientObservation
+                });
+                Console.Error.WriteLine(
+                    FormattableString.Invariant(
+                        $"ab round={round}/{rounds} variant={variant.Name} end-to-end={result.EndToEndThroughputPerSecond:F2} msg/s publish-p99={result.PublishCallLatencyP99Microseconds:F1} us delivery-p99={result.DeliveryLatencyP99Microseconds:F1} us drain={result.MeasurementDrainMilliseconds:F1} ms failed={result.FailedOperations} missing={result.MissingDeliveryMessages} duplicates={result.DuplicateDeliveryMessages}"));
+            }
+            finally
+            {
+                if (!serverProcess.HasExited)
+                {
+                    serverProcess.Kill(entireProcessTree: true);
+                }
+            }
+        }
+    }
+
+    BrokerAbSummary summary = BrokerAbEvaluator.Evaluate(
+        baseline,
+        candidate,
+        results,
+        minimumGainPercent / 100d,
+        maximumP99RegressionPercent / 100d);
+    BrokerAbReport report = new(
+        environment,
+        baseline,
+        candidate,
+        qos,
+        subscribers,
+        payloadSize,
+        results,
+        summary);
+    await BenchmarkOutputWriter.WriteAsync(
+        GetNullableValue(arguments, "output"),
+        report,
+        BrokerBenchmarkJsonContext.Default.BrokerAbReport,
+        CancellationToken.None).ConfigureAwait(false);
+    Console.Error.WriteLine(
+        FormattableString.Invariant(
+            $"ab gate passed={summary.Passed} throughput-change={summary.ThroughputChangeRatio:P1} delivery-p99-ratio={summary.DeliveryP99Ratio:F3} reason={summary.FailureReason ?? "none"}"));
+    if (!summary.Passed)
+    {
+        Environment.ExitCode = 1;
+    }
+}
+
 static async Task RunOutboundAsync(Dictionary<string, string> arguments)
 {
     int port = GetInt(arguments, "port", 19300);
@@ -680,12 +889,33 @@ static async Task RunOutboundAsync(Dictionary<string, string> arguments)
 
 static async Task RunMemoryAsync(Dictionary<string, string> arguments)
 {
+    string? brokerAssembly = GetNullableValue(
+        arguments,
+        "broker-assembly");
+    if (!string.IsNullOrWhiteSpace(brokerAssembly))
+    {
+        await RunExternalMemoryAsync(
+            brokerAssembly,
+            arguments).ConfigureAwait(false);
+        return;
+    }
+
+    await RunInProcessMemoryAsync(arguments).ConfigureAwait(false);
+}
+
+static async Task RunInProcessMemoryAsync(
+    Dictionary<string, string> arguments)
+{
     int port = GetInt(arguments, "port", 19400);
     int qos = GetInt(arguments, "qos", 0);
     int subscriberCount = GetInt(arguments, "subscribers", 1);
     int payloadSize = GetInt(arguments, "payload", 8192);
     int messagesPerWave = GetInt(arguments, "messages", 100);
     int waveCount = GetInt(arguments, "waves", 3);
+    long bufferQuota = GetLong(
+        arguments,
+        "buffer-bytes",
+        512L * 1024 * 1024);
     int maxPendingMessages = GetInt(
         arguments,
         "max-pending",
@@ -723,6 +953,7 @@ static async Task RunMemoryAsync(Dictionary<string, string> arguments)
     builder.Services.AddMqttZero(options =>
     {
         options.MaxMessageQueueLength = 100_000;
+        options.MaxBufferedBytes = bufferQuota;
         options.EventLoopShardCount =
             topologyOptions.EventLoopShardCount;
         egressOptions.ApplyTo(options);
@@ -820,7 +1051,27 @@ static async Task RunMemoryAsync(Dictionary<string, string> arguments)
                 $"memory-wave={wave} published={result.PublishedMessages} received={result.ReceivedMessages}/{expected} buffer-committed={result.Snapshot.BufferCommittedBytes} route-retained={result.Snapshot.RoutePlanRetainedBytes} shared-cursors={result.Snapshot.SharedCursorCount}"));
     }
 
-    MemoryBenchmarkResult benchmark = new(waves.ToArray());
+    MemoryBenchmarkResult benchmark = new(
+        waves.ToArray(),
+        new MemoryRunInfo(
+            "in-process",
+            null,
+            null,
+            bufferQuota,
+            0,
+            qos,
+            subscriberCount,
+            payloadSize,
+            messagesPerWave,
+            waves.Count > 0
+                ? waves.Max(static wave => wave.Snapshot.BufferCommittedBytes)
+                : 0,
+            waves.Count > 0
+                ? waves.Max(static wave => wave.Snapshot.ManagedHeapBytes)
+                : 0,
+            waves.Count > 0
+                ? waves.Max(static wave => wave.Snapshot.WorkingSetBytes)
+                : 0));
     await BenchmarkOutputWriter.WriteAsync(
         GetNullableValue(arguments, "output"),
         benchmark,
@@ -833,6 +1084,421 @@ static async Task RunMemoryAsync(Dictionary<string, string> arguments)
     }
 
     await app.StopAsync();
+}
+
+static async Task RunExternalMemoryAsync(
+    string brokerAssembly,
+    Dictionary<string, string> arguments)
+{
+    int port = GetInt(arguments, "port", 19410);
+    int qos = GetInt(arguments, "qos", 0);
+    int subscriberCount = GetInt(arguments, "subscribers", 1);
+    int payloadSize = GetInt(arguments, "payload", 8192);
+    int messagesPerWave = GetInt(arguments, "messages", 100);
+    int waveCount = GetInt(arguments, "waves", 3);
+    int maxPendingMessages = GetInt(
+        arguments,
+        "max-pending",
+        1024);
+    long bufferQuota = GetLong(
+        arguments,
+        "buffer-bytes",
+        512L * 1024 * 1024);
+    int probeMilliseconds = Math.Max(
+        10,
+        GetInt(arguments, "memory-probe-ms", 100));
+    string? brokerCommit = GetNullableValue(arguments, "broker-commit");
+    BenchmarkTopologyOptions topologyOptions =
+        BenchmarkTopologyOptions.Parse(arguments);
+    BenchmarkEgressOptions egressOptions =
+        BenchmarkEgressOptions.Parse(arguments);
+    BenchmarkRuntimeConfiguration brokerRuntime =
+        new(Math.Max(1, Environment.ProcessorCount));
+    MQTTnet.Protocol.MqttQualityOfServiceLevel mqttnetQos = qos switch
+    {
+        0 => MQTTnet.Protocol.MqttQualityOfServiceLevel.AtMostOnce,
+        1 => MQTTnet.Protocol.MqttQualityOfServiceLevel.AtLeastOnce,
+        2 => MQTTnet.Protocol.MqttQualityOfServiceLevel.ExactlyOnce,
+        _ => throw new InvalidOperationException(
+            $"Unsupported QoS value: {qos}.")
+    };
+    string assemblyPath = Path.GetFullPath(brokerAssembly);
+    using Process serverProcess = StartServerProcess(
+        assemblyPath,
+        "mqttzero",
+        port,
+        true,
+        brokerRuntime,
+        topologyOptions,
+        egressOptions,
+        bufferQuota,
+        probeMilliseconds);
+    BenchmarkMemoryProbeCollector collector = new();
+    using CancellationTokenSource probeLifetime = new();
+    Task probeTask = ReadProbeLinesAsync(
+        serverProcess.StandardError,
+        collector,
+        probeLifetime.Token);
+    MqttClientFactory factory = new();
+    List<IMqttClient> subscribers = [];
+    IMqttClient? publisher = null;
+    long receivedMessages = 0;
+    BenchmarkMemorySnapshot? idleSnapshot = null;
+    try
+    {
+        await WaitForReadyAsync(serverProcess);
+        for (int index = 0; index < subscriberCount; index++)
+        {
+            IMqttClient subscriber = factory.CreateMqttClient();
+            subscriber.ApplicationMessageReceivedAsync += _ =>
+            {
+                Interlocked.Increment(ref receivedMessages);
+                return Task.CompletedTask;
+            };
+            subscribers.Add(subscriber);
+            await subscriber.ConnectAsync(
+                CreateClientOptions(port, $"memory-subscriber-{index}"),
+                CancellationToken.None);
+            await subscriber.SubscribeAsync(
+                new MqttClientSubscribeOptionsBuilder()
+                    .WithTopicFilter("bench/memory", mqttnetQos)
+                    .Build(),
+                CancellationToken.None);
+        }
+
+        publisher = factory.CreateMqttClient();
+        await publisher.ConnectAsync(
+            CreateClientOptions(port, "memory-publisher"),
+            CancellationToken.None);
+        BrokerMemoryProbeSnapshot idleProbe =
+            await WaitForFreshProbeAsync(
+                serverProcess,
+                collector,
+                probeMilliseconds,
+                CancellationToken.None).ConfigureAwait(false);
+        idleSnapshot = BenchmarkMemorySnapshot.FromProbe(idleProbe);
+
+        byte[] payload = new byte[payloadSize];
+        using (CancellationTokenSource warmup = new(
+            TimeSpan.FromSeconds(30)))
+        {
+            long warmupMessages = Math.Max(1, messagesPerWave / 10);
+            await RunTcpPublishLoopAsync(
+                    publisher,
+                    payload,
+                    mqttnetQos,
+                    maxPendingMessages,
+                    subscriberCount,
+                    () => Interlocked.Read(ref receivedMessages),
+                    warmupMessages,
+                    warmup.Token)
+                .ConfigureAwait(false);
+            await WaitForSubscriberDrainAsync(
+                warmupMessages * subscriberCount,
+                () => Interlocked.Read(ref receivedMessages),
+                CancellationToken.None).ConfigureAwait(false);
+        }
+
+        List<MemoryWaveResult> waves = [];
+        for (int wave = 1; wave <= waveCount; wave++)
+        {
+            Interlocked.Exchange(ref receivedMessages, 0);
+            collector.ResetPeak();
+            await RunTcpPublishLoopAsync(
+                    publisher,
+                    payload,
+                    mqttnetQos,
+                    maxPendingMessages,
+                    subscriberCount,
+                    () => Interlocked.Read(ref receivedMessages),
+                    messagesPerWave,
+                    CancellationToken.None)
+                .ConfigureAwait(false);
+            long expected = messagesPerWave * subscriberCount;
+            long drainStarted = Stopwatch.GetTimestamp();
+            await WaitForSubscriberDrainAsync(
+                expected,
+                () => Interlocked.Read(ref receivedMessages),
+                CancellationToken.None).ConfigureAwait(false);
+            double drainMilliseconds = Stopwatch.GetElapsedTime(
+                drainStarted).TotalMilliseconds;
+            BrokerMemoryProbeSnapshot latest =
+                await WaitForFreshProbeAsync(
+                    serverProcess,
+                    collector,
+                    probeMilliseconds,
+                    CancellationToken.None).ConfigureAwait(false);
+            MemoryWaveResult result = new(
+                wave,
+                messagesPerWave,
+                Interlocked.Read(ref receivedMessages),
+                0,
+                drainMilliseconds,
+                BenchmarkMemorySnapshot.FromProbe(latest),
+                collector.Peak);
+            waves.Add(result);
+            Console.Error.WriteLine(
+                FormattableString.Invariant(
+                    $"memory-wave={wave} published={result.PublishedMessages} received={result.ReceivedMessages}/{expected} committed-peak={result.Peak!.BufferCommittedBytes} route-in-use={result.Snapshot.RoutePlanInUseCount} heap={result.Snapshot.ManagedHeapBytes}"));
+        }
+
+        MemoryBenchmarkResult benchmark = new(
+            waves.ToArray(),
+            new MemoryRunInfo(
+                "tcp",
+                assemblyPath,
+                brokerCommit,
+                bufferQuota,
+                probeMilliseconds,
+                qos,
+                subscriberCount,
+                payloadSize,
+                messagesPerWave,
+                waves.Max(static wave =>
+                    wave.Peak?.BufferCommittedBytes ?? 0),
+                waves.Max(static wave =>
+                    wave.Peak?.ManagedHeapBytes ?? 0),
+                waves.Max(static wave =>
+                    wave.Peak?.WorkingSetBytes ?? 0),
+                idleSnapshot));
+        await BenchmarkOutputWriter.WriteAsync(
+            GetNullableValue(arguments, "output"),
+            benchmark,
+            BrokerBenchmarkJsonContext.Default.MemoryBenchmarkResult,
+            CancellationToken.None).ConfigureAwait(false);
+    }
+    finally
+    {
+        if (publisher != null)
+        {
+            await publisher.DisconnectAsync().ConfigureAwait(false);
+            publisher.Dispose();
+        }
+
+        foreach (IMqttClient subscriber in subscribers)
+        {
+            await subscriber.DisconnectAsync().ConfigureAwait(false);
+            subscriber.Dispose();
+        }
+
+        await probeLifetime.CancelAsync().ConfigureAwait(false);
+        try
+        {
+            await probeTask.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+
+        if (!serverProcess.HasExited)
+        {
+            serverProcess.Kill(entireProcessTree: true);
+        }
+    }
+}
+
+static async ValueTask RunTcpPublishLoopAsync(
+    IMqttClient publisher,
+    byte[] payload,
+    MQTTnet.Protocol.MqttQualityOfServiceLevel qualityOfServiceLevel,
+    int maxPendingMessages,
+    int deliveryMultiplier,
+    Func<long> getReceivedMessages,
+    long messageCount,
+    CancellationToken cancellationToken)
+{
+    for (long published = 0; published < messageCount; published++)
+    {
+        while (published * deliveryMultiplier -
+            getReceivedMessages() >
+            maxPendingMessages)
+        {
+            await Task.Delay(
+                TimeSpan.FromMilliseconds(1),
+                cancellationToken).ConfigureAwait(false);
+        }
+
+        MqttApplicationMessage message =
+            new MqttApplicationMessageBuilder()
+                .WithTopic("bench/memory")
+                .WithPayload(payload)
+                .WithQualityOfServiceLevel(qualityOfServiceLevel)
+                .Build();
+        await publisher.PublishAsync(
+            message,
+            cancellationToken).ConfigureAwait(false);
+    }
+}
+
+static async Task ReadProbeLinesAsync(
+    StreamReader reader,
+    BenchmarkMemoryProbeCollector collector,
+    CancellationToken cancellationToken)
+{
+    const string Prefix = "MEMORYPROBE ";
+    while (!cancellationToken.IsCancellationRequested)
+    {
+        string? line = await reader.ReadLineAsync(cancellationToken)
+            .ConfigureAwait(false);
+        if (line == null)
+        {
+            return;
+        }
+
+        if (!line.StartsWith(Prefix, StringComparison.Ordinal))
+        {
+            continue;
+        }
+
+        try
+        {
+            BrokerMemoryProbeSnapshot? probe =
+                JsonSerializer.Deserialize(
+                    line.AsSpan(Prefix.Length),
+                    BrokerMemoryProbeJsonContext.Default
+                        .BrokerMemoryProbeSnapshot);
+            if (probe != null)
+            {
+                collector.Observe(probe);
+            }
+        }
+        catch (JsonException)
+        {
+        }
+    }
+}
+
+static async Task<BrokerMemoryProbeSnapshot> WaitForFreshProbeAsync(
+    Process serverProcess,
+    BenchmarkMemoryProbeCollector collector,
+    int probeMilliseconds,
+    CancellationToken cancellationToken)
+{
+    long requested = Stopwatch.GetTimestamp();
+    try
+    {
+        await serverProcess.StandardInput
+            .WriteLineAsync("PROBE-GC")
+            .ConfigureAwait(false);
+        await serverProcess.StandardInput
+            .FlushAsync(cancellationToken)
+            .ConfigureAwait(false);
+    }
+    catch (IOException)
+    {
+    }
+
+    using CancellationTokenSource timeout =
+        CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken);
+    timeout.CancelAfter(TimeSpan.FromSeconds(5));
+    while (true)
+    {
+        BrokerMemoryProbeSnapshot? latest = collector.Latest;
+        if (latest != null && latest.TimestampTicks > requested)
+        {
+            return latest;
+        }
+
+        await Task.Delay(
+            Math.Max(5, probeMilliseconds / 4),
+            timeout.Token).ConfigureAwait(false);
+    }
+}
+
+static async Task RunMemoryProbeAsync(
+    MqttZeroBroker broker,
+    BrokerMemoryProbeState state,
+    int intervalMilliseconds,
+    CancellationToken cancellationToken)
+{
+    const string Prefix = "MEMORYPROBE ";
+    while (!cancellationToken.IsCancellationRequested)
+    {
+        if (state.TakeGarbageCollectionRequest())
+        {
+            GC.Collect(
+                GC.MaxGeneration,
+                GCCollectionMode.Forced,
+                blocking: true,
+                compacting: true);
+            GC.WaitForPendingFinalizers();
+            GC.Collect(
+                GC.MaxGeneration,
+                GCCollectionMode.Forced,
+                blocking: true,
+                compacting: true);
+        }
+
+        MqttZeroBrokerMemorySnapshot snapshot =
+            broker.GetMemorySnapshotForTest();
+        using Process process = Process.GetCurrentProcess();
+        BrokerMemoryProbeSnapshot probe = new(
+            Stopwatch.GetTimestamp(),
+            snapshot.BufferRentedBytes,
+            snapshot.BufferCachedBytes,
+            snapshot.BufferCommittedBytes,
+            snapshot.RoutePlanAvailableCount,
+            snapshot.RoutePlanInUseCount,
+            snapshot.RoutePlanRetainedBytes,
+            snapshot.SharedCursorCount,
+            snapshot.ObjectPools.LeaseCount,
+            snapshot.ObjectPools.QueuedMessageCount,
+            snapshot.ObjectPools.PublishContextCount,
+            snapshot.ObjectPools.InboundWorkCount,
+            snapshot.ObjectPools.InboundShardWorkCount,
+            snapshot.ObjectPools.FanoutOperationCount,
+            snapshot.ObjectPools.FanoutBatchWorkCount,
+            snapshot.ObjectPools.FanoutScheduledBatchCount,
+            GC.GetTotalMemory(forceFullCollection: false),
+            process.WorkingSet64,
+            GC.GetTotalAllocatedBytes(precise: false),
+            GC.CollectionCount(2));
+        Console.Error.WriteLine(
+            Prefix + JsonSerializer.Serialize(
+                probe,
+                BrokerMemoryProbeJsonContext.Default
+                    .BrokerMemoryProbeSnapshot));
+        try
+        {
+            await Task.Delay(
+                intervalMilliseconds,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+    }
+}
+
+static async Task ReadProbeCommandsAsync(
+    BrokerMemoryProbeState state,
+    CancellationToken cancellationToken)
+{
+    while (!cancellationToken.IsCancellationRequested)
+    {
+        string? line;
+        try
+        {
+            line = await Console.In.ReadLineAsync(cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        if (line == null)
+        {
+            return;
+        }
+
+        if (line.Trim() == "PROBE-GC")
+        {
+            state.RequestGarbageCollection();
+        }
+    }
 }
 
 static async ValueTask RunFixedPublishLoopAsync(
@@ -929,11 +1595,14 @@ static Process StartServerProcess(
     bool allowPacketFragmentation,
     BenchmarkRuntimeConfiguration runtimeConfiguration,
     BenchmarkTopologyOptions topologyOptions,
-    BenchmarkEgressOptions egressOptions)
+    BenchmarkEgressOptions egressOptions,
+    long maxBufferedBytes = 0,
+    int memoryProbeMilliseconds = 0)
 {
     ProcessStartInfo startInfo = new()
     {
         FileName = "dotnet",
+        RedirectStandardInput = true,
         RedirectStandardOutput = true,
         RedirectStandardError = true,
         UseShellExecute = false,
@@ -968,6 +1637,20 @@ static Process StartServerProcess(
     startInfo.ArgumentList.Add(
         egressOptions.OutboundBatchDurationMicroseconds.ToString(
             CultureInfo.InvariantCulture));
+    if (maxBufferedBytes > 0)
+    {
+        startInfo.ArgumentList.Add("--max-buffered-bytes");
+        startInfo.ArgumentList.Add(
+            maxBufferedBytes.ToString(CultureInfo.InvariantCulture));
+    }
+
+    if (memoryProbeMilliseconds > 0)
+    {
+        startInfo.ArgumentList.Add("--memory-probe-ms");
+        startInfo.ArgumentList.Add(
+            memoryProbeMilliseconds.ToString(CultureInfo.InvariantCulture));
+    }
+
     foreach (KeyValuePair<string, string> variable in
         runtimeConfiguration.CreateBrokerEnvironmentVariables())
     {
@@ -1135,6 +1818,16 @@ static int GetInt(
 {
     return arguments.TryGetValue(name, out string? value)
         ? int.Parse(value, CultureInfo.InvariantCulture)
+        : defaultValue;
+}
+
+static long GetLong(
+    IReadOnlyDictionary<string, string> arguments,
+    string name,
+    long defaultValue)
+{
+    return arguments.TryGetValue(name, out string? value)
+        ? long.Parse(value, CultureInfo.InvariantCulture)
         : defaultValue;
 }
 

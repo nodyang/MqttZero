@@ -2,9 +2,12 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using MqttZero.AspNetCore;
 using MqttZero.BrokerBenchmarks;
+using MqttZero.Server;
+using MqttZero.Server.Broker;
 using System.Net;
 using System.Net.Sockets;
 
@@ -14,15 +17,22 @@ internal sealed class TestBrokerHost : IAsyncDisposable
 {
     private readonly WebApplication _application;
 
-    private TestBrokerHost(WebApplication application, int port)
+    private TestBrokerHost(
+        WebApplication application,
+        int port,
+        MqttZeroBroker broker)
     {
         _application = application;
         Port = port;
+        Broker = broker;
     }
 
     public int Port { get; }
 
-    public static async Task<TestBrokerHost> StartAsync()
+    public MqttZeroBroker Broker { get; }
+
+    public static async Task<TestBrokerHost> StartAsync(
+        Action<MqttZeroOptions>? configure = null)
     {
         int port = GetFreePort();
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
@@ -34,10 +44,16 @@ internal sealed class TestBrokerHost : IAsyncDisposable
                 port,
                 listen => listen.UseMqttZero());
         });
-        builder.Services.AddMqttZero();
+        builder.Services.AddMqttZero(configure);
+        builder.Services.Configure<HostOptions>(
+            options => options.ShutdownTimeout =
+                TimeSpan.FromSeconds(3));
         WebApplication application = builder.Build();
         await application.StartAsync(TestContext.Current.CancellationToken);
-        return new TestBrokerHost(application, port);
+        return new TestBrokerHost(
+            application,
+            port,
+            application.Services.GetRequiredService<MqttZeroBroker>());
     }
 
     public RawMqttClient CreateRawClient()
@@ -63,6 +79,11 @@ internal sealed class TestBrokerHost : IAsyncDisposable
                 TimeSpan.FromMilliseconds(10),
                 timeoutSource.Token);
         }
+    }
+
+    public async Task StopAsync()
+    {
+        await _application.StopAsync(CancellationToken.None);
     }
 
     public async ValueTask DisposeAsync()

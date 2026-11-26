@@ -11,22 +11,28 @@ internal sealed class RawMqttClient : IBenchmarkMqttClient
 {
     private readonly ConcurrentDictionary<ushort, TaskCompletionSource<MqttPacket>>
         _pendingPackets = new();
+    private readonly BenchmarkDeliveryTracker _delivery;
     private readonly RawMqttClientOptions _options;
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private CancellationTokenSource? _lifetime;
     private TaskCompletionSource<MqttConnAckPacket>? _connectCompletion;
+    private TaskCompletionSource? _pauseConfirmed;
     private PipeReader? _reader;
     private Task? _receiveTask;
+    private TaskCompletionSource? _resumeSignal;
     private TcpClient? _tcpClient;
     private PipeWriter? _writer;
     private int _connected;
     private int _disposed;
-    private long _receivedMessages;
+    private int _paused;
     private int _nextPacketIdentifier;
 
-    public RawMqttClient(RawMqttClientOptions options)
+    public RawMqttClient(
+        RawMqttClientOptions options,
+        BenchmarkDeliveryTracker? delivery = null)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
+        _delivery = delivery ?? new BenchmarkDeliveryTracker();
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.Port);
     }
 
@@ -42,7 +48,15 @@ internal sealed class RawMqttClient : IBenchmarkMqttClient
     {
         get
         {
-            return Interlocked.Read(ref _receivedMessages);
+            return _delivery.ReceivedMessages;
+        }
+    }
+
+    public BenchmarkDeliveryTracker Delivery
+    {
+        get
+        {
+            return _delivery;
         }
     }
 
@@ -226,6 +240,87 @@ internal sealed class RawMqttClient : IBenchmarkMqttClient
         }
     }
 
+    public async ValueTask UnsubscribeAsync(
+        string topicFilter,
+        CancellationToken cancellationToken)
+    {
+        ThrowIfNotConnected();
+        ushort packetIdentifier = RentPacketIdentifier();
+        TaskCompletionSource<MqttPacket> completion =
+            CreateCompletion<MqttPacket>();
+        if (!_pendingPackets.TryAdd(packetIdentifier, completion))
+        {
+            throw new InvalidOperationException(
+                "The MQTT packet identifier is already pending.");
+        }
+
+        try
+        {
+            MqttUnsubscribePacket packet = new()
+            {
+                PacketIdentifier = packetIdentifier,
+                TopicFilters =
+                [
+                    new ReadOnlySequence<byte>(
+                        Encoding.UTF8.GetBytes(topicFilter))
+                ]
+            };
+            await SendPacketAsync(packet, cancellationToken)
+                .ConfigureAwait(false);
+            MqttPacket result = await completion.Task
+                .WaitAsync(cancellationToken)
+                .ConfigureAwait(false);
+            if (result is not MqttUnsubAckPacket unsubAck)
+            {
+                throw new InvalidOperationException(
+                    "The broker returned an unexpected packet for UNSUBSCRIBE.");
+            }
+
+            if (unsubAck.ReasonCodes.Length > 0 &&
+                ContainsFailureReasonCode(unsubAck.ReasonCodes.Span))
+            {
+                throw new InvalidOperationException(
+                    "The broker rejected the benchmark unsubscribe.");
+            }
+        }
+        finally
+        {
+            _pendingPackets.TryRemove(packetIdentifier, out _);
+        }
+    }
+
+    public void PauseReading()
+    {
+        TaskCompletionSource confirmed = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        TaskCompletionSource resume = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        Volatile.Write(ref _pauseConfirmed, confirmed);
+        Volatile.Write(ref _resumeSignal, resume);
+        Interlocked.Exchange(ref _paused, 1);
+    }
+
+    public Task WaitForPauseAsync(CancellationToken cancellationToken)
+    {
+        TaskCompletionSource? confirmed =
+            Volatile.Read(ref _pauseConfirmed);
+        return confirmed == null
+            ? Task.CompletedTask
+            : confirmed.Task.WaitAsync(cancellationToken);
+    }
+
+    public void ResumeReading()
+    {
+        if (Interlocked.Exchange(ref _paused, 0) == 0)
+        {
+            return;
+        }
+
+        TaskCompletionSource? resume = Volatile.Read(ref _resumeSignal);
+        Volatile.Write(ref _resumeSignal, null);
+        resume?.TrySetResult();
+    }
+
     public async ValueTask DisconnectAsync(
         CancellationToken cancellationToken)
     {
@@ -269,6 +364,22 @@ internal sealed class RawMqttClient : IBenchmarkMqttClient
                     "The raw MQTT reader is not initialized.");
             while (!cancellationToken.IsCancellationRequested)
             {
+                if (Volatile.Read(ref _paused) != 0)
+                {
+                    TaskCompletionSource? confirmed =
+                        Volatile.Read(ref _pauseConfirmed);
+                    TaskCompletionSource? resume =
+                        Volatile.Read(ref _resumeSignal);
+                    confirmed?.TrySetResult();
+                    if (resume != null)
+                    {
+                        await resume.Task.WaitAsync(cancellationToken)
+                            .ConfigureAwait(false);
+                    }
+
+                    continue;
+                }
+
                 ReadResult result = await reader.ReadAsync(cancellationToken)
                     .ConfigureAwait(false);
                 ReadOnlySequence<byte> buffer = result.Buffer;
@@ -344,11 +455,14 @@ internal sealed class RawMqttClient : IBenchmarkMqttClient
             case MqttSubAckPacket subAck:
                 CompletePending(subAck.PacketIdentifier, subAck);
                 break;
+            case MqttUnsubAckPacket unsubAck:
+                CompletePending(unsubAck.PacketIdentifier, unsubAck);
+                break;
             case MqttPubAckPacket pubAck:
                 CompletePending(pubAck.PacketIdentifier, pubAck);
                 break;
             case MqttPublishPacket publish:
-                Interlocked.Increment(ref _receivedMessages);
+                _delivery.OnMessageReceived(publish.Payload);
                 if (publish.QualityOfServiceLevel ==
                     MqttQualityOfServiceLevel.AtLeastOnce)
                 {

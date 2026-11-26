@@ -4,6 +4,8 @@ internal sealed class BrokerBenchmarkResult
 {
     public long PublishedMessages { get; init; }
 
+    public int Publishers { get; init; } = 1;
+
     public long ReceivedMessages { get; init; }
 
     public long FailedOperations { get; init; }
@@ -23,6 +25,20 @@ internal sealed class BrokerBenchmarkResult
     public double PublishCallLatencyP95Microseconds { get; init; }
 
     public double PublishCallLatencyP99Microseconds { get; init; }
+
+    public double DeliveryLatencyP50Microseconds { get; init; }
+
+    public double DeliveryLatencyP95Microseconds { get; init; }
+
+    public double DeliveryLatencyP99Microseconds { get; init; }
+
+    public long SequenceRegressions { get; init; }
+
+    public long DuplicateDeliveryMessages { get; init; }
+
+    public long MissingDeliveryMessages { get; init; }
+
+    public long UnsequencedDeliveryMessages { get; init; }
 
     public required BenchmarkLoadObservation LoadObservation { get; init; }
 
