@@ -187,7 +187,15 @@ public sealed partial class MqttZeroBroker
             Task drained = _connectionsDrained.Task;
             if (Volatile.Read(ref _activeConnectionCount) > 0)
             {
-                await drained.WaitAsync(cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    await drained.WaitAsync(cancellationToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    AbortConnectionsForShutdown();
+                    await WaitForConnectionsToDrainAsync(drained).ConfigureAwait(false);
+                }
             }
 
             MqttZeroShardSet? shardSet = _shardSet;
@@ -234,6 +242,31 @@ public sealed partial class MqttZeroBroker
         finally
         {
             _lifecycleGate.Release();
+        }
+    }
+
+    private void AbortConnectionsForShutdown()
+    {
+        foreach (MqttZeroSessionState session in _sessions.Values)
+        {
+            MqttZeroClientConnection? connection;
+            lock (session.SyncRoot)
+            {
+                connection = session.Connection;
+            }
+
+            connection?.Abort();
+        }
+    }
+
+    private static async Task WaitForConnectionsToDrainAsync(Task drained)
+    {
+        try
+        {
+            await drained.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
         }
     }
 }
