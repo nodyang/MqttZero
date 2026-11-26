@@ -1220,9 +1220,11 @@ public sealed partial class MqttZeroBroker
                     long encodeStarted = diagnosticsEnabled
                         ? Stopwatch.GetTimestamp()
                         : 0;
-                    bool encoded = connection.TryEncodePublishBatch(
+                    int encodedBytes =
+                        await connection.TryEncodePublishBatchAsync(
                             batch,
-                            out _);
+                            cancellationToken).ConfigureAwait(false);
+                    bool encoded = encodedBytes > 0;
                     if (diagnosticsEnabled)
                     {
                         _fanoutDiagnostics.RecordPublishEncode(

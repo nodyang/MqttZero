@@ -18,9 +18,11 @@ public sealed class PublishBatchEncodingTests
             CapturingPipeWriter encodeWriter = new();
             await using MqttZeroClientConnection encodeConnection =
                 CreateConnection(encodeWriter);
-            bool encoded = encodeConnection.TryEncodePublishBatch(
+            int encodedBytes =
+                await encodeConnection.TryEncodePublishBatchAsync(
                 messages,
-                out int encodedBytes);
+                TestContext.Current.CancellationToken);
+            bool encoded = encodedBytes > 0;
             byte[] expected = encodeWriter.WrittenBytes.ToArray();
 
             CapturingPipeWriter sendWriter = new();
