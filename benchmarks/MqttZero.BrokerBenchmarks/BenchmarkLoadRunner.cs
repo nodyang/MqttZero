@@ -491,7 +491,13 @@ internal static class BenchmarkLoadRunner
             {
             }
 
-            await client.DisposeAsync().ConfigureAwait(false);
+            try
+            {
+                await client.DisposeAsync().ConfigureAwait(false);
+            }
+            catch (Exception)
+            {
+            }
         }
     }
 
