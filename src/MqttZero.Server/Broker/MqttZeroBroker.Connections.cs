@@ -911,6 +911,8 @@ public sealed partial class MqttZeroBroker
                             ? new MqttZeroWillMessage(connectPacket)
                             : null;
                     }
+
+                    RegisterSessionDeadlines(session);
                 }
             }
             catch
@@ -980,6 +982,7 @@ public sealed partial class MqttZeroBroker
                         replacedSession.Connection = oldConnection;
                     }
 
+                    RegisterSessionDeadlines(replacedSession);
                     RestoreSessionEgress(
                         previousPumpSession,
                         oldConnection,
@@ -1178,6 +1181,7 @@ public sealed partial class MqttZeroBroker
                         _sessions.TryRemove(session.ClientId, out _);
                     }
 
+                    RemoveSessionDeadlines(session.ClientId);
                     ReleaseSessionMessages(session);
                     try
                     {

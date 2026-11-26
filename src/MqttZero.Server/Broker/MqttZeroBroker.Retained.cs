@@ -107,6 +107,7 @@ public sealed partial class MqttZeroBroker
             replaced = existing;
         }
 
+        ScheduleRetainedDeadline(topicKey, expiresAt);
         replaced?.Release();
     }
 
@@ -146,6 +147,7 @@ public sealed partial class MqttZeroBroker
             }
         }
 
+        RemoveRetainedDeadline(topicKey);
         removed?.Release();
     }
 

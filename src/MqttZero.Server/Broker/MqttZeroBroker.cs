@@ -63,6 +63,7 @@ public sealed partial class MqttZeroBroker : IMqttZeroBroker, IAsyncDisposable
     private readonly object _retainedGate = new();
     private readonly MqttZeroFanoutDiagnostics _fanoutDiagnostics = new();
     private readonly MqttZeroRouteEpochManager _routeEpochs = new();
+    private readonly MqttZeroDeadlineQueue _deadlines = new();
     private MqttZeroFanoutDispatcher? _fanoutDispatcher;
     private MqttZeroRoutePlanBufferPool? _qosZeroPlanBuffers;
     private MqttZeroRoutePlannerLanes? _routePlannerLanes;
@@ -282,7 +283,8 @@ public sealed partial class MqttZeroBroker : IMqttZeroBroker, IAsyncDisposable
             routePlans.InUseCount,
             routePlans.RetainedBytes,
             _sharedGroupCursors.Count,
-            objectPools);
+            objectPools,
+            _deadlines.Count);
     }
 
     /// <summary>

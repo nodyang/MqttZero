@@ -1446,6 +1446,7 @@ static async Task RunMemoryProbeAsync(
             snapshot.RoutePlanInUseCount,
             snapshot.RoutePlanRetainedBytes,
             snapshot.SharedCursorCount,
+            snapshot.PendingDeadlineCount,
             snapshot.ObjectPools.LeaseCount,
             snapshot.ObjectPools.QueuedMessageCount,
             snapshot.ObjectPools.PublishContextCount,

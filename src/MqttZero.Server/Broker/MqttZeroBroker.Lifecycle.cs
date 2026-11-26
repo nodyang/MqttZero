@@ -237,6 +237,7 @@ public sealed partial class MqttZeroBroker
             _sessionShardMap = null;
             _routeEpochs.Reset(MqttZeroRouteEpoch.Empty);
             _sharedGroupCursors.PruneTo([]);
+            _deadlines.Clear();
             Volatile.Write(ref _state, (int)MqttZeroBrokerState.Stopped);
         }
         finally

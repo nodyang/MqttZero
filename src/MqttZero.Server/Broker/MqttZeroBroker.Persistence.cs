@@ -365,6 +365,17 @@ public sealed partial class MqttZeroBroker
             }
 
             ResetRouteEpochFromSessions();
+            foreach (MqttZeroSessionState restoredSession in _sessions.Values)
+            {
+                RegisterSessionDeadlines(restoredSession);
+            }
+
+            foreach (KeyValuePair<string, MqttZeroRetainedMessage> pair in
+                _retainedMessages)
+            {
+                ScheduleRetainedDeadline(pair.Key, pair.Value.ExpiresAt);
+            }
+
             while (inboundDispatches.Count > 0)
             {
                 int dispatchIndex = 0;

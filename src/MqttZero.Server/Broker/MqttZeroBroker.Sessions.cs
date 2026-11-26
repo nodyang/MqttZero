@@ -63,6 +63,7 @@ public sealed partial class MqttZeroBroker
             }
         }
 
+        RegisterSessionDeadlines(session);
         if (pump != null)
         {
             connection.Abort();

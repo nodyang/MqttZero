@@ -12,6 +12,7 @@ internal sealed record BrokerMemoryProbeSnapshot(
     int RoutePlanInUseCount,
     long RoutePlanRetainedBytes,
     int SharedCursorCount,
+    int PendingDeadlineCount,
     int LeaseCount,
     int QueuedMessageCount,
     int PublishContextCount,

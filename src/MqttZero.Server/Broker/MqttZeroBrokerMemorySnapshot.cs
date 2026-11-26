@@ -8,4 +8,5 @@ internal sealed record MqttZeroBrokerMemorySnapshot(
     int RoutePlanInUseCount,
     long RoutePlanRetainedBytes,
     int SharedCursorCount,
-    MqttZeroObjectPoolSnapshot ObjectPools);
+    MqttZeroObjectPoolSnapshot ObjectPools,
+    int PendingDeadlineCount);
