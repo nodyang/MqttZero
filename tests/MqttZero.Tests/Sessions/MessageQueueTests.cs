@@ -372,6 +372,68 @@ namespace MqttZero.Tests.Sessions
         }
 
         [Fact]
+        public void RemoveExpiredKeepsQueueOrderForIdenticalExpiryTimes()
+        {
+            DateTimeOffset expiry = DateTimeOffset.UtcNow.AddSeconds(-1);
+            MqttZeroMessageQueue queue = new(3);
+            MqttZeroQueuedMessage first = CreateQueuedMessage(
+                expiry,
+                out MqttZeroMessageLease firstLease);
+            MqttZeroQueuedMessage second = CreateQueuedMessage(
+                expiry,
+                out MqttZeroMessageLease secondLease);
+            queue.Add(first);
+            queue.Add(second);
+            List<MqttZeroQueuedMessage> removed = [];
+
+            queue.RemoveExpired(DateTimeOffset.UtcNow, removed);
+
+            Assert.Equal([first, second], removed);
+            first.Release();
+            second.Release();
+            firstLease.Release();
+            secondLease.Release();
+        }
+
+        [Fact]
+        public void ExpiryIndexIsCompactedAfterDrainingQueuedMessages()
+        {
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            MqttZeroMessageQueue queue = new(5_000);
+            List<MqttZeroQueuedMessage> messages = [];
+            List<MqttZeroMessageLease> leases = [];
+            for (int index = 0; index < 5_000; index++)
+            {
+                MqttZeroQueuedMessage message = CreateQueuedMessage(
+                    now.AddMinutes(5),
+                    out MqttZeroMessageLease lease);
+                queue.Add(message);
+                messages.Add(message);
+                leases.Add(lease);
+            }
+
+            for (int index = 0; index < messages.Count; index++)
+            {
+                _ = queue.Dequeue();
+            }
+
+            List<MqttZeroQueuedMessage> removed = [];
+            queue.RemoveExpired(now, removed);
+
+            Assert.Empty(removed);
+            Assert.InRange(queue.ExpiryIndexCountForTest, 0, 1024);
+            foreach (MqttZeroQueuedMessage message in messages)
+            {
+                message.Release();
+            }
+
+            foreach (MqttZeroMessageLease lease in leases)
+            {
+                lease.Release();
+            }
+        }
+
+        [Fact]
         public void FindIndexReturnsMatchingPositionOrMinusOne()
         {
             MqttZeroMessageQueue queue = new(2);

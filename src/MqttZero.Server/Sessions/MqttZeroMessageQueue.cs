@@ -7,8 +7,11 @@ internal sealed class MqttZeroMessageQueue
     private int _count;
     private int _expiringCount;
     private int _qos0CandidateCount;
-    private readonly PriorityQueue<MqttZeroMessageExpiry, long>
+    private readonly PriorityQueue<
+        MqttZeroMessageExpiry,
+        (long DueTicks, long Sequence)>
         _expiryHeap = new();
+    private long _expirySequence;
     private MqttZeroQueuedMessage? _head;
     private MqttZeroQueuedMessage? _qos0Head;
     private MqttZeroQueuedMessage? _qos0Tail;
@@ -35,6 +38,14 @@ internal sealed class MqttZeroMessageQueue
         get
         {
             return _expiringCount > 0;
+        }
+    }
+
+    internal int ExpiryIndexCountForTest
+    {
+        get
+        {
+            return _expiryHeap.Count;
         }
     }
 
@@ -166,6 +177,7 @@ internal sealed class MqttZeroMessageQueue
         _qos0Head = null;
         _qos0Tail = null;
         _expiryHeap.Clear();
+        _expirySequence = 0;
     }
 
     public void RemoveExpired(
@@ -176,8 +188,8 @@ internal sealed class MqttZeroMessageQueue
         long nowTicks = now.UtcTicks;
         while (_expiryHeap.TryPeek(
             out MqttZeroMessageExpiry entry,
-            out long dueTicks) &&
-            dueTicks <= nowTicks)
+            out (long DueTicks, long Sequence) priority) &&
+            priority.DueTicks <= nowTicks)
         {
             _expiryHeap.Dequeue();
             MqttZeroQueuedMessage message = entry.Message;
@@ -190,6 +202,37 @@ internal sealed class MqttZeroMessageQueue
             Unlink(message);
             expired.Add(message);
         }
+
+        if (_expiryHeap.Count > Math.Max(1024, _expiringCount * 2))
+        {
+            RebuildExpiryHeap();
+        }
+    }
+
+    private void RebuildExpiryHeap()
+    {
+        _expiryHeap.Clear();
+        long sequence = 0;
+        for (MqttZeroQueuedMessage? current = _head;
+            current != null;
+            current = current.QueueNext)
+        {
+            if (!current.ExpiresAt.HasValue)
+            {
+                continue;
+            }
+
+            _expiryHeap.Enqueue(
+                new MqttZeroMessageExpiry(
+                    current,
+                    current.QueueVersion),
+                (
+                    current.ExpiresAt.Value.UtcTicks,
+                    ++sequence
+                ));
+        }
+
+        _expirySequence = sequence;
     }
 
     public Enumerator GetEnumerator()
@@ -253,7 +296,10 @@ internal sealed class MqttZeroMessageQueue
                 new MqttZeroMessageExpiry(
                     message,
                     message.QueueVersion),
-                message.ExpiresAt.Value.UtcTicks);
+                (
+                    message.ExpiresAt.Value.UtcTicks,
+                    ++_expirySequence
+                ));
         }
 
         if (message.QualityOfServiceLevel ==
