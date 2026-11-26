@@ -7,4 +7,6 @@ internal sealed record BenchmarkRunOptions(
     int PayloadSize,
     int WarmupSeconds,
     int MeasurementSeconds,
-    int MaxPendingMessages);
+    int MaxPendingMessages,
+    int MessageExpirySeconds = 0,
+    int SubscriberDelayMicroseconds = 0);

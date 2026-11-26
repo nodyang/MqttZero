@@ -10,19 +10,24 @@ internal sealed class MqttNetBenchmarkMqttClient : IBenchmarkMqttClient
     private readonly IMqttClient _client;
     private readonly BenchmarkDeliveryTracker _delivery;
     private readonly int _port;
+    private readonly TimeSpan _receiveDelay;
 
     public MqttNetBenchmarkMqttClient(
         IMqttClient client,
         int port,
-        BenchmarkDeliveryTracker? delivery = null)
+        BenchmarkDeliveryTracker? delivery = null,
+        TimeSpan receiveDelay = default)
     {
         _client = client;
         _port = port;
         _delivery = delivery ?? new BenchmarkDeliveryTracker();
+        _receiveDelay = receiveDelay;
         _client.ApplicationMessageReceivedAsync += message =>
         {
             _delivery.OnMessageReceived(message.ApplicationMessage.Payload);
-            return Task.CompletedTask;
+            return _receiveDelay > TimeSpan.Zero
+                ? Task.Delay(_receiveDelay)
+                : Task.CompletedTask;
         };
     }
 
@@ -81,14 +86,23 @@ internal sealed class MqttNetBenchmarkMqttClient : IBenchmarkMqttClient
         string topic,
         ReadOnlyMemory<byte> payload,
         MqttQualityOfServiceLevel qualityOfServiceLevel,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        uint? messageExpiryInterval = null)
     {
-        MqttApplicationMessage message = new MqttApplicationMessageBuilder()
+        MqttApplicationMessageBuilder builder =
+            new MqttApplicationMessageBuilder()
             .WithTopic(topic)
             .WithPayload(new ReadOnlySequence<byte>(payload))
-            .WithQualityOfServiceLevel(ToMqttNetQos(qualityOfServiceLevel))
-            .Build();
-        await _client.PublishAsync(message, cancellationToken).ConfigureAwait(false);
+            .WithQualityOfServiceLevel(ToMqttNetQos(qualityOfServiceLevel));
+        if (messageExpiryInterval.HasValue)
+        {
+            builder = builder.WithMessageExpiryInterval(
+                messageExpiryInterval.Value);
+        }
+
+        await _client.PublishAsync(
+            builder.Build(),
+            cancellationToken).ConfigureAwait(false);
     }
 
     public async ValueTask DisconnectAsync(CancellationToken cancellationToken)

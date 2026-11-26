@@ -7,18 +7,23 @@ internal sealed class BenchmarkMqttClientFactory :
     private readonly int _port;
     private readonly BenchmarkClientKind _clientKind;
     private readonly Func<BenchmarkDeliveryTracker> _trackerFactory;
+    private readonly TimeSpan _receiveDelay;
 
     public BenchmarkMqttClientFactory(
         BenchmarkClientKind clientKind,
         int port,
-        Func<BenchmarkDeliveryTracker>? trackerFactory = null)
+        Func<BenchmarkDeliveryTracker>? trackerFactory = null,
+        TimeSpan receiveDelay = default)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(port);
         _clientKind = clientKind;
         _port = port;
+        _receiveDelay = receiveDelay;
         _trackerFactory = trackerFactory ??
             (() => new BenchmarkDeliveryTracker());
-        _mqttNetFactory = new MqttNetBenchmarkMqttClientFactory(port);
+        _mqttNetFactory = new MqttNetBenchmarkMqttClientFactory(
+            port,
+            receiveDelay);
     }
 
     public IBenchmarkMqttClient Create()
@@ -33,7 +38,8 @@ internal sealed class BenchmarkMqttClientFactory :
                     Host = "127.0.0.1",
                     Port = _port
                 },
-                tracker),
+                tracker,
+                _receiveDelay),
             _ => throw new ArgumentOutOfRangeException(
                 nameof(_clientKind))
         };

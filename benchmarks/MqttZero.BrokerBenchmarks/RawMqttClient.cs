@@ -13,6 +13,7 @@ internal sealed class RawMqttClient : IBenchmarkMqttClient
         _pendingPackets = new();
     private readonly BenchmarkDeliveryTracker _delivery;
     private readonly RawMqttClientOptions _options;
+    private readonly TimeSpan _receiveDelay;
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private CancellationTokenSource? _lifetime;
     private TaskCompletionSource<MqttConnAckPacket>? _connectCompletion;
@@ -29,10 +30,12 @@ internal sealed class RawMqttClient : IBenchmarkMqttClient
 
     public RawMqttClient(
         RawMqttClientOptions options,
-        BenchmarkDeliveryTracker? delivery = null)
+        BenchmarkDeliveryTracker? delivery = null,
+        TimeSpan receiveDelay = default)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _delivery = delivery ?? new BenchmarkDeliveryTracker();
+        _receiveDelay = receiveDelay;
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.Port);
     }
 
@@ -177,8 +180,15 @@ internal sealed class RawMqttClient : IBenchmarkMqttClient
         string topic,
         ReadOnlyMemory<byte> payload,
         MqttQualityOfServiceLevel qualityOfServiceLevel,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        uint? messageExpiryInterval = null)
     {
+        if (messageExpiryInterval.HasValue)
+        {
+            throw new NotSupportedException(
+                "The raw benchmark client does not support message expiry.");
+        }
+
         if (qualityOfServiceLevel ==
             MqttQualityOfServiceLevel.ExactlyOnce)
         {
@@ -463,6 +473,13 @@ internal sealed class RawMqttClient : IBenchmarkMqttClient
                 break;
             case MqttPublishPacket publish:
                 _delivery.OnMessageReceived(publish.Payload);
+                if (_receiveDelay > TimeSpan.Zero)
+                {
+                    await Task.Delay(
+                        _receiveDelay,
+                        cancellationToken).ConfigureAwait(false);
+                }
+
                 if (publish.QualityOfServiceLevel ==
                     MqttQualityOfServiceLevel.AtLeastOnce)
                 {

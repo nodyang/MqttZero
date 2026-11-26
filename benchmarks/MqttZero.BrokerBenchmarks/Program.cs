@@ -60,12 +60,18 @@ else if (mode == "load")
         GetInt(arguments, "payload", 1024),
         GetInt(arguments, "warmup", 2),
         GetInt(arguments, "seconds", 10),
-        GetInt(arguments, "max-pending", 1024));
+        GetInt(arguments, "max-pending", 1024),
+        GetInt(arguments, "message-expiry", 0),
+        GetInt(arguments, "subscriber-delay-us", 0));
+    EnsureClientSupportsExpiry(clientKind, options);
     TimeSpan drainTimeout = GetDrainTimeout(arguments);
     BrokerBenchmarkResult result = await BenchmarkLoadRunner.RunAsync(
         port,
         options,
-        new BenchmarkMqttClientFactory(clientKind, port),
+        new BenchmarkMqttClientFactory(
+            clientKind,
+            port,
+            receiveDelay: GetReceiveDelay(options)),
         CancellationToken.None,
         update => WriteProgress(
             1,
@@ -243,6 +249,14 @@ static async Task CompareAsync(
         arguments,
         "max-pending",
         1024);
+    int messageExpirySeconds = GetInt(
+        arguments,
+        "message-expiry",
+        0);
+    int subscriberDelayMicroseconds = GetInt(
+        arguments,
+        "subscriber-delay-us",
+        0);
     TimeSpan drainTimeout = GetDrainTimeout(arguments);
     BenchmarkTopologyOptions topologyOptions =
         BenchmarkTopologyOptions.Parse(arguments);
@@ -302,7 +316,10 @@ static async Task CompareAsync(
                 payloadSize,
                 warmup,
                 seconds,
-                maxPendingMessages);
+                maxPendingMessages,
+                messageExpirySeconds,
+                subscriberDelayMicroseconds);
+            EnsureClientSupportsExpiry(clientKind, options);
             BrokerBenchmarkResult result;
             try
             {
@@ -311,7 +328,8 @@ static async Task CompareAsync(
                     options,
                     new BenchmarkMqttClientFactory(
                         clientKind,
-                        runPort),
+                        runPort,
+                        receiveDelay: GetReceiveDelay(options)),
                     CancellationToken.None,
                     update => WriteProgress(
                         runNumber,
@@ -575,14 +593,18 @@ static async Task RunAbAsync(
                     payloadSize,
                     warmup,
                     seconds,
-                    maxPendingMessages);
+                    maxPendingMessages,
+                    GetInt(arguments, "message-expiry", 0),
+                    GetInt(arguments, "subscriber-delay-us", 0));
+                EnsureClientSupportsExpiry(clientKind, options);
                 BrokerBenchmarkResult result =
                     await BenchmarkLoadRunner.RunAsync(
                         port,
                         options,
                         new BenchmarkMqttClientFactory(
                             clientKind,
-                            port),
+                            port,
+                            receiveDelay: GetReceiveDelay(options)),
                         CancellationToken.None,
                         progress: null,
                         drainTimeout: drainTimeout).ConfigureAwait(false);
@@ -1848,6 +1870,24 @@ static TimeSpan GetDrainTimeout(
 {
     return TimeSpan.FromSeconds(
         GetInt(arguments, "drain-timeout", 30));
+}
+
+static TimeSpan GetReceiveDelay(BenchmarkRunOptions options)
+{
+    return TimeSpan.FromMicroseconds(
+        options.SubscriberDelayMicroseconds);
+}
+
+static void EnsureClientSupportsExpiry(
+    BenchmarkClientKind clientKind,
+    BenchmarkRunOptions options)
+{
+    if (clientKind == BenchmarkClientKind.Raw &&
+        options.MessageExpirySeconds > 0)
+    {
+        throw new ArgumentException(
+            "The raw benchmark client does not support message expiry.");
+    }
 }
 
 static bool GetBool(

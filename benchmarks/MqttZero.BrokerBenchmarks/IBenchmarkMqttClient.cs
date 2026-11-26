@@ -23,7 +23,8 @@ internal interface IBenchmarkMqttClient : IAsyncDisposable
         string topic,
         ReadOnlyMemory<byte> payload,
         MqttQualityOfServiceLevel qualityOfServiceLevel,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken,
+        uint? messageExpiryInterval = null);
 
     ValueTask DisconnectAsync(CancellationToken cancellationToken);
 }

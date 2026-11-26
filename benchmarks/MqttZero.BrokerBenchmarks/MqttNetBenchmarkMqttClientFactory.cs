@@ -7,11 +7,15 @@ internal sealed class MqttNetBenchmarkMqttClientFactory :
 {
     private readonly MqttClientFactory _factory = new();
     private readonly int _port;
+    private readonly TimeSpan _receiveDelay;
 
-    public MqttNetBenchmarkMqttClientFactory(int port)
+    public MqttNetBenchmarkMqttClientFactory(
+        int port,
+        TimeSpan receiveDelay = default)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(port);
         _port = port;
+        _receiveDelay = receiveDelay;
     }
 
     public IBenchmarkMqttClient Create()
@@ -25,6 +29,7 @@ internal sealed class MqttNetBenchmarkMqttClientFactory :
         return new MqttNetBenchmarkMqttClient(
             _factory.CreateMqttClient(),
             _port,
-            delivery);
+            delivery,
+            _receiveDelay);
     }
 }

@@ -28,8 +28,16 @@ internal static class BenchmarkLoadRunner
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(clientFactory);
+        ArgumentOutOfRangeException.ThrowIfNegative(
+            options.MessageExpirySeconds);
+        ArgumentOutOfRangeException.ThrowIfNegative(
+            options.SubscriberDelayMicroseconds);
         TimeSpan effectiveDrainTimeout =
             drainTimeout ?? TimeSpan.FromSeconds(30);
+        uint? messageExpiryInterval =
+            options.MessageExpirySeconds > 0
+                ? (uint)options.MessageExpirySeconds
+                : null;
 
         MqttQualityOfServiceLevel qualityOfServiceLevel = GetQos(options.Qos);
         List<IBenchmarkMqttClient> subscriberClients = [];
@@ -133,6 +141,7 @@ internal static class BenchmarkLoadRunner
                 },
                 () => Interlocked.Increment(ref publishedMessages),
                 NextSequence,
+                messageExpiryInterval,
                 warmup.Token)
                 .ConfigureAwait(false);
             long warmupPublishingCompleted = Stopwatch.GetTimestamp();
@@ -211,6 +220,7 @@ internal static class BenchmarkLoadRunner
                     },
                     () => Interlocked.Increment(ref measuredPublishes),
                     NextSequence,
+                    messageExpiryInterval,
                     measurementCancellation.Token)
                     .ConfigureAwait(false);
             }
@@ -373,6 +383,7 @@ internal static class BenchmarkLoadRunner
         Action<Exception> recordFailure,
         Action recordPublish,
         Func<long> nextSequence,
+        uint? messageExpiryInterval,
         CancellationToken cancellationToken)
     {
         Task[] tasks = new Task[publishers.Count];
@@ -405,7 +416,8 @@ internal static class BenchmarkLoadRunner
                                 "bench/topic",
                                 payload,
                                 qualityOfServiceLevel,
-                                CancellationToken.None).ConfigureAwait(false);
+                                CancellationToken.None,
+                                messageExpiryInterval).ConfigureAwait(false);
                             recordLatency?.Invoke(
                                 Stopwatch.GetTimestamp() - started);
                             recordPublish();

@@ -122,7 +122,8 @@ public sealed class BenchmarkLoadRunnerProgressTests
             string topic,
             ReadOnlyMemory<byte> payload,
             MqttQualityOfServiceLevel qualityOfServiceLevel,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            uint? messageExpiryInterval = null)
         {
             await Task.Delay(1, cancellationToken);
             Interlocked.Increment(ref _state.ReceivedMessages);
