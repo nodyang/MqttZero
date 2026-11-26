@@ -43,6 +43,25 @@ Broker 与负载进程各自的 CPU / 工作集 / 分配量、端到端吞吐、
 与 MQTTnet 的对比仍由 `eng/run-broker-benchmark.ps1` 单独报告，不作为
 本轮发布门禁。
 
+### 消息过期与订阅端节流
+
+`--message-expiry <秒>` 让发布携带 Message Expiry Interval，
+`--subscriber-delay-us <微秒>` 在记录交付延迟后延迟返回。raw 客户端与
+`--message-expiry` 组合会被拒绝。
+
+```powershell
+dotnet <benchmarks.dll> ab `
+    --baseline-broker <dll> --candidate-broker <dll> `
+    --qos 0 --subscribers 1 --payload 32 --message-expiry 300 `
+    --subscriber-delay-us 200 --max-pending 100000 `
+    --warmup 5 --seconds 20 --rounds 3
+```
+
+注意：MQTTnet 客户端在接收处理被延迟时仍会继续读取，因此这个 profile
+实际不会把 Broker 侧队列压深（实测队列深度只有个位数），不能用来证明
+「出站批量选择」的复杂度变化。要复现长队列需要真正停滞的消费者，例如
+暂停读取的 raw 客户端；该能力尚未加入基准。
+
 ## 交付完整性
 
 每个 PUBLISH 负载的前 16 字节是投递信封：8 字节序号 + 8 字节发布时间戳
