@@ -223,6 +223,155 @@ namespace MqttZero.Tests.Sessions
         }
 
         [Fact]
+        public void RemoveExpiredReturnsDueMessagesInExpiryOrder()
+        {
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            MqttZeroMessageQueue queue = new(3);
+            MqttZeroQueuedMessage later = CreateQueuedMessage(
+                now.AddSeconds(-1),
+                out MqttZeroMessageLease laterLease);
+            MqttZeroQueuedMessage earlier = CreateQueuedMessage(
+                now.AddSeconds(-30),
+                out MqttZeroMessageLease earlierLease);
+            queue.Add(later);
+            queue.Add(earlier);
+            List<MqttZeroQueuedMessage> removed = [];
+
+            queue.RemoveExpired(now, removed);
+
+            Assert.Equal([earlier, later], removed);
+            Assert.Equal(0, queue.Count);
+            later.Release();
+            earlier.Release();
+            laterLease.Release();
+            earlierLease.Release();
+        }
+
+        [Fact]
+        public void DequeuedExpiringMessageIsNotReportedAsExpired()
+        {
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            MqttZeroMessageQueue queue = new(3);
+            MqttZeroQueuedMessage first = CreateQueuedMessage(
+                now.AddSeconds(-1),
+                out MqttZeroMessageLease firstLease);
+            MqttZeroQueuedMessage second = CreateQueuedMessage(
+                now.AddSeconds(-1),
+                out MqttZeroMessageLease secondLease);
+            queue.Add(first);
+            queue.Add(second);
+            Assert.Same(first, queue.Dequeue());
+            List<MqttZeroQueuedMessage> removed = [];
+
+            queue.RemoveExpired(now, removed);
+
+            Assert.Equal([second], removed);
+            first.Release();
+            second.Release();
+            firstLease.Release();
+            secondLease.Release();
+        }
+
+        [Fact]
+        public void EvictedExpiringMessageIsNotReportedAsExpired()
+        {
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            MqttZeroMessageQueue queue = new(3);
+            MqttZeroQueuedMessage evicted = CreateQueuedMessage(
+                now.AddSeconds(-1),
+                out MqttZeroMessageLease evictedLease);
+            queue.Add(evicted);
+            Assert.Same(evicted, queue.EvictOldestQos0OrOldest());
+            List<MqttZeroQueuedMessage> removed = [];
+
+            queue.RemoveExpired(now, removed);
+
+            Assert.Empty(removed);
+            evicted.Release();
+            evictedLease.Release();
+        }
+
+        [Fact]
+        public void PrependRegistersExpiringMessage()
+        {
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            MqttZeroMessageQueue queue = new(2);
+            MqttZeroQueuedMessage expiring = CreateQueuedMessage(
+                now.AddSeconds(-1),
+                out MqttZeroMessageLease lease);
+            queue.Prepend(expiring);
+            List<MqttZeroQueuedMessage> removed = [];
+
+            queue.RemoveExpired(now, removed);
+
+            Assert.Equal([expiring], removed);
+            expiring.Release();
+            lease.Release();
+        }
+
+        [Fact]
+        public void ClearDropsTheExpiryIndex()
+        {
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            MqttZeroMessageQueue queue = new(2);
+            MqttZeroQueuedMessage expiring = CreateQueuedMessage(
+                now.AddSeconds(-1),
+                out MqttZeroMessageLease lease);
+            queue.Add(expiring);
+            queue.Clear();
+            List<MqttZeroQueuedMessage> removed = [];
+
+            queue.RemoveExpired(now, removed);
+
+            Assert.Empty(removed);
+            Assert.Equal(0, queue.Count);
+            expiring.Release();
+            lease.Release();
+        }
+
+        [Fact]
+        public void RemoveExpiredKeepsLargeLiveQueuesIntact()
+        {
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            MqttZeroMessageQueue queue = new(10_001);
+            List<MqttZeroQueuedMessage> placeholders = [];
+            List<MqttZeroMessageLease> leases = [];
+            for (int index = 0; index < 10_000; index++)
+            {
+                MqttZeroQueuedMessage live = CreateQueuedMessage(
+                    MqttQualityOfServiceLevel.AtMostOnce,
+                    out MqttZeroMessageLease lease,
+                    now.AddSeconds(30));
+                queue.Add(live);
+                placeholders.Add(live);
+                leases.Add(lease);
+            }
+
+            MqttZeroQueuedMessage due = CreateQueuedMessage(
+                now.AddSeconds(-1),
+                out MqttZeroMessageLease dueLease);
+            queue.Add(due);
+            List<MqttZeroQueuedMessage> removed = [];
+
+            queue.RemoveExpired(now, removed);
+
+            Assert.Equal([due], removed);
+            Assert.Equal(10_000, queue.Count);
+            foreach (MqttZeroQueuedMessage message in placeholders)
+            {
+                message.Release();
+            }
+
+            foreach (MqttZeroMessageLease lease in leases)
+            {
+                lease.Release();
+            }
+
+            due.Release();
+            dueLease.Release();
+        }
+
+        [Fact]
         public void FindIndexReturnsMatchingPositionOrMinusOne()
         {
             MqttZeroMessageQueue queue = new(2);

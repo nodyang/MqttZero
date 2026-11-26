@@ -1007,15 +1007,13 @@ public sealed partial class MqttZeroBroker
                     : 0;
                 expired.Clear();
                 batch.Clear();
-                if (session.PendingMessages.HasExpiringMessages)
-                {
-                    DateTimeOffset now = _timeProvider.GetUtcNow();
-                    session.PendingMessages.RemoveExpired(now, expired);
-                }
+                DateTimeOffset now = _timeProvider.GetUtcNow();
+                session.PendingMessages.RemoveExpired(now, expired);
                 hasNext = session.PendingMessages.Count > 0 &&
                     (session.PendingMessages[0].QualityOfServiceLevel ==
                         MqttQualityOfServiceLevel.AtMostOnce ||
-                    session.InflightMessages.Count < GetInflightLimit(connection));
+                    session.InflightMessages.Count <
+                        GetInflightLimit(connection));
                 if (hasNext)
                 {
                     next = session.PendingMessages.Dequeue();

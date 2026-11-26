@@ -7,6 +7,8 @@ internal sealed class MqttZeroMessageQueue
     private int _count;
     private int _expiringCount;
     private int _qos0CandidateCount;
+    private readonly PriorityQueue<MqttZeroMessageExpiry, long>
+        _expiryHeap = new();
     private MqttZeroQueuedMessage? _head;
     private MqttZeroQueuedMessage? _qos0Head;
     private MqttZeroQueuedMessage? _qos0Tail;
@@ -163,6 +165,7 @@ internal sealed class MqttZeroMessageQueue
         _qos0CandidateCount = 0;
         _qos0Head = null;
         _qos0Tail = null;
+        _expiryHeap.Clear();
     }
 
     public void RemoveExpired(
@@ -170,22 +173,22 @@ internal sealed class MqttZeroMessageQueue
         List<MqttZeroQueuedMessage> expired)
     {
         ArgumentNullException.ThrowIfNull(expired);
-        if (_expiringCount == 0)
+        long nowTicks = now.UtcTicks;
+        while (_expiryHeap.TryPeek(
+            out MqttZeroMessageExpiry entry,
+            out long dueTicks) &&
+            dueTicks <= nowTicks)
         {
-            return;
-        }
-
-        MqttZeroQueuedMessage? current = _head;
-        while (current != null)
-        {
-            MqttZeroQueuedMessage? next = current.QueueNext;
-            if (current.IsExpired(now))
+            _expiryHeap.Dequeue();
+            MqttZeroQueuedMessage message = entry.Message;
+            if (!message.IsQueued ||
+                message.QueueVersion != entry.Version)
             {
-                Unlink(current);
-                expired.Add(current);
+                continue;
             }
 
-            current = next;
+            Unlink(message);
+            expired.Add(message);
         }
     }
 
@@ -246,6 +249,11 @@ internal sealed class MqttZeroMessageQueue
         if (message.ExpiresAt.HasValue)
         {
             _expiringCount++;
+            _expiryHeap.Enqueue(
+                new MqttZeroMessageExpiry(
+                    message,
+                    message.QueueVersion),
+                message.ExpiresAt.Value.UtcTicks);
         }
 
         if (message.QualityOfServiceLevel ==
